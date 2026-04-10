@@ -63,7 +63,8 @@ public sealed class UsxBibleParser
             var style = element.Attribute("style")?.Value;
             paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, paragraph.Footnotes)
             {
-                IsHeading = IsHeadingStyle(style)
+                IsHeading = IsHeadingStyle(style),
+                InkStrokes = new List<BibleInkStroke>()
             });
             chapterDropCapPending = false;
         }

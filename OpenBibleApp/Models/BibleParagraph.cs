@@ -13,5 +13,7 @@ public sealed record BibleParagraph(string Text, int? ChapterDropCap, IReadOnlyL
     public bool IsHeading { get; init; }
 
     public bool IsBodyText => !IsHeading;
+
+    public IList<BibleInkStroke> InkStrokes { get; init; } = [];
 }
 

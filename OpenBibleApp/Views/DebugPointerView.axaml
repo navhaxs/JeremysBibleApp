@@ -1,0 +1,38 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:OpenBibleApp.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="OpenBibleApp.Views.DebugPointerView"
+             x:DataType="vm:DebugPointerViewModel">
+
+  <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
+    <TextBlock Grid.Row="0" Text="Debug: Pointer Events (First 50 most recent)" FontSize="18" FontWeight="Bold" />
+    <Button Grid.Row="1" Content="Clear" Click="OnClearClick" Width="100" HorizontalAlignment="Left" />
+
+    <ListBox Grid.Row="2" ItemsSource="{Binding Events}" FontFamily="monospace" FontSize="12">
+      <ListBox.ItemTemplate>
+        <DataTemplate>
+          <TextBlock TextWrapping="Wrap" Foreground="#999999">
+            <Run Foreground="White" Text="{Binding Timestamp}" />
+            <Run Text=" | " />
+            <Run Foreground="#FFD700" Text="{Binding PointerType}" />
+            <Run Text=" | " />
+            <Run Foreground="#87CEEB" Text="{Binding Position}" />
+            <Run Text=" | P:" />
+            <Run Text="{Binding Pressure}" />
+            <Run Text=" | T:" />
+            <Run Text="{Binding Tilt}" />
+            <Run Text=" | Tw:" />
+            <Run Text="{Binding Twist}" />
+            <Run Text=" | " />
+            <Run Foreground="#90EE90" Text="{Binding Properties}" />
+          </TextBlock>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </Grid>
+</UserControl>
+
+

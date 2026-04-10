@@ -85,9 +85,16 @@
   </Design.DataContext>
 
   <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
-    <TextBlock Grid.Row="0" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" />
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+      <TextBlock Grid.Column="0" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" />
+      <ToggleSwitch Grid.Column="1" x:Name="AnnotationToggle" Content="Annotate (Pen)" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
+    </Grid>
     <TextBlock Grid.Row="1" Text="{Binding Status}" Opacity="0.8" />
-    <ListBox Grid.Row="2" Name="ParagraphList" SelectionMode="Single" SelectionChanged="OnParagraphListSelectionChanged" ItemsSource="{Binding Paragraphs}">
+    
+    <!-- Main content grid (row 2) with overlay -->
+    <Grid Grid.Row="2" RowDefinitions="*">
+      <!-- ListBox for Bible content -->
+      <ListBox Grid.Row="0" Name="ParagraphList" SelectionMode="Single" SelectionChanged="OnParagraphListSelectionChanged" ItemsSource="{Binding Paragraphs}">
       <ListBox.ItemTemplate>
           <DataTemplate x:DataType="model:BibleParagraph">
             <Grid Margin="0,0,0,14" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
@@ -130,7 +137,30 @@
               </ItemsControl>
             </Grid>
           </DataTemplate>
-      </ListBox.ItemTemplate>
-    </ListBox>
+       </ListBox.ItemTemplate>
+      </ListBox>
+
+      <!-- Single full-viewport ink overlay (not hittable – touch falls through to ListBox).
+           MainView routes captured pen events here when annotation mode is on. -->
+      <controls:InkOverlayCanvas Grid.Row="0" x:Name="InkOverlay" IsHitTestVisible="False" ZIndex="10" />
+
+      <!-- Debug overlay (no hit test) -->
+      <Border Grid.Row="0" 
+              IsHitTestVisible="False" 
+              VerticalAlignment="Top" 
+              HorizontalAlignment="Left" 
+              Margin="16"
+              Background="#BB000000"
+              Padding="8"
+              CornerRadius="4"
+              Opacity="0.9">
+        <StackPanel Spacing="4">
+          <TextBlock Name="DebugAnnotatingStatus" FontSize="12" Foreground="Lime" FontFamily="monospace" />
+          <TextBlock Name="DebugPointerStatus" FontSize="12" Foreground="Cyan" FontFamily="monospace" />
+          <TextBlock Name="DebugStrokeStatus" FontSize="12" Foreground="Yellow" FontFamily="monospace" />
+          <TextBlock Name="DebugScrollStatus" FontSize="12" Foreground="Orange" FontFamily="monospace" />
+        </StackPanel>
+      </Border>
+    </Grid>
   </Grid>
 </UserControl>
