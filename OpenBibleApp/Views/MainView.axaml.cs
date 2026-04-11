@@ -141,8 +141,9 @@ public partial class MainView : UserControl
                 var orig = _savedScrollRecognizers[0];
                 scp.GestureRecognizers.Add(new TouchOnlyScrollGestureRecognizer
                 {
-                    CanHorizontallyScroll = orig.CanHorizontallyScroll,
-                    CanVerticallyScroll   = orig.CanVerticallyScroll
+                    CanHorizontallyScroll  = orig.CanHorizontallyScroll,
+                    CanVerticallyScroll    = orig.CanVerticallyScroll,
+                    IsScrollInertiaEnabled = orig.IsScrollInertiaEnabled
                 });
             }
         }

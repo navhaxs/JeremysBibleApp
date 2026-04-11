@@ -12,8 +12,17 @@ namespace OpenBibleApp.Controls;
 /// scrolling. Pen events are routed here by MainView via pointer capture.
 ///
 /// Strokes are stored in content-space coordinates (y + scrollOffset at time of
-/// drawing) and rendered back to viewport space (y - scrollOffset) so they appear
-/// to scroll along with the text.
+/// drawing) and rendered back to viewport space via a single PushTransform so they
+/// appear to scroll along with the text.
+///
+/// Performance design:
+///   • Completed strokes are baked into StreamGeometry objects (one draw call per
+///     stroke) and never rebuilt on scroll.
+///   • A content-space bounding box is stored per stroke for O(1) viewport culling.
+///   • The Y-scroll offset is applied as a single DrawingContext transform instead of
+///     converting every point on every frame.
+///   • The active (in-progress) stroke geometry is cached and only rebuilt when a new
+///     point is actually added, not on scroll.
 /// </summary>
 public class InkOverlayCanvas : Control
 {
@@ -22,8 +31,19 @@ public class InkOverlayCanvas : Control
     private static readonly Pen StrokePen =
         new Pen(StrokeBrush, 2.5, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
 
-    private readonly List<List<Point>> _strokes = new();
+    // Represents a completed, immutable stroke.
+    private readonly record struct StrokeCache(
+        StreamGeometry? Geo,   // null ⟹ single-dot stroke
+        Point DotCenter,       // used only when Geo is null
+        Rect ContentBounds);   // content-space AABB for culling
+
+    private readonly List<StrokeCache> _cachedStrokes = new();
+
+    // Active stroke raw points (content-space) and its cached geometry.
     private List<Point>? _activeStroke;
+    private StreamGeometry? _activeGeo;     // rebuilt lazily when _activeStrokeDirty
+    private bool _activeStrokeDirty;
+
     private double _scrollOffsetY;
 
     // ── Public API called by MainView ────────────────────────────────────────
@@ -39,29 +59,53 @@ public class InkOverlayCanvas : Control
     public void StartStroke(Point viewportPoint)
     {
         _activeStroke = new List<Point> { ToContent(viewportPoint) };
-        _strokes.Add(_activeStroke);
+        _activeGeo = null;
+        _activeStrokeDirty = true;
         InvalidateVisual();
     }
 
     /// <summary>Add a point to the active stroke.</summary>
     public void ContinueStroke(Point viewportPoint)
     {
-        _activeStroke?.Add(ToContent(viewportPoint));
+        if (_activeStroke == null) return;
+        _activeStroke.Add(ToContent(viewportPoint));
+        _activeStrokeDirty = true;
         InvalidateVisual();
     }
 
     /// <summary>Finish the current stroke.</summary>
     public void EndStroke()
     {
+        if (_activeStroke != null && _activeStroke.Count > 0)
+        {
+            if (_activeStroke.Count == 1)
+            {
+                var p = _activeStroke[0];
+                _cachedStrokes.Add(new StrokeCache(
+                    null, p,
+                    new Rect(p.X - 2, p.Y - 2, 4, 4)));
+            }
+            else
+            {
+                _cachedStrokes.Add(new StrokeCache(
+                    BuildGeometry(_activeStroke),
+                    default,
+                    ComputeBounds(_activeStroke)));
+            }
+        }
         _activeStroke = null;
+        _activeGeo = null;
+        _activeStrokeDirty = false;
         InvalidateVisual();
     }
 
     /// <summary>Erase all strokes.</summary>
     public void ClearStrokes()
     {
-        _strokes.Clear();
+        _cachedStrokes.Clear();
         _activeStroke = null;
+        _activeGeo = null;
+        _activeStrokeDirty = false;
         InvalidateVisual();
     }
 
@@ -91,6 +135,7 @@ public class InkOverlayCanvas : Control
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         _activeStroke = null;
+        _activeGeo = null;
         base.OnPointerCaptureLost(e);
     }
 
@@ -100,44 +145,84 @@ public class InkOverlayCanvas : Control
     {
         base.Render(context);
 
-        if (_strokes.Count == 0) return;
+        if (_cachedStrokes.Count == 0 && _activeStroke == null) return;
 
         // Clip to the visible viewport so strokes don't render outside our bounds.
-        using var _ = context.PushClip(new Rect(Bounds.Size));
+        using var clip = context.PushClip(new Rect(Bounds.Size));
 
-        foreach (var stroke in _strokes)
+        // Apply scroll offset as a single transform instead of converting every
+        // point individually. All drawing below is in content-space coordinates.
+        using var transform = context.PushTransform(
+            Matrix.CreateTranslation(0, -_scrollOffsetY));
+
+        // Visible content-space Y range (with a small margin).
+        double viewTop    = _scrollOffsetY - 10;
+        double viewBottom = _scrollOffsetY + Bounds.Height + 10;
+
+        // Draw completed strokes, culling those outside the viewport.
+        foreach (var stroke in _cachedStrokes)
         {
-            if (stroke.Count == 0) continue;
-
-            if (stroke.Count == 1)
-            {
-                var p = ToViewport(stroke[0]);
-                if (InBounds(p))
-                    context.DrawEllipse(StrokeBrush, null, p, 1.5, 1.5);
+            if (stroke.ContentBounds.Bottom < viewTop ||
+                stroke.ContentBounds.Top    > viewBottom)
                 continue;
-            }
 
-            for (int i = 1; i < stroke.Count; i++)
+            if (stroke.Geo is null)
+                context.DrawEllipse(StrokeBrush, null, stroke.DotCenter, 1.5, 1.5);
+            else
+                context.DrawGeometry(null, StrokePen, stroke.Geo);
+        }
+
+        // Draw the active (in-progress) stroke.
+        if (_activeStroke != null && _activeStroke.Count > 0)
+        {
+            if (_activeStroke.Count == 1)
             {
-                var p1 = ToViewport(stroke[i - 1]);
-                var p2 = ToViewport(stroke[i]);
-                context.DrawLine(StrokePen, p1, p2);
+                context.DrawEllipse(StrokeBrush, null, _activeStroke[0], 1.5, 1.5);
+            }
+            else
+            {
+                // Rebuild the cached geometry only when new points were added.
+                if (_activeStrokeDirty)
+                {
+                    _activeGeo = BuildGeometry(_activeStroke);
+                    _activeStrokeDirty = false;
+                }
+                context.DrawGeometry(null, StrokePen, _activeGeo!);
             }
         }
     }
 
-    // ── Coordinate helpers ───────────────────────────────────────────────────
+    // ── Geometry helpers ─────────────────────────────────────────────────────
+
+    private static StreamGeometry BuildGeometry(List<Point> points)
+    {
+        var geo = new StreamGeometry();
+        using var ctx = geo.Open();
+        ctx.BeginFigure(points[0], false);
+        for (int i = 1; i < points.Count; i++)
+            ctx.LineTo(points[i]);
+        ctx.EndFigure(false);
+        return geo;
+    }
+
+    private static Rect ComputeBounds(List<Point> points)
+    {
+        double minX = points[0].X, minY = points[0].Y;
+        double maxX = minX, maxY = minY;
+        foreach (var p in points)
+        {
+            if (p.X < minX) minX = p.X;
+            if (p.Y < minY) minY = p.Y;
+            if (p.X > maxX) maxX = p.X;
+            if (p.Y > maxY) maxY = p.Y;
+        }
+        // Add a small margin so the pen stroke thickness is fully included.
+        return new Rect(minX - 5, minY - 5, maxX - minX + 10, maxY - minY + 10);
+    }
+
+    // ── Coordinate helper ────────────────────────────────────────────────────
 
     /// <summary>Convert a viewport point to content space (scroll-relative).</summary>
     private Point ToContent(Point viewport) =>
         new(viewport.X, viewport.Y + _scrollOffsetY);
-
-    /// <summary>Convert a content-space point back to viewport space for rendering.</summary>
-    private Point ToViewport(Point content) =>
-        new(content.X, content.Y - _scrollOffsetY);
-
-    private bool InBounds(Point p) =>
-        p.X >= -10 && p.Y >= -10 && p.X <= Bounds.Width + 10 && p.Y <= Bounds.Height + 10;
 }
-
-
