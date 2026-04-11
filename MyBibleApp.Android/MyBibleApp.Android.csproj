@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0-android</TargetFramework>
+        <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+        <Nullable>enable</Nullable>
+        <ApplicationId>com.CompanyName.MyBibleApp</ApplicationId>
+        <ApplicationVersion>1</ApplicationVersion>
+        <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+        <AndroidPackageFormat>apk</AndroidPackageFormat>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+        <AndroidLinkMode>None</AndroidLinkMode>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <AndroidEnableProfiledAot>true</AndroidEnableProfiledAot>
+        <AndroidLinkMode>SdkOnly</AndroidLinkMode>
+        <RunAOTCompilation>false</RunAOTCompilation>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <AndroidResource Include="Icon.png">
+            <Link>Resources\drawable\Icon.png</Link>
+        </AndroidResource>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Avalonia.Android"/>
+        <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\MyBibleApp\MyBibleApp.csproj"/>
+    </ItemGroup>
+</Project>
