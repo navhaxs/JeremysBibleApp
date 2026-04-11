@@ -14,28 +14,39 @@ namespace MyBibleApp.Controls;
 /// Strokes are stored in content-space coordinates (y + scrollOffset at time of
 /// drawing) and rendered back to viewport space via a single PushTransform so they
 /// appear to scroll along with the text.
-///
-/// Performance design:
-///   � Completed strokes are baked into StreamGeometry objects (one draw call per
-///     stroke) and never rebuilt on scroll.
-///   � A content-space bounding box is stored per stroke for O(1) viewport culling.
-///   � The Y-scroll offset is applied as a single DrawingContext transform instead of
-///     converting every point on every frame.
-///   � The active (in-progress) stroke geometry is cached and only rebuilt when a new
-///     point is actually added, not on scroll.
 /// </summary>
 public class InkOverlayCanvas : Control
 {
-    private static readonly IBrush StrokeBrush =
-        new SolidColorBrush(Color.FromArgb(210, 255, 193, 7));
-    private static readonly Pen StrokePen =
-        new Pen(StrokeBrush, 2.5, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+    // ── Styled properties ─────────────────────────────────────────────────────
+
+    public static readonly StyledProperty<Color> PenColorProperty =
+        AvaloniaProperty.Register<InkOverlayCanvas, Color>(
+            nameof(PenColor), Color.FromArgb(210, 255, 193, 7));
+
+    public Color PenColor
+    {
+        get => GetValue(PenColorProperty);
+        set => SetValue(PenColorProperty, value);
+    }
+
+    public static readonly StyledProperty<bool> IsEraserModeProperty =
+        AvaloniaProperty.Register<InkOverlayCanvas, bool>(nameof(IsEraserMode), false);
+
+    public bool IsEraserMode
+    {
+        get => GetValue(IsEraserModeProperty);
+        set => SetValue(IsEraserModeProperty, value);
+    }
+
+    // ── Stroke cache ──────────────────────────────────────────────────────────
 
     // Represents a completed, immutable stroke.
     private readonly record struct StrokeCache(
-        StreamGeometry? Geo,   // null ? single-dot stroke
-        Point DotCenter,       // used only when Geo is null
-        Rect ContentBounds);   // content-space AABB for culling
+        StreamGeometry? Geo,        // null → single-dot stroke
+        Point DotCenter,            // used only when Geo is null
+        Rect ContentBounds,         // content-space AABB for culling / eraser
+        Color Color,                // per-stroke ink colour
+        IReadOnlyList<Point>? Points); // raw points for eraser hit-testing (null for dots)
 
     private readonly List<StrokeCache> _cachedStrokes = new();
 
@@ -43,10 +54,13 @@ public class InkOverlayCanvas : Control
     private List<Point>? _activeStroke;
     private StreamGeometry? _activeGeo;     // rebuilt lazily when _activeStrokeDirty
     private bool _activeStrokeDirty;
+    private Color _activeStrokeColor;
 
     private double _scrollOffsetY;
 
-    // -- Public API called by MainView ----------------------------------------
+    private readonly Dictionary<Color, Pen> _penCache = new();
+
+    // ── Public API called by MainView ─────────────────────────────────────────
 
     /// <summary>Call when the ListBox ScrollViewer offset changes.</summary>
     public void UpdateScrollOffset(double offsetY)
@@ -55,27 +69,39 @@ public class InkOverlayCanvas : Control
         InvalidateVisual();
     }
 
-    /// <summary>Begin a new ink stroke at the given viewport position.</summary>
+    /// <summary>Begin a new ink stroke (or erase) at the given viewport position.</summary>
     public void StartStroke(Point viewportPoint)
     {
+        if (IsEraserMode)
+        {
+            EraseAt(ToContent(viewportPoint));
+            return;
+        }
+        _activeStrokeColor = PenColor;
         _activeStroke = new List<Point> { ToContent(viewportPoint) };
         _activeGeo = null;
         _activeStrokeDirty = true;
         InvalidateVisual();
     }
 
-    /// <summary>Add a point to the active stroke.</summary>
+    /// <summary>Add a point to the active stroke (or continue erasing).</summary>
     public void ContinueStroke(Point viewportPoint)
     {
+        if (IsEraserMode)
+        {
+            EraseAt(ToContent(viewportPoint));
+            return;
+        }
         if (_activeStroke == null) return;
         _activeStroke.Add(ToContent(viewportPoint));
         _activeStrokeDirty = true;
         InvalidateVisual();
     }
 
-    /// <summary>Finish the current stroke.</summary>
+    /// <summary>Finish the current stroke. No-op in eraser mode.</summary>
     public void EndStroke()
     {
+        if (IsEraserMode) return;
         if (_activeStroke != null && _activeStroke.Count > 0)
         {
             if (_activeStroke.Count == 1)
@@ -83,14 +109,18 @@ public class InkOverlayCanvas : Control
                 var p = _activeStroke[0];
                 _cachedStrokes.Add(new StrokeCache(
                     null, p,
-                    new Rect(p.X - 2, p.Y - 2, 4, 4)));
+                    new Rect(p.X - 2, p.Y - 2, 4, 4),
+                    _activeStrokeColor, null));
             }
             else
             {
+                var pts = _activeStroke.AsReadOnly();
                 _cachedStrokes.Add(new StrokeCache(
                     BuildGeometry(_activeStroke),
                     default,
-                    ComputeBounds(_activeStroke)));
+                    ComputeBounds(_activeStroke),
+                    _activeStrokeColor,
+                    pts));
             }
         }
         _activeStroke = null;
@@ -109,12 +139,19 @@ public class InkOverlayCanvas : Control
         InvalidateVisual();
     }
 
-    // -- Pointer events (fired when MainView gives us pointer capture) --------
+    // ── Pointer events (fired when MainView gives us pointer capture) ─────────
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_activeStroke != null && e.Pointer.Type == PointerType.Pen)
+        if (e.Pointer.Type != PointerType.Pen) return;
+
+        if (IsEraserMode)
+        {
+            EraseAt(ToContent(e.GetPosition(this)));
+            e.Handled = true;
+        }
+        else if (_activeStroke != null)
         {
             ContinueStroke(e.GetPosition(this));
             e.Handled = true;
@@ -124,12 +161,11 @@ public class InkOverlayCanvas : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (_activeStroke != null)
-        {
-            EndStroke();
-            e.Pointer.Capture(null);
-            e.Handled = true;
-        }
+        if (e.Pointer.Type != PointerType.Pen) return;
+
+        EndStroke();              // no-op in eraser mode
+        e.Pointer.Capture(null);
+        e.Handled = true;
     }
 
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
@@ -139,7 +175,58 @@ public class InkOverlayCanvas : Control
         base.OnPointerCaptureLost(e);
     }
 
-    // -- Rendering ------------------------------------------------------------
+    // ── Eraser ────────────────────────────────────────────────────────────────
+
+    private void EraseAt(Point contentPoint)
+    {
+        const double radius   = 14.0;
+        const double radiusSq = radius * radius;
+        bool changed = false;
+
+        for (int i = _cachedStrokes.Count - 1; i >= 0; i--)
+        {
+            var s = _cachedStrokes[i];
+
+            // Quick AABB reject expanded by eraser radius.
+            if (s.ContentBounds.Right  + radius < contentPoint.X ||
+                s.ContentBounds.Left   - radius > contentPoint.X ||
+                s.ContentBounds.Bottom + radius < contentPoint.Y ||
+                s.ContentBounds.Top    - radius > contentPoint.Y)
+                continue;
+
+            // Single-dot stroke.
+            if (s.Geo is null)
+            {
+                var dx = s.DotCenter.X - contentPoint.X;
+                var dy = s.DotCenter.Y - contentPoint.Y;
+                if (dx * dx + dy * dy <= radiusSq)
+                {
+                    _cachedStrokes.RemoveAt(i);
+                    changed = true;
+                }
+                continue;
+            }
+
+            // Multi-point stroke – hit if any recorded point is within eraser radius.
+            if (s.Points is null) continue;
+            bool hit = false;
+            foreach (var p in s.Points)
+            {
+                var dx = p.X - contentPoint.X;
+                var dy = p.Y - contentPoint.Y;
+                if (dx * dx + dy * dy <= radiusSq) { hit = true; break; }
+            }
+            if (hit)
+            {
+                _cachedStrokes.RemoveAt(i);
+                changed = true;
+            }
+        }
+
+        if (changed) InvalidateVisual();
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────────
 
     public override void Render(DrawingContext context)
     {
@@ -166,18 +253,22 @@ public class InkOverlayCanvas : Control
                 stroke.ContentBounds.Top    > viewBottom)
                 continue;
 
+            var pen   = GetPen(stroke.Color);
+            var brush = pen.Brush!;
+
             if (stroke.Geo is null)
-                context.DrawEllipse(StrokeBrush, null, stroke.DotCenter, 1.5, 1.5);
+                context.DrawEllipse(brush, null, stroke.DotCenter, 1.5, 1.5);
             else
-                context.DrawGeometry(null, StrokePen, stroke.Geo);
+                context.DrawGeometry(null, pen, stroke.Geo);
         }
 
         // Draw the active (in-progress) stroke.
         if (_activeStroke != null && _activeStroke.Count > 0)
         {
+            var activePen = GetPen(_activeStrokeColor);
             if (_activeStroke.Count == 1)
             {
-                context.DrawEllipse(StrokeBrush, null, _activeStroke[0], 1.5, 1.5);
+                context.DrawEllipse(activePen.Brush!, null, _activeStroke[0], 1.5, 1.5);
             }
             else
             {
@@ -187,12 +278,21 @@ public class InkOverlayCanvas : Control
                     _activeGeo = BuildGeometry(_activeStroke);
                     _activeStrokeDirty = false;
                 }
-                context.DrawGeometry(null, StrokePen, _activeGeo!);
+                context.DrawGeometry(null, activePen, _activeGeo!);
             }
         }
     }
 
-    // -- Geometry helpers -----------------------------------------------------
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private Pen GetPen(Color color)
+    {
+        if (_penCache.TryGetValue(color, out var pen)) return pen;
+        pen = new Pen(new SolidColorBrush(color), 2.5,
+            lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
+        _penCache[color] = pen;
+        return pen;
+    }
 
     private static StreamGeometry BuildGeometry(List<Point> points)
     {
@@ -219,8 +319,6 @@ public class InkOverlayCanvas : Control
         // Add a small margin so the pen stroke thickness is fully included.
         return new Rect(minX - 5, minY - 5, maxX - minX + 10, maxY - minY + 10);
     }
-
-    // -- Coordinate helper ----------------------------------------------------
 
     /// <summary>Convert a viewport point to content space (scroll-relative).</summary>
     private Point ToContent(Point viewport) =>

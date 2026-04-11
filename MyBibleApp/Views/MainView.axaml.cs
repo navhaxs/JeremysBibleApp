@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
 using MyBibleApp.Models;
+using Color = Avalonia.Media.Color;
 
 namespace MyBibleApp.Views;
 
@@ -29,6 +30,19 @@ public partial class MainView : UserControl
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
+
+    // ── Annotation toolbar controls ──────────────────────────────────────────
+    private Border? _annotationToolbar;
+    private ToggleButton? _penModeButton;
+    private ToggleButton? _eraserModeButton;
+    private Button? _colorAmber;
+    private Button? _colorRed;
+    private Button? _colorBlue;
+    private Button? _colorDark;
+    private Button? _customColorButton;
+    private ColorView? _colorPickerView;
+    private Button? _activeColorSwatch;
+    private bool _suppressToolbarUpdates;
 
     public MainView()
     {
@@ -53,6 +67,35 @@ public partial class MainView : UserControl
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressFill  = this.FindControl<Avalonia.Controls.Shapes.Rectangle>("ReaderProgressFill");
 
+        // ── Annotation toolbar controls ──────────────────────────────────────
+        _annotationToolbar = this.FindControl<Border>("AnnotationToolbar");
+        _penModeButton     = this.FindControl<ToggleButton>("PenModeButton");
+        _eraserModeButton  = this.FindControl<ToggleButton>("EraserModeButton");
+        _colorAmber        = this.FindControl<Button>("ColorAmber");
+        _colorRed          = this.FindControl<Button>("ColorRed");
+        _colorBlue         = this.FindControl<Button>("ColorBlue");
+        _colorDark         = this.FindControl<Button>("ColorDark");
+        _customColorButton = this.FindControl<Button>("CustomColorButton");
+
+        // Build the ColorView flyout for the custom-colour button.
+        _colorPickerView = new ColorView
+        {
+            Color          = Color.FromArgb(0xD4, 0xFF, 0xC1, 0x07),
+            IsAlphaEnabled = true
+        };
+        _colorPickerView.ColorChanged += OnColorPickerColorChanged;
+        if (_customColorButton != null)
+        {
+            _customColorButton.Flyout = new Flyout
+            {
+                Placement = PlacementMode.Top,
+                Content   = _colorPickerView
+            };
+        }
+
+        // Set initial active colour swatch (amber).
+        SetActiveColorSwatch(_colorAmber);
+
         // Initialise the dark-mode toggle to reflect the current theme.
         if (_darkModeToggle != null)
             _darkModeToggle.IsChecked = Application.Current?.ActualThemeVariant == ThemeVariant.Dark;
@@ -65,31 +108,21 @@ public partial class MainView : UserControl
         if (_paragraphList == null || _annotationToggle == null) return;
 
         // ── Scroll offset tracking ───────────────────────────────────────────
-        // Keep the InkOverlay in sync with the ListBox scroll so strokes
-        // appear anchored to the text content.
         var sv = _paragraphList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
         if (sv != null)
         {
             sv.ScrollChanged += (_, _) =>
             {
                 if (_inkOverlay != null)
-                {
                     _inkOverlay.UpdateScrollOffset(sv.Offset.Y);
-                }
 
                 UpdateReaderProgress(sv);
             };
 
             UpdateReaderProgress(sv);
-
-        // ── Reader progress tracking ─────────────────────────────────────────────
-        // Update the vertical progress bar as reader scrolls through the book.
         }
 
         // ── Pen event routing → InkOverlay ──────────────────────────────────
-        // When annotation is on and a PEN presses, capture the pointer to the
-        // InkOverlay so all subsequent Moved/Released events go directly to it.
-        // We listen in the bubble phase with handledEventsToo so we always fire.
         _paragraphList.AddHandler(PointerPressedEvent, OnListBoxPenPressed,
             handledEventsToo: true);
 
@@ -129,6 +162,10 @@ public partial class MainView : UserControl
         if (_paragraphList == null) return;
         bool isAnnotating = _annotationToggle?.IsChecked == true;
 
+        // Show / hide the floating toolbar.
+        if (_annotationToolbar != null)
+            _annotationToolbar.IsVisible = isAnnotating;
+
         var scp = _paragraphList.GetVisualDescendants()
             .OfType<ScrollContentPresenter>().FirstOrDefault();
         if (scp == null) return;
@@ -164,6 +201,116 @@ public partial class MainView : UserControl
                 scp.GestureRecognizers.Add(r);
             _savedScrollRecognizers.Clear();
         }
+    }
+
+    // ── Toolbar: pen / eraser mode ────────────────────────────────────────────
+
+    private void OnPenModeIsCheckedChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressToolbarUpdates) return;
+
+        if (_penModeButton?.IsChecked == true)
+        {
+            _suppressToolbarUpdates = true;
+            if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
+            _suppressToolbarUpdates = false;
+            if (_inkOverlay != null) _inkOverlay.IsEraserMode = false;
+        }
+        else
+        {
+            // Prevent un-checking pen unless eraser is the one taking over.
+            if (_eraserModeButton?.IsChecked != true)
+            {
+                _suppressToolbarUpdates = true;
+                if (_penModeButton != null) _penModeButton.IsChecked = true;
+                _suppressToolbarUpdates = false;
+            }
+        }
+    }
+
+    private void OnEraserModeIsCheckedChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressToolbarUpdates) return;
+
+        if (_eraserModeButton?.IsChecked == true)
+        {
+            _suppressToolbarUpdates = true;
+            if (_penModeButton != null) _penModeButton.IsChecked = false;
+            _suppressToolbarUpdates = false;
+            if (_inkOverlay != null) _inkOverlay.IsEraserMode = true;
+        }
+        else
+        {
+            // Prevent un-checking eraser unless pen is taking over.
+            if (_penModeButton?.IsChecked != true)
+            {
+                _suppressToolbarUpdates = true;
+                if (_eraserModeButton != null) _eraserModeButton.IsChecked = true;
+                _suppressToolbarUpdates = false;
+            }
+        }
+    }
+
+    // ── Toolbar: colour selection ─────────────────────────────────────────────
+
+    private void OnColorSwatchClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        if (button.Background is not ISolidColorBrush brush) return;
+
+        ApplyColor(brush.Color);
+        SetActiveColorSwatch(button);
+
+        // Reset the custom-colour button back to its default appearance.
+        if (_customColorButton != null)
+            _customColorButton.ClearValue(Button.BackgroundProperty);
+
+        // Sync ColorView so it reflects the chosen preset.
+        if (_colorPickerView != null) _colorPickerView.Color = brush.Color;
+
+        // Switch back to pen mode when a colour is chosen.
+        if (_penModeButton?.IsChecked != true)
+        {
+            _suppressToolbarUpdates = true;
+            if (_penModeButton    != null) _penModeButton.IsChecked    = true;
+            if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
+            _suppressToolbarUpdates = false;
+            if (_inkOverlay != null) _inkOverlay.IsEraserMode = false;
+        }
+    }
+
+    private void OnColorPickerColorChanged(object? sender, ColorChangedEventArgs e)
+    {
+        ApplyColor(e.NewColor);
+
+        // Tint the custom-colour button to show the chosen colour.
+        if (_customColorButton != null)
+            _customColorButton.Background = new SolidColorBrush(e.NewColor);
+
+        // Deselect preset swatches – a custom colour is now active.
+        SetActiveColorSwatch(null);
+
+        // Switch back to pen mode when a colour is chosen.
+        if (_penModeButton?.IsChecked != true)
+        {
+            _suppressToolbarUpdates = true;
+            if (_penModeButton    != null) _penModeButton.IsChecked    = true;
+            if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
+            _suppressToolbarUpdates = false;
+            if (_inkOverlay != null) _inkOverlay.IsEraserMode = false;
+        }
+    }
+
+    private void ApplyColor(Color color)
+    {
+        if (_inkOverlay != null) _inkOverlay.PenColor = color;
+    }
+
+    private void SetActiveColorSwatch(Button? button)
+    {
+        _activeColorSwatch?.Classes.Remove("selected");
+        _activeColorSwatch = button;
+        _activeColorSwatch?.Classes.Add("selected");
     }
 
     private void UpdateReaderProgress(ScrollViewer scrollViewer)

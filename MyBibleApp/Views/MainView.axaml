@@ -5,6 +5,7 @@
              xmlns:controls="using:MyBibleApp.Controls"
              xmlns:model="using:MyBibleApp.Models"
              xmlns:vm="using:MyBibleApp.ViewModels"
+             xmlns:material="using:Material.Icons.Avalonia"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="MyBibleApp.Views.MainView"
              x:DataType="vm:MainViewModel">
@@ -75,6 +76,31 @@
 
     <Style Selector="ListBox#ParagraphList > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- ── Annotation toolbar styles ──────────────────────────────────────── -->
+
+    <!-- Tool buttons: circular icon buttons (pen / eraser) -->
+    <Style Selector="ToggleButton.tool-btn">
+      <Setter Property="Width" Value="40" />
+      <Setter Property="Height" Value="40" />
+      <Setter Property="CornerRadius" Value="20" />
+      <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <!-- Color swatch buttons: solid-colour circles -->
+    <Style Selector="Button.color-swatch">
+      <Setter Property="Width" Value="32" />
+      <Setter Property="Height" Value="32" />
+      <Setter Property="CornerRadius" Value="16" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <!-- Selected (active) swatch: white ring -->
+    <Style Selector="Button.color-swatch.selected">
+      <Setter Property="BorderThickness" Value="2.5" />
+      <Setter Property="BorderBrush" Value="White" />
     </Style>
   </UserControl.Styles>
 
@@ -205,6 +231,62 @@
                  HorizontalAlignment="Stretch"
                  VerticalAlignment="Top"
                  Height="0" />
+    </Border>
+
+    <!-- ── Annotation toolbar (visible only while annotation mode is on) ───── -->
+    <Border x:Name="AnnotationToolbar"
+            IsVisible="False"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Bottom"
+            Margin="0,0,0,20"
+            ZIndex="30"
+            CornerRadius="28"
+            BorderThickness="1"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+            Padding="10,6">
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+
+        <!-- Pen draw mode -->
+        <ToggleButton x:Name="PenModeButton"
+                      Classes="tool-btn"
+                      IsChecked="True"
+                      ToolTip.Tip="Draw"
+                      IsCheckedChanged="OnPenModeIsCheckedChanged">
+          <material:MaterialIcon Kind="Pencil" Width="20" Height="20" />
+        </ToggleButton>
+
+        <!-- Eraser mode -->
+        <ToggleButton x:Name="EraserModeButton"
+                      Classes="tool-btn"
+                      ToolTip.Tip="Erase"
+                      IsCheckedChanged="OnEraserModeIsCheckedChanged">
+          <material:MaterialIcon Kind="Eraser" Width="20" Height="20" />
+        </ToggleButton>
+
+        <!-- Divider -->
+        <Rectangle Width="1" Height="28" VerticalAlignment="Center"
+                   Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                   Opacity="0.5" Margin="4,0" />
+
+        <!-- Preset colour swatches -->
+        <Button x:Name="ColorAmber" Classes="color-swatch" Background="#D4FFC107"
+                ToolTip.Tip="Amber" Click="OnColorSwatchClick" />
+        <Button x:Name="ColorRed"   Classes="color-swatch" Background="#D4F44336"
+                ToolTip.Tip="Red"   Click="OnColorSwatchClick" />
+        <Button x:Name="ColorBlue"  Classes="color-swatch" Background="#D42196F3"
+                ToolTip.Tip="Blue"  Click="OnColorSwatchClick" />
+        <Button x:Name="ColorDark"  Classes="color-swatch" Background="#D437474F"
+                ToolTip.Tip="Dark"  Click="OnColorSwatchClick" />
+
+        <!-- Custom colour picker -->
+        <Button x:Name="CustomColorButton"
+                Classes="tool-btn"
+                ToolTip.Tip="Custom colour">
+          <material:MaterialIcon Kind="Palette" Width="20" Height="20" />
+        </Button>
+
+      </StackPanel>
     </Border>
 
   </Panel>
