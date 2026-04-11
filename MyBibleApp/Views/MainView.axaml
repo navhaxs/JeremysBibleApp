@@ -84,29 +84,35 @@
     <vm:MainViewModel />
   </Design.DataContext>
 
-  <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12">
-      <TextBlock Grid.Column="0" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" />
-      <ToggleSwitch Grid.Column="1" x:Name="AnnotationToggle" Content="Annotate (Pen)" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
-    </Grid>
-    <TextBlock Grid.Row="1" Text="{Binding Status}" Opacity="0.8" />
-    
-    <!-- Main content grid (row 2) with overlay -->
-    <Grid Grid.Row="2" RowDefinitions="*">
-      <!-- ListBox for Bible content -->
-      <ListBox Grid.Row="0" Name="ParagraphList" SelectionMode="Single" SelectionChanged="OnParagraphListSelectionChanged" ItemsSource="{Binding Paragraphs}">
-      <ListBox.ItemTemplate>
-          <DataTemplate x:DataType="model:BibleParagraph">
-            <Grid Margin="0,0,0,14" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
-              <TextBlock Grid.Column="0"
-                         Grid.RowSpan="2"
-                         IsVisible="{Binding HasChapterDropCap}"
-                         Text="{Binding ChapterDropCapText}"
-                         FontSize="44"
-                         FontWeight="Bold"
-                         Margin="0,-6,10,0"
-                         VerticalAlignment="Top" />
-              <controls:LongPressSelectableTextBlock Grid.Column="1"
+  <Panel>
+    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Grid.Column="0" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" />
+        <ToggleSwitch Grid.Column="1" x:Name="AnnotationToggle" Content="Annotate (Pen)" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
+      </Grid>
+      <TextBlock Grid.Row="1" Text="{Binding Status}" Opacity="0.8" />
+      
+      <!-- Main content grid (row 2) with overlay -->
+      <Grid Grid.Row="2" RowDefinitions="*">
+        <!-- ListBox for Bible content -->
+        <ListBox Grid.Row="0"
+                 Name="ParagraphList"
+                 SelectionMode="Single"
+                 SelectionChanged="OnParagraphListSelectionChanged"
+                 ItemsSource="{Binding Paragraphs}"
+                 ScrollViewer.VerticalScrollBarVisibility="Hidden">
+        <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="model:BibleParagraph">
+              <Grid Margin="0,0,0,14" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Grid.RowSpan="2"
+                           IsVisible="{Binding HasChapterDropCap}"
+                           Text="{Binding ChapterDropCapText}"
+                           FontSize="44"
+                           FontWeight="Bold"
+                           Margin="0,-6,10,0"
+                           VerticalAlignment="Top" />
+                <controls:LongPressSelectableTextBlock Grid.Column="1"
                                                      Grid.Row="0"
                                                      IsVisible="{Binding IsBodyText}"
                                                      Text="{Binding Text}"
@@ -114,7 +120,7 @@
                                                      FontSize="19"
                                                      LineHeight="30" />
 
-              <controls:LongPressSelectableTextBlock Grid.Column="1"
+                <controls:LongPressSelectableTextBlock Grid.Column="1"
                                                      Grid.Row="0"
                                                      IsVisible="{Binding IsHeading}"
                                                      Text="{Binding Text}"
@@ -123,27 +129,46 @@
                                                      FontWeight="Bold"
                                                      LineHeight="30" />
 
-              <ItemsControl Grid.Column="1" Grid.Row="1" IsVisible="{Binding HasFootnotes}" ItemsSource="{Binding Footnotes}">
-                <ItemsControl.ItemsPanel>
-                  <ItemsPanelTemplate>
-                    <WrapPanel />
-                  </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="model:BibleFootnote">
-                    <Button Classes="footnote-chip" Content="{Binding Marker}" Click="OnFootnoteButtonClick" />
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </Grid>
-          </DataTemplate>
-       </ListBox.ItemTemplate>
-      </ListBox>
+                <ItemsControl Grid.Column="1" Grid.Row="1" IsVisible="{Binding HasFootnotes}" ItemsSource="{Binding Footnotes}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="model:BibleFootnote">
+                      <Button Classes="footnote-chip" Content="{Binding Marker}" Click="OnFootnoteButtonClick" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </Grid>
+            </DataTemplate>
+         </ListBox.ItemTemplate>
+        </ListBox>
 
-      <!-- Single full-viewport ink overlay (not hittable – touch falls through to ListBox).
-           MainView routes captured pen events here when annotation mode is on. -->
-      <controls:InkOverlayCanvas Grid.Row="0" x:Name="InkOverlay" IsHitTestVisible="False" ZIndex="10" />
+        <!-- Single full-viewport ink overlay (not hittable – touch falls through to ListBox).
+             MainView routes captured pen events here when annotation mode is on. -->
+        <controls:InkOverlayCanvas Grid.Row="0" x:Name="InkOverlay" IsHitTestVisible="False" ZIndex="10" />
 
+      </Grid>
     </Grid>
-  </Grid>
+
+    <!-- Reader progress indicator (replaces visible scrollbar). -->
+    <!-- Track: full-height strip on the right edge -->
+    <Border x:Name="ReaderProgressTrack"
+            Width="4"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Stretch"
+            Background="#20808080"
+            IsHitTestVisible="False"
+            ZIndex="20">
+      <!-- Fill: sized from code-behind, top-anchored so it grows downward -->
+      <Rectangle x:Name="ReaderProgressFill"
+                 Fill="{DynamicResource SystemAccentColor}"
+                 HorizontalAlignment="Stretch"
+                 VerticalAlignment="Top"
+                 Height="0" />
+    </Border>
+
+  </Panel>
 </UserControl>

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
@@ -21,6 +22,9 @@ public partial class MainView : UserControl
     private ListBox? _paragraphList;
     private ToggleSwitch? _annotationToggle;
     private InkOverlayCanvas? _inkOverlay;
+    private Border? _readerProgressTrack;
+    private Avalonia.Controls.Shapes.Rectangle? _readerProgressFill;
+    private IReadOnlyList<BibleParagraph> _paragraphs = [];
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
@@ -43,6 +47,13 @@ public partial class MainView : UserControl
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
         _annotationToggle = this.FindControl<ToggleSwitch>("AnnotationToggle");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
+        _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
+        _readerProgressFill  = this.FindControl<Avalonia.Controls.Shapes.Rectangle>("ReaderProgressFill");
+
+        if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
+        {
+            _paragraphs = vm.Paragraphs;
+        }
 
         if (_paragraphList == null || _annotationToggle == null) return;
 
@@ -50,9 +61,22 @@ public partial class MainView : UserControl
         // Keep the InkOverlay in sync with the ListBox scroll so strokes
         // appear anchored to the text content.
         var sv = _paragraphList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
-        if (sv != null && _inkOverlay != null)
+        if (sv != null)
         {
-            sv.ScrollChanged += (_, _) => _inkOverlay.UpdateScrollOffset(sv.Offset.Y);
+            sv.ScrollChanged += (_, _) =>
+            {
+                if (_inkOverlay != null)
+                {
+                    _inkOverlay.UpdateScrollOffset(sv.Offset.Y);
+                }
+
+                UpdateReaderProgress(sv);
+            };
+
+            UpdateReaderProgress(sv);
+
+        // ── Reader progress tracking ─────────────────────────────────────────────
+        // Update the vertical progress bar as reader scrolls through the book.
         }
 
         // ── Pen event routing → InkOverlay ──────────────────────────────────
@@ -133,6 +157,82 @@ public partial class MainView : UserControl
                 scp.GestureRecognizers.Add(r);
             _savedScrollRecognizers.Clear();
         }
+    }
+
+    private void UpdateReaderProgress(ScrollViewer scrollViewer)
+    {
+        if (_readerProgressTrack == null || _readerProgressFill == null)
+            return;
+
+        if (_paragraphList == null || _paragraphs.Count == 0)
+        {
+            _readerProgressFill.Height = 0;
+            return;
+        }
+
+        var (topParagraph, topOffset) = GetTopVisibleParagraph();
+        if (topParagraph == null)
+            return;
+
+        var paragraphIndex = FindParagraphIndex(topParagraph);
+        if (paragraphIndex < 0)
+            return;
+
+        var totalLength = Math.Max(1, _paragraphs.Count);
+        var bookOffset  = Math.Clamp(paragraphIndex + topOffset, 0, totalLength);
+        var fraction    = bookOffset / totalLength;
+
+        _readerProgressFill.Height = _readerProgressTrack.Bounds.Height * fraction;
+    }
+
+    private (BibleParagraph? Paragraph, double OffsetWithinParagraph) GetTopVisibleParagraph()
+    {
+        if (_paragraphList == null)
+        {
+            return (null, 0);
+        }
+
+        var candidates = _paragraphList.GetVisualDescendants()
+            .OfType<ListBoxItem>()
+            .Select(item => new
+            {
+                Item = item,
+                Top = item.TranslatePoint(default, _paragraphList)?.Y,
+                Height = item.Bounds.Height,
+                Paragraph = item.DataContext as BibleParagraph
+            })
+            .Where(x => x.Paragraph != null && x.Top.HasValue && x.Height > 0)
+            .Select(x => new
+            {
+                x.Paragraph,
+                Top = x.Top!.Value,
+                x.Height
+            })
+            .Where(x => x.Top + x.Height > 0)
+            .OrderBy(x => x.Top)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return (null, 0);
+        }
+
+        var top = candidates[0];
+        var offsetWithinParagraph = Math.Clamp(-top.Top / top.Height, 0, 1);
+        return (top.Paragraph, offsetWithinParagraph);
+    }
+
+    private int FindParagraphIndex(BibleParagraph paragraph)
+    {
+        for (var i = 0; i < _paragraphs.Count; i++)
+        {
+            if (ReferenceEquals(_paragraphs[i], paragraph))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
 
