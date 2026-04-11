@@ -139,6 +139,14 @@ public class InkOverlayCanvas : Control
         InvalidateVisual();
     }
 
+    /// <summary>Remove the most recently completed stroke.</summary>
+    public void UndoStroke()
+    {
+        if (_cachedStrokes.Count == 0) return;
+        _cachedStrokes.RemoveAt(_cachedStrokes.Count - 1);
+        InvalidateVisual();
+    }
+
     // ── Pointer events (fired when MainView gives us pointer capture) ─────────
 
     protected override void OnPointerMoved(PointerEventArgs e)

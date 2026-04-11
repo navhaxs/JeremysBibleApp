@@ -40,6 +40,7 @@ public partial class MainView : UserControl
     private Button? _colorBlue;
     private Button? _colorDark;
     private Button? _customColorButton;
+    private Button? _undoButton;
     private ColorView? _colorPickerView;
     private Button? _activeColorSwatch;
     private bool _suppressToolbarUpdates;
@@ -76,6 +77,7 @@ public partial class MainView : UserControl
         _colorBlue         = this.FindControl<Button>("ColorBlue");
         _colorDark         = this.FindControl<Button>("ColorDark");
         _customColorButton = this.FindControl<Button>("CustomColorButton");
+        _undoButton        = this.FindControl<Button>("UndoButton");
 
         // Build the ColorView flyout for the custom-colour button.
         _colorPickerView = new ColorView
@@ -249,6 +251,13 @@ public partial class MainView : UserControl
                 _suppressToolbarUpdates = false;
             }
         }
+    }
+
+    // ── Toolbar: undo ─────────────────────────────────────────────────────────
+
+    private void OnUndoButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _inkOverlay?.UndoStroke();
     }
 
     // ── Toolbar: colour selection ─────────────────────────────────────────────

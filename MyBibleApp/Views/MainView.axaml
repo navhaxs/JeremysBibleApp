@@ -264,6 +264,14 @@
           <material:MaterialIcon Kind="Eraser" Width="20" Height="20" />
         </ToggleButton>
 
+        <!-- Undo last stroke -->
+        <Button x:Name="UndoButton"
+                Classes="tool-btn"
+                ToolTip.Tip="Undo"
+                Click="OnUndoButtonClick">
+          <material:MaterialIcon Kind="Undo" Width="20" Height="20" />
+        </Button>
+
         <!-- Divider -->
         <Rectangle Width="1" Height="28" VerticalAlignment="Center"
                    Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
