@@ -391,46 +391,42 @@ public partial class MainView : UserControl
         }
     }
 
-    private void OnLookupGoButtonClick(object? sender, RoutedEventArgs e)
+    private async void OnLookupGoButtonClick(object? sender, RoutedEventArgs e)
     {
         if (_isApplyingLookupSelection) return;
 
-        // Defer all side-effects (source mutations + flyout close) until after the
-        // ListBox SelectionModel commit has fully completed.
-        Dispatcher.UIThread.Post(() =>
+        if (DataContext is not MainViewModel vm) return;
+        if (vm.SelectedLookupBook == null) return;
+        if (vm.SelectedLookupChapter < 1 || vm.SelectedLookupVerse < 1) return;
+
+        _isApplyingLookupSelection = true;
+        try
         {
-            if (DataContext is not MainViewModel vm) return;
-            if (vm.SelectedLookupBook == null) return;
-            if (vm.SelectedLookupChapter < 1 || vm.SelectedLookupVerse < 1) return;
+            var requestedCode = vm.SelectedLookupBook.Code;
+            var requestedName = vm.SelectedLookupBook.Name;
+            var requestedChapter = vm.SelectedLookupChapter;
+            var requestedVerse = vm.SelectedLookupVerse;
 
-            _isApplyingLookupSelection = true;
-            try
+            if (!requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
             {
-                var requestedCode = vm.SelectedLookupBook.Code;
-                var requestedName = vm.SelectedLookupBook.Name;
-                var requestedChapter = vm.SelectedLookupChapter;
-                var requestedVerse = vm.SelectedLookupVerse;
-
-                if (!requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!vm.TryLoadBookFromApi(requestedCode, requestedChapter, requestedVerse, out var error))
-                        vm.Status = $"Could not load {requestedName} online: {error}";
-                }
-
-                _paragraphs = vm.Paragraphs;
-                vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
-
-                if (requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
-                    ScrollToReference(vm.SelectedLookupChapter, vm.SelectedLookupVerse);
-
-                if (_headerLookupButton?.Flyout is Flyout flyout)
-                    flyout.Hide();
+                var result = await vm.TryLoadBookFromApiAsync(requestedCode, requestedChapter, requestedVerse);
+                if (!result.Success)
+                    vm.Status = $"Could not load {requestedName} online: {result.Error}";
             }
-            finally
-            {
-                _isApplyingLookupSelection = false;
-            }
-        }, DispatcherPriority.Background);
+
+            _paragraphs = vm.Paragraphs;
+            vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
+
+            if (requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
+                ScrollToReference(vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+
+            if (_headerLookupButton?.Flyout is Flyout flyout)
+                flyout.Hide();
+        }
+        finally
+        {
+            _isApplyingLookupSelection = false;
+        }
     }
 
 

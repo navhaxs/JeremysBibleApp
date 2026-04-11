@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Net.Http;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 using MyBibleApp.Models;
 
@@ -18,7 +19,7 @@ public sealed class UsxBibleApiLoader
         _parser = parser;
     }
 
-    public BibleBook LoadFromApi(string bookCode)
+    public async Task<BibleBook> LoadFromApiAsync(string bookCode)
     {
         if (string.IsNullOrWhiteSpace(bookCode))
             throw new ArgumentException("Book code is required.", nameof(bookCode));
@@ -26,13 +27,12 @@ public sealed class UsxBibleApiLoader
         var normalizedCode = bookCode.Trim().ToLowerInvariant();
         var uri = new Uri($"{BaseUrl}{normalizedCode}.usx", UriKind.Absolute);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        using var response = HttpClient.Send(request);
+        using var response = await HttpClient.GetAsync(uri).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"API request failed ({(int)response.StatusCode} {response.ReasonPhrase}).");
 
-        var xml = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
         var document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
         return _parser.Parse(document);
     }

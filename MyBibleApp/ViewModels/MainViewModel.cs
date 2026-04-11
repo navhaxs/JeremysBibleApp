@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using MyBibleApp.Models;
@@ -165,19 +166,17 @@ public class MainViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _selectedLookupVerse, value);
     }
 
-    public bool TryLoadBookFromApi(string bookCode, int chapter, int verse, out string? error)
+    public async Task<(bool Success, string? Error)> TryLoadBookFromApiAsync(string bookCode, int chapter, int verse)
     {
         try
         {
-            var book = _apiLoader.LoadFromApi(bookCode);
+            var book = await _apiLoader.LoadFromApiAsync(bookCode).ConfigureAwait(false);
             ApplyLoadedBook(book, "Loaded from fetch.bible API.", chapter, verse);
-            error = null;
-            return true;
+            return (true, null);
         }
         catch (Exception ex)
         {
-            error = ex.Message;
-            return false;
+            return (false, ex.Message);
         }
     }
 
