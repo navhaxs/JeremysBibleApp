@@ -86,9 +86,27 @@
 
   <Panel>
     <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
-      <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12">
-        <TextBlock Grid.Column="0" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" />
-        <ToggleSwitch Grid.Column="1" x:Name="AnnotationToggle" Content="Annotate (Pen)" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
+      <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+
+        <!-- Main app menu button -->
+        <Button Grid.Column="0" FontSize="18" Padding="8,4" VerticalAlignment="Center">
+          <Button.Content>☰</Button.Content>
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedLeft">
+              <StackPanel Spacing="12" Margin="4" MinWidth="200">
+                <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="15" />
+                <Rectangle Height="1" Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Opacity="0.4" />
+                <ToggleSwitch x:Name="DarkModeToggle"
+                              OffContent="Dark mode"
+                              OnContent="Dark mode"
+                              IsCheckedChanged="OnDarkModeToggleChanged" />
+              </StackPanel>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+
+        <TextBlock Grid.Column="1" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <ToggleSwitch Grid.Column="2" x:Name="AnnotationToggle" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
       </Grid>
       <TextBlock Grid.Row="1" Text="{Binding Status}" Opacity="0.8" />
       

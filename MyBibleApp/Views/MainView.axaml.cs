@@ -9,6 +9,7 @@ using Avalonia.Input;
 using Avalonia.Input.GestureRecognizers;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
 using MyBibleApp.Models;
@@ -21,6 +22,7 @@ public partial class MainView : UserControl
     private readonly SelectableTextBlock _footnoteTextBlock;
     private ListBox? _paragraphList;
     private ToggleSwitch? _annotationToggle;
+    private ToggleSwitch? _darkModeToggle;
     private InkOverlayCanvas? _inkOverlay;
     private Border? _readerProgressTrack;
     private Avalonia.Controls.Shapes.Rectangle? _readerProgressFill;
@@ -46,9 +48,14 @@ public partial class MainView : UserControl
     {
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
         _annotationToggle = this.FindControl<ToggleSwitch>("AnnotationToggle");
+        _darkModeToggle = this.FindControl<ToggleSwitch>("DarkModeToggle");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressFill  = this.FindControl<Avalonia.Controls.Shapes.Rectangle>("ReaderProgressFill");
+
+        // Initialise the dark-mode toggle to reflect the current theme.
+        if (_darkModeToggle != null)
+            _darkModeToggle.IsChecked = Application.Current?.ActualThemeVariant == ThemeVariant.Dark;
 
         if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
         {
@@ -235,6 +242,15 @@ public partial class MainView : UserControl
         return -1;
     }
 
+
+    // ── Settings flyout handlers ─────────────────────────────────────────────
+
+    private void OnDarkModeToggleChanged(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch toggle || Application.Current == null) return;
+        Application.Current.RequestedThemeVariant =
+            toggle.IsChecked == true ? ThemeVariant.Dark : ThemeVariant.Light;
+    }
 
     // ── Standard handlers ────────────────────────────────────────────────────
 
