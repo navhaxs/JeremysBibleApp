@@ -54,13 +54,18 @@ public sealed class UsxBibleParser
                 continue;
             }
 
+            var style = element.Attribute("style")?.Value;
+            if (IsNonReadingStyle(style))
+            {
+                continue;
+            }
+
             var paragraph = BuildParagraph(element, ref verseCount);
             if (string.IsNullOrWhiteSpace(paragraph.Text))
             {
                 continue;
             }
 
-            var style = element.Attribute("style")?.Value;
             paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, paragraph.Footnotes)
             {
                 IsHeading = IsHeadingStyle(style),
@@ -176,6 +181,20 @@ public sealed class UsxBibleParser
 
         return style.StartsWith("s", StringComparison.OrdinalIgnoreCase)
             || style is "d" or "r" or "mr" or "ms";
+    }
+
+    private static bool IsNonReadingStyle(string? style)
+    {
+        if (string.IsNullOrWhiteSpace(style))
+        {
+            return false;
+        }
+
+        // USX front matter and navigation metadata: not body-reading content.
+        return style.Equals("h", StringComparison.OrdinalIgnoreCase)
+            || style.StartsWith("toc", StringComparison.OrdinalIgnoreCase)
+            || style.StartsWith("mt", StringComparison.OrdinalIgnoreCase)
+            || style.StartsWith("imt", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ExtractFootnoteText(XElement noteElement)
