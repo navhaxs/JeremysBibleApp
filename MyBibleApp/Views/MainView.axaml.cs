@@ -21,8 +21,6 @@ public partial class MainView : UserControl
     private ListBox? _paragraphList;
     private ToggleSwitch? _annotationToggle;
     private InkOverlayCanvas? _inkOverlay;
-    private string _lastPointerInfo = "–";
-    private int _captureLostCount;
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
@@ -64,25 +62,8 @@ public partial class MainView : UserControl
         _paragraphList.AddHandler(PointerPressedEvent, OnListBoxPenPressed,
             handledEventsToo: true);
 
-        // ── Debug logging ────────────────────────────────────────────────────
-        _paragraphList.AddHandler(PointerMovedEvent, (_, ev) =>
-        {
-            if (ev.Pointer.Type == PointerType.Pen)
-            {
-                _lastPointerInfo = $"Move pen handled={ev.Handled}";
-                UpdateDebugDisplay();
-            }
-        }, handledEventsToo: true);
-        _paragraphList.AddHandler(PointerCaptureLostEvent, (_, _) =>
-        {
-            _captureLostCount++;
-            _lastPointerInfo = $"CaptureLost #{_captureLostCount}";
-            UpdateDebugDisplay();
-        }, handledEventsToo: true);
-
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
         UpdateAnnotationState();
-        UpdateDebugDisplay();
     }
 
     // ── Pen press routing ────────────────────────────────────────────────────
@@ -92,8 +73,6 @@ public partial class MainView : UserControl
         if (_annotationToggle?.IsChecked != true) return;
         if (e.Pointer.Type != PointerType.Pen) return;
         if (_inkOverlay == null) return;
-
-        _lastPointerInfo = $"PenPress → overlay";
 
         // Start a stroke at the pen's viewport position relative to the overlay.
         var pos = e.GetPosition(_inkOverlay);
@@ -105,7 +84,6 @@ public partial class MainView : UserControl
         e.Pointer.Capture(_inkOverlay);
         e.Handled = true;
 
-        UpdateDebugDisplay();
     }
 
     // ── Annotation toggle / scroll gesture swap ───────────────────────────────
@@ -113,7 +91,6 @@ public partial class MainView : UserControl
     private void OnAnnotationToggleChanged(object? sender, RoutedEventArgs e)
     {
         UpdateAnnotationState();
-        UpdateDebugDisplay();
     }
 
     private void UpdateAnnotationState()
@@ -158,26 +135,6 @@ public partial class MainView : UserControl
         }
     }
 
-    // ── Debug overlay ─────────────────────────────────────────────────────────
-
-    private void UpdateDebugDisplay()
-    {
-        bool isAnnotating = _annotationToggle?.IsChecked == true;
-        var scp = _paragraphList?.GetVisualDescendants()
-            .OfType<ScrollContentPresenter>().FirstOrDefault();
-        int touchOnlyCount = scp?.GestureRecognizers
-            .OfType<TouchOnlyScrollGestureRecognizer>().Count() ?? 0;
-        int strokes = _inkOverlay != null ? 0 : 0; // shown via debug text below
-
-        this.FindControl<TextBlock>("DebugAnnotatingStatus")!.Text =
-            $"Ann:{(isAnnotating ? "ON" : "OFF")}";
-        this.FindControl<TextBlock>("DebugPointerStatus")!.Text =
-            $"Last: {_lastPointerInfo}";
-        this.FindControl<TextBlock>("DebugStrokeStatus")!.Text =
-            $"CapLost:{_captureLostCount}";
-        this.FindControl<TextBlock>("DebugScrollStatus")!.Text =
-            $"SCP:{scp != null}  TouchOnly:{touchOnlyCount}  Saved:{_savedScrollRecognizers.Count}";
-    }
 
     // ── Standard handlers ────────────────────────────────────────────────────
 

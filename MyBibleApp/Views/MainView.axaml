@@ -144,23 +144,6 @@
            MainView routes captured pen events here when annotation mode is on. -->
       <controls:InkOverlayCanvas Grid.Row="0" x:Name="InkOverlay" IsHitTestVisible="False" ZIndex="10" />
 
-      <!-- Debug overlay (no hit test) -->
-      <Border Grid.Row="0" 
-              IsHitTestVisible="False" 
-              VerticalAlignment="Top" 
-              HorizontalAlignment="Left" 
-              Margin="16"
-              Background="#BB000000"
-              Padding="8"
-              CornerRadius="4"
-              Opacity="0.9">
-        <StackPanel Spacing="4">
-          <TextBlock Name="DebugAnnotatingStatus" FontSize="12" Foreground="Lime" FontFamily="monospace" />
-          <TextBlock Name="DebugPointerStatus" FontSize="12" Foreground="Cyan" FontFamily="monospace" />
-          <TextBlock Name="DebugStrokeStatus" FontSize="12" Foreground="Yellow" FontFamily="monospace" />
-          <TextBlock Name="DebugScrollStatus" FontSize="12" Foreground="Orange" FontFamily="monospace" />
-        </StackPanel>
-      </Border>
     </Grid>
   </Grid>
 </UserControl>
