@@ -112,7 +112,7 @@
 
   <Panel>
     <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
-      <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+      <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
 
         <!-- Main app menu button -->
         <Button Grid.Column="0" FontSize="18" Padding="8,4" VerticalAlignment="Center">
@@ -135,7 +135,14 @@
         </Button>
 
         <TextBlock Grid.Column="1" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
-        <ToggleSwitch Grid.Column="2" x:Name="AnnotationToggle" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
+        <ToggleButton Grid.Column="2"
+                      x:Name="SplitViewToggle"
+                      Classes="tool-btn"
+                      ToolTip.Tip="Split view"
+                      IsCheckedChanged="OnSplitViewToggleIsCheckedChanged">
+          <material:MaterialIcon Kind="ViewSplitVertical" Width="20" Height="20" />
+        </ToggleButton>
+        <ToggleSwitch Grid.Column="3" x:Name="AnnotationToggle" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
       </Grid>
       <TextBlock Grid.Row="1"
                  Text="{Binding Status}"

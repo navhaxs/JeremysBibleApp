@@ -16,8 +16,30 @@
       <Button Name="DebugToggle" Content="Show Debug Pointer (Dev)" Click="OnDebugToggleClick" Width="200" />
       <Button Name="DebugDrawingToggle" Content="Show Debug Drawing (Dev)" Click="OnDebugDrawingToggleClick" Width="200" />
     </StackPanel>
-    <views:MainView Grid.Row="1" x:Name="MainView" />
-    <views:DebugPointerView Grid.Row="1" x:Name="DebugView" IsVisible="False" />
-    <views:DebugDrawingView Grid.Row="1" x:Name="DebugDrawingView" IsVisible="False" />
+
+    <!-- Split-capable content area -->
+    <Grid Grid.Row="1" x:Name="ContentGrid">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" MinWidth="120" />
+        <ColumnDefinition Width="0" MinWidth="0" />
+        <ColumnDefinition Width="0" MinWidth="0" />
+      </Grid.ColumnDefinitions>
+
+      <views:MainView Grid.Column="0" x:Name="MainView" />
+
+      <GridSplitter Grid.Column="1"
+                    x:Name="PaneSplitter"
+                    IsVisible="False"
+                    ResizeBehavior="PreviousAndNext"
+                    ResizeDirection="Columns"
+                    Background="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                    HorizontalAlignment="Stretch" />
+
+      <views:MainView Grid.Column="2" x:Name="SecondaryView" IsVisible="False" />
+
+      <!-- Debug overlays span both panes -->
+      <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugView"        IsVisible="False" />
+      <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugDrawingView" IsVisible="False" />
+    </Grid>
   </Grid>
 </UserControl>

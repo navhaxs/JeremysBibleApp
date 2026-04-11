@@ -24,6 +24,12 @@ public partial class MainView : UserControl
     private ListBox? _paragraphList;
     private ToggleSwitch? _annotationToggle;
     private ToggleSwitch? _darkModeToggle;
+    private ToggleButton? _splitViewToggle;
+    private bool _suppressSplitEvent;
+
+    // Raised when the user taps the split-view toggle (true = split on, false = off).
+    public event EventHandler<bool>? SplitToggled;
+
     private InkOverlayCanvas? _inkOverlay;
     private Border? _readerProgressTrack;
     private Avalonia.Controls.Shapes.Rectangle? _readerProgressFill;
@@ -57,13 +63,22 @@ public partial class MainView : UserControl
         };
 
         Loaded += OnLoaded;
+
+        // Keep _paragraphs in sync when DataContext is set after Loaded fires
+        // (e.g. the secondary split pane gets its VM assigned lazily).
+        DataContextChanged += (_, _) =>
+        {
+            if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
+                _paragraphs = vm.Paragraphs;
+        };
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
         _annotationToggle = this.FindControl<ToggleSwitch>("AnnotationToggle");
-        _darkModeToggle = this.FindControl<ToggleSwitch>("DarkModeToggle");
+        _darkModeToggle   = this.FindControl<ToggleSwitch>("DarkModeToggle");
+        _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressFill  = this.FindControl<Avalonia.Controls.Shapes.Rectangle>("ReaderProgressFill");
@@ -157,6 +172,22 @@ public partial class MainView : UserControl
     private void OnAnnotationToggleChanged(object? sender, RoutedEventArgs e)
     {
         UpdateAnnotationState();
+    }
+
+    // ── Split-view toggle ────────────────────────────────────────────────────
+
+    private void OnSplitViewToggleIsCheckedChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressSplitEvent) return;
+        SplitToggled?.Invoke(this, _splitViewToggle?.IsChecked == true);
+    }
+
+    /// <summary>Called by AppShellView to sync the button state without re-firing the event.</summary>
+    public void SetSplitActive(bool isActive)
+    {
+        _suppressSplitEvent = true;
+        if (_splitViewToggle != null) _splitViewToggle.IsChecked = isActive;
+        _suppressSplitEvent = false;
     }
 
     private void UpdateAnnotationState()
