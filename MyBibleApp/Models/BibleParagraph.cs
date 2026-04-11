@@ -12,7 +12,9 @@ public sealed record BibleParagraph(string Text, int? ChapterDropCap, int StartC
 
     public bool IsHeading { get; init; }
 
-    public bool IsBodyText => !IsHeading;
+    public bool IsParallelReference { get; init; }
+
+    public bool IsBodyText => !IsHeading && !IsParallelReference;
 
     public IList<BibleInkStroke> InkStrokes { get; init; } = [];
 }

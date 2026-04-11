@@ -8,12 +8,18 @@ namespace MyBibleApp.ViewModels;
 
 public class MainViewModel : ViewModelBase
 {
-    private const string SampleUsxUri = "avares://MyBibleApp/Assets/usx/sample-3jn.usx";
+    private const string SampleUsxUri = "avares://MyBibleApp/Assets/usx/sample-jhn1.usx";
     private const string BooksJsonUri = "avares://MyBibleApp/Assets/books.json";
     
     private string _header = string.Empty;
     private string _bookTitle = string.Empty;
     private readonly IBookNameProvider _bookNameProvider;
+    private string _status = string.Empty;
+// #if DEBUG
+//     private bool _isDebugMode = true;
+// #else
+    private bool _isDebugMode;
+// #endif
 
     public MainViewModel()
     {
@@ -45,7 +51,17 @@ public class MainViewModel : ViewModelBase
 
     public string BookTitle => _bookTitle;
 
-    public string Status { get; }
+    public string Status
+    {
+        get => _status;
+        set => this.RaiseAndSetIfChanged(ref _status, value);
+    }
+
+    public bool IsDebugMode
+    {
+        get => _isDebugMode;
+        set => this.RaiseAndSetIfChanged(ref _isDebugMode, value);
+    }
 
     public IReadOnlyList<BibleParagraph> Paragraphs { get; }
 }

@@ -70,6 +70,7 @@ public sealed class UsxBibleParser
             paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, currentChapter, currentVerse, paragraph.Footnotes)
             {
                 IsHeading = IsHeadingStyle(style),
+                IsParallelReference = IsParallelReferenceStyle(style),
                 InkStrokes = new List<BibleInkStroke>()
             });
             chapterDropCapPending = false;
@@ -186,7 +187,12 @@ public sealed class UsxBibleParser
         }
 
         return style.StartsWith("s", StringComparison.OrdinalIgnoreCase)
-            || style is "d" or "r" or "mr" or "ms";
+            || style is "d" or "mr" or "ms";
+    }
+
+    private static bool IsParallelReferenceStyle(string? style)
+    {
+        return style?.Equals("r", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static bool IsNonReadingStyle(string? style)

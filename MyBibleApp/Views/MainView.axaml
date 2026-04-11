@@ -100,6 +100,9 @@
                               OffContent="Dark mode"
                               OnContent="Dark mode"
                               IsCheckedChanged="OnDarkModeToggleChanged" />
+                <ToggleSwitch OffContent="Debug mode"
+                              OnContent="Debug mode"
+                              IsChecked="{Binding IsDebugMode, Mode=TwoWay}" />
               </StackPanel>
             </Flyout>
           </Button.Flyout>
@@ -108,7 +111,10 @@
         <TextBlock Grid.Column="1" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
         <ToggleSwitch Grid.Column="2" x:Name="AnnotationToggle" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
       </Grid>
-      <TextBlock Grid.Row="1" Text="{Binding Status}" Opacity="0.8" />
+      <TextBlock Grid.Row="1"
+                 Text="{Binding Status}"
+                 IsVisible="{Binding IsDebugMode}"
+                 Opacity="0.8" />
       
       <!-- Main content grid (row 2) with overlay -->
       <Grid Grid.Row="2" RowDefinitions="*">
@@ -146,6 +152,15 @@
                                                      FontSize="19"
                                                      FontWeight="Bold"
                                                      LineHeight="30" />
+
+                <controls:LongPressSelectableTextBlock Grid.Column="1"
+                                                     Grid.Row="0"
+                                                     IsVisible="{Binding IsParallelReference}"
+                                                     Text="{Binding Text}"
+                                                     TextWrapping="Wrap"
+                                                     FontSize="15"
+                                                     FontStyle="Italic"
+                                                     LineHeight="24" />
 
                 <ItemsControl Grid.Column="1" Grid.Row="1" IsVisible="{Binding HasFootnotes}" ItemsSource="{Binding Footnotes}">
                   <ItemsControl.ItemsPanel>
