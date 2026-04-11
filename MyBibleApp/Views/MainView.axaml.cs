@@ -10,6 +10,7 @@ using Avalonia.Input.GestureRecognizers;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
 using MyBibleApp.Models;
@@ -28,6 +29,7 @@ public partial class MainView : UserControl
     private ToggleButton? _splitViewToggle;
     private Button? _headerLookupButton;
     private bool _suppressSplitEvent;
+    private bool _isApplyingLookupSelection;
 
     // Raised when the user taps the split-view toggle (true = split on, false = off).
     public event EventHandler<bool>? SplitToggled;
@@ -389,27 +391,48 @@ public partial class MainView : UserControl
         }
     }
 
-    private void OnLookupVerseSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnLookupGoButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is not MainViewModel vm) return;
-        if (vm.SelectedLookupBook == null) return;
-        if (vm.SelectedLookupChapter < 1 || vm.SelectedLookupVerse < 1) return;
+        if (_isApplyingLookupSelection) return;
 
-        var selectedBook = vm.SelectedLookupBook;
-        var displayTitle = selectedBook.Code.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase)
-            ? vm.BookTitle
-            : selectedBook.Name;
+        // Defer all side-effects (source mutations + flyout close) until after the
+        // ListBox SelectionModel commit has fully completed.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (DataContext is not MainViewModel vm) return;
+            if (vm.SelectedLookupBook == null) return;
+            if (vm.SelectedLookupChapter < 1 || vm.SelectedLookupVerse < 1) return;
 
-        vm.Header = $"{displayTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
+            _isApplyingLookupSelection = true;
+            try
+            {
+                var requestedCode = vm.SelectedLookupBook.Code;
+                var requestedName = vm.SelectedLookupBook.Name;
+                var requestedChapter = vm.SelectedLookupChapter;
+                var requestedVerse = vm.SelectedLookupVerse;
 
-        // We only have one local USX sample loaded right now, so scroll only when
-        // the picked reference is in the currently loaded book.
-        if (selectedBook.Code.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
-            ScrollToReference(vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+                if (!requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!vm.TryLoadBookFromApi(requestedCode, requestedChapter, requestedVerse, out var error))
+                        vm.Status = $"Could not load {requestedName} online: {error}";
+                }
 
-        if (_headerLookupButton?.Flyout is Flyout flyout)
-            flyout.Hide();
+                _paragraphs = vm.Paragraphs;
+                vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
+
+                if (requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
+                    ScrollToReference(vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+
+                if (_headerLookupButton?.Flyout is Flyout flyout)
+                    flyout.Hide();
+            }
+            finally
+            {
+                _isApplyingLookupSelection = false;
+            }
+        }, DispatcherPriority.Background);
     }
+
 
     private void ScrollToReference(int chapter, int verse)
     {

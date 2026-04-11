@@ -144,6 +144,7 @@
           <Button.Flyout>
             <Flyout Placement="BottomEdgeAlignedLeft">
               <Border Padding="10" MaxWidth="500" MaxHeight="520">
+                <StackPanel Spacing="10">
                 <Grid ColumnDefinitions="200,90,90" ColumnSpacing="8">
                   <StackPanel Grid.Column="0" Spacing="6">
                     <TextBlock Text="Books" FontWeight="SemiBold" />
@@ -178,10 +179,15 @@
                              ScrollViewer.VerticalScrollBarVisibility="Auto"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              ItemsSource="{Binding LookupVerses}"
-                             SelectedItem="{Binding SelectedLookupVerse, Mode=TwoWay}"
-                             SelectionChanged="OnLookupVerseSelectionChanged" />
+                             SelectedItem="{Binding SelectedLookupVerse, Mode=TwoWay}" />
                   </StackPanel>
                 </Grid>
+                <Button HorizontalAlignment="Right"
+                        Margin="0,10,0,0"
+                        MinWidth="96"
+                        Content="Go"
+                        Click="OnLookupGoButtonClick" />
+                </StackPanel>
               </Border>
             </Flyout>
           </Button.Flyout>

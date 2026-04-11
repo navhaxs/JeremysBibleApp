@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using MyBibleApp.Models;
 using MyBibleApp.Services;
 using ReactiveUI;
@@ -20,7 +21,10 @@ public class MainViewModel : ViewModelBase
     private string _bookTitle = string.Empty;
     private string _bookCode = string.Empty;
     private readonly IBookNameProvider _bookNameProvider;
+    private readonly UsxBibleApiLoader _apiLoader;
     private string _status = string.Empty;
+
+    private IReadOnlyList<BibleParagraph> _paragraphs = [];
 
     private IReadOnlyList<ScriptureLookupBook> _lookupBooks = [];
     private IReadOnlyList<int> _lookupChapters = [];
@@ -40,30 +44,15 @@ public class MainViewModel : ViewModelBase
     public MainViewModel()
     {
         _bookNameProvider = new JsonBookNameProvider(BooksJsonUri);
+        _apiLoader = new UsxBibleApiLoader(new UsxBibleParser());
 
         LoadLookupMetadata();
 
         try
         {
-            IUsxBibleLoader loader = new UsxBibleAssetLoader(new UsxBibleParser());
+            var loader = new UsxBibleAssetLoader(new UsxBibleParser());
             var book = loader.LoadFromAsset(SampleUsxUri);
-
-            _bookCode = book.Code;
-            _bookTitle = _bookNameProvider.GetEnglishName(book.Code);
-            Paragraphs = book.Paragraphs;
-            Status = $"Loaded {book.VerseCount} verses across {book.Paragraphs.Count} paragraphs from local USX asset.";
-
-            // Sync lookup selection to loaded content (default jhn 1:1 in this sample).
-            var initialBook = _lookupBooks.FirstOrDefault(b =>
-                string.Equals(b.Code, _bookCode, StringComparison.OrdinalIgnoreCase));
-            if (initialBook != null)
-                SelectedLookupBook = initialBook;
-            else if (_lookupBooks.Count > 0)
-                SelectedLookupBook = _lookupBooks[0];
-
-            SelectedLookupChapter = 1;
-            SelectedLookupVerse = 1;
-            Header = $"{_bookTitle} {SelectedLookupChapter}:{SelectedLookupVerse}";
+            ApplyLoadedBook(book, "Loaded from local USX asset.", initialSelectionChapter: 1, initialSelectionVerse: 1);
         }
         catch (Exception ex)
         {
@@ -95,7 +84,11 @@ public class MainViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isDebugMode, value);
     }
 
-    public IReadOnlyList<BibleParagraph> Paragraphs { get; }
+    public IReadOnlyList<BibleParagraph> Paragraphs
+    {
+        get => _paragraphs;
+        private set => this.RaiseAndSetIfChanged(ref _paragraphs, value);
+    }
 
     public IReadOnlyList<ScriptureLookupBook> LookupBooks
     {
@@ -127,13 +120,21 @@ public class MainViewModel : ViewModelBase
             if (value == null)
                 return;
 
-            var chapterCount = GetChapterCount(value.Code);
-            LookupChapters = Enumerable.Range(1, chapterCount).ToArray();
+            // Defer source changes to avoid mutating a ListBox source while its
+            // SelectionModel is still committing the current update.
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!Equals(_selectedLookupBook, value))
+                    return;
 
-            if (_selectedLookupChapter < 1 || _selectedLookupChapter > chapterCount)
-                SelectedLookupChapter = 1;
-            else
-                RefreshVerses();
+                var chapterCount = GetChapterCount(value.Code);
+                LookupChapters = Enumerable.Range(1, chapterCount).ToArray();
+
+                if (_selectedLookupChapter < 1 || _selectedLookupChapter > chapterCount)
+                    SelectedLookupChapter = 1;
+                else
+                    RefreshVerses();
+            });
         }
     }
 
@@ -147,7 +148,14 @@ public class MainViewModel : ViewModelBase
 
             this.RaiseAndSetIfChanged(ref _selectedLookupChapter, value);
 
-            RefreshVerses();
+            // Same reason as above: defer verse source mutation until the current
+            // chapter selection transaction has completed.
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_selectedLookupChapter != value)
+                    return;
+                RefreshVerses();
+            });
         }
     }
 
@@ -155,6 +163,42 @@ public class MainViewModel : ViewModelBase
     {
         get => _selectedLookupVerse;
         set => this.RaiseAndSetIfChanged(ref _selectedLookupVerse, value);
+    }
+
+    public bool TryLoadBookFromApi(string bookCode, int chapter, int verse, out string? error)
+    {
+        try
+        {
+            var book = _apiLoader.LoadFromApi(bookCode);
+            ApplyLoadedBook(book, "Loaded from fetch.bible API.", chapter, verse);
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private void ApplyLoadedBook(BibleBook book, string sourceStatus, int initialSelectionChapter, int initialSelectionVerse)
+    {
+        _bookCode = book.Code;
+        _bookTitle = _bookNameProvider.GetEnglishName(book.Code);
+
+        Paragraphs = book.Paragraphs;
+        Status = $"Loaded {book.VerseCount} verses across {book.Paragraphs.Count} paragraphs. {sourceStatus}";
+
+        var initialBook = _lookupBooks.FirstOrDefault(b =>
+            string.Equals(b.Code, _bookCode, StringComparison.OrdinalIgnoreCase));
+        if (initialBook != null)
+            SelectedLookupBook = initialBook;
+        else if (_lookupBooks.Count > 0)
+            SelectedLookupBook = _lookupBooks[0];
+
+        SelectedLookupChapter = Math.Max(1, initialSelectionChapter);
+        SelectedLookupVerse = Math.Max(1, initialSelectionVerse);
+        Header = $"{_bookTitle} {SelectedLookupChapter}:{SelectedLookupVerse}";
     }
 
     private void RefreshVerses()
@@ -193,8 +237,8 @@ public class MainViewModel : ViewModelBase
     {
         try
         {
-            var booksDocument = ReadJsonAsset(BooksJsonUri);
-            var lastVerseDocument = ReadJsonAsset(LastVerseJsonUri);
+            using var booksDocument = ReadJsonAsset(BooksJsonUri);
+            using var lastVerseDocument = ReadJsonAsset(LastVerseJsonUri);
 
             var orderedCodes = new List<string>();
             if (booksDocument.RootElement.TryGetProperty("books_ordered", out var orderedElement))
@@ -233,7 +277,6 @@ public class MainViewModel : ViewModelBase
         }
         catch
         {
-            // Keep fallback values if metadata cannot be loaded.
             LookupBooks = [];
         }
     }
