@@ -162,7 +162,11 @@
                                                      FontStyle="Italic"
                                                      LineHeight="24" />
 
-                <ItemsControl Grid.Column="1" Grid.Row="1" IsVisible="{Binding HasFootnotes}" ItemsSource="{Binding Footnotes}">
+                <ItemsControl Grid.Column="1"
+                              Grid.Row="1"
+                              IsVisible="{Binding HasFootnotes}"
+                              ItemsSource="{Binding Footnotes}"
+                              HorizontalAlignment="Right">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                       <WrapPanel />
