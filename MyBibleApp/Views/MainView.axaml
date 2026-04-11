@@ -134,7 +134,58 @@
           </Button.Flyout>
         </Button>
 
-        <TextBlock Grid.Column="1" Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <Button Grid.Column="1"
+                x:Name="HeaderLookupButton"
+                HorizontalAlignment="Left"
+                Padding="0"
+                Background="Transparent"
+                BorderBrush="Transparent">
+          <TextBlock Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedLeft">
+              <Border Padding="10" MaxWidth="500" MaxHeight="520">
+                <Grid ColumnDefinitions="200,90,90" ColumnSpacing="8">
+                  <StackPanel Grid.Column="0" Spacing="6">
+                    <TextBlock Text="Books" FontWeight="SemiBold" />
+                    <ListBox Name="LookupBooksList"
+                             Height="280"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ItemsSource="{Binding LookupBooks}"
+                             SelectedItem="{Binding SelectedLookupBook, Mode=TwoWay}">
+                      <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="model:ScriptureLookupBook">
+                          <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                      </ListBox.ItemTemplate>
+                    </ListBox>
+                  </StackPanel>
+
+                  <StackPanel Grid.Column="1" Spacing="6">
+                    <TextBlock Text="Chapters" FontWeight="SemiBold" />
+                    <ListBox Name="LookupChaptersList"
+                             Height="280"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ItemsSource="{Binding LookupChapters}"
+                             SelectedItem="{Binding SelectedLookupChapter, Mode=TwoWay}" />
+                  </StackPanel>
+
+                  <StackPanel Grid.Column="2" Spacing="6">
+                    <TextBlock Text="Verses" FontWeight="SemiBold" />
+                    <ListBox Name="LookupVersesList"
+                             Height="280"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ItemsSource="{Binding LookupVerses}"
+                             SelectedItem="{Binding SelectedLookupVerse, Mode=TwoWay}"
+                             SelectionChanged="OnLookupVerseSelectionChanged" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
         <ToggleButton Grid.Column="2"
                       x:Name="SplitViewToggle"
                       Classes="tool-btn"

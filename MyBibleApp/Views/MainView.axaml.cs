@@ -13,6 +13,7 @@ using Avalonia.Styling;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
 using MyBibleApp.Models;
+using MyBibleApp.ViewModels;
 using Color = Avalonia.Media.Color;
 
 namespace MyBibleApp.Views;
@@ -25,6 +26,7 @@ public partial class MainView : UserControl
     private ToggleSwitch? _annotationToggle;
     private ToggleSwitch? _darkModeToggle;
     private ToggleButton? _splitViewToggle;
+    private Button? _headerLookupButton;
     private bool _suppressSplitEvent;
 
     // Raised when the user taps the split-view toggle (true = split on, false = off).
@@ -79,6 +81,7 @@ public partial class MainView : UserControl
         _annotationToggle = this.FindControl<ToggleSwitch>("AnnotationToggle");
         _darkModeToggle   = this.FindControl<ToggleSwitch>("DarkModeToggle");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
+        _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressFill  = this.FindControl<Avalonia.Controls.Shapes.Rectangle>("ReaderProgressFill");
@@ -378,10 +381,46 @@ public partial class MainView : UserControl
 
         _readerProgressFill.Height = _readerProgressTrack.Bounds.Height * fraction;
 
-        if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
+        if (DataContext is MainViewModel vm)
         {
             vm.Header = $"{vm.BookTitle} {topParagraph.StartChapter}:{topParagraph.StartVerse}";
+            vm.SelectedLookupChapter = topParagraph.StartChapter;
+            vm.SelectedLookupVerse = topParagraph.StartVerse;
         }
+    }
+
+    private void OnLookupVerseSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        if (vm.SelectedLookupBook == null) return;
+        if (vm.SelectedLookupChapter < 1 || vm.SelectedLookupVerse < 1) return;
+
+        var selectedBook = vm.SelectedLookupBook;
+        var displayTitle = selectedBook.Code.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase)
+            ? vm.BookTitle
+            : selectedBook.Name;
+
+        vm.Header = $"{displayTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
+
+        // We only have one local USX sample loaded right now, so scroll only when
+        // the picked reference is in the currently loaded book.
+        if (selectedBook.Code.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
+            ScrollToReference(vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+
+        if (_headerLookupButton?.Flyout is Flyout flyout)
+            flyout.Hide();
+    }
+
+    private void ScrollToReference(int chapter, int verse)
+    {
+        if (_paragraphList == null || _paragraphs.Count == 0) return;
+
+        var target = _paragraphs.FirstOrDefault(p =>
+            p.StartChapter > chapter || (p.StartChapter == chapter && p.StartVerse >= verse));
+
+        target ??= _paragraphs.LastOrDefault();
+        if (target != null)
+            _paragraphList.ScrollIntoView(target);
     }
 
     private (BibleParagraph? Paragraph, double OffsetWithinParagraph) GetTopVisibleParagraph()
