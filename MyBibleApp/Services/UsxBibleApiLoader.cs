@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -11,6 +12,7 @@ public sealed class UsxBibleApiLoader
     private const string BaseUrl = "https://v1.fetch.bible/bibles/eng_bsb/usx/";
 
     private static readonly HttpClient HttpClient = new();
+    private static readonly ConcurrentDictionary<string, string> UsxCache = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly UsxBibleParser _parser;
 
@@ -25,14 +27,18 @@ public sealed class UsxBibleApiLoader
             throw new ArgumentException("Book code is required.", nameof(bookCode));
 
         var normalizedCode = bookCode.Trim().ToLowerInvariant();
-        var uri = new Uri($"{BaseUrl}{normalizedCode}.usx", UriKind.Absolute);
+        if (!UsxCache.TryGetValue(normalizedCode, out var xml))
+        {
+            var uri = new Uri($"{BaseUrl}{normalizedCode}.usx", UriKind.Absolute);
+            using var response = await HttpClient.GetAsync(uri).ConfigureAwait(false);
 
-        using var response = await HttpClient.GetAsync(uri).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"API request failed ({(int)response.StatusCode} {response.ReasonPhrase}).");
 
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"API request failed ({(int)response.StatusCode} {response.ReasonPhrase}).");
+            xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            UsxCache[normalizedCode] = xml;
+        }
 
-        var xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
         var document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
         return _parser.Parse(document);
     }
