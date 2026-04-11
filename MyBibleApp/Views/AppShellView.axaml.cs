@@ -28,6 +28,11 @@ public partial class AppShellView : UserControl
         _primaryView   = this.FindControl<MainView>("MainView");
         _secondaryView = this.FindControl<MainView>("SecondaryView");
 
+        // Give the secondary pane its own VM up front so it never inherits the
+        // AppShell DataContext (which is used by the primary pane/debug UI).
+        if (_secondaryView != null)
+            _secondaryView.DataContext = new MainViewModel();
+
         if (_primaryView != null) _primaryView.SplitToggled += OnSplitToggled;
         if (_secondaryView != null) _secondaryView.SplitToggled += OnSplitToggled;
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
@@ -43,9 +48,6 @@ public partial class AppShellView : UserControl
 
         if (_isSplit)
         {
-            // Lazily create a fresh ViewModel for the secondary pane.
-            if (_secondaryView.DataContext == null)
-                _secondaryView.DataContext = new MainViewModel();
 
             _contentGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
             _contentGrid.ColumnDefinitions[1].Width = new GridLength(SplitterWidth);
