@@ -14,5 +14,7 @@
         <PackageReference Include="Avalonia"/>
         <PackageReference Include="Avalonia.Themes.Fluent"/>
         <PackageReference Include="Avalonia.Fonts.Inter"/>
+        <PackageReference Include="Material.Icons.Avalonia" />
+        <PackageReference Include="ReactiveUI.Avalonia"/>
     </ItemGroup>
 </Project>

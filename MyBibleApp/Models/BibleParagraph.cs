@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace MyBibleApp.Models;
 
-public sealed record BibleParagraph(string Text, int? ChapterDropCap, IReadOnlyList<BibleFootnote> Footnotes)
+public sealed record BibleParagraph(string Text, int? ChapterDropCap, int StartChapter, int StartVerse, IReadOnlyList<BibleFootnote> Footnotes)
 {
     public bool HasChapterDropCap => ChapterDropCap.HasValue;
 

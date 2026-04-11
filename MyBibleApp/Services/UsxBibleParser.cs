@@ -33,6 +33,7 @@ public sealed class UsxBibleParser
 
         var paragraphs = new List<BibleParagraph>();
         var currentChapter = 1;
+        var currentVerse = 1;
         var chapterDropCapPending = true;
         var verseCount = 0;
 
@@ -60,13 +61,13 @@ public sealed class UsxBibleParser
                 continue;
             }
 
-            var paragraph = BuildParagraph(element, ref verseCount);
+            var paragraph = BuildParagraph(element, ref currentVerse, ref verseCount);
             if (string.IsNullOrWhiteSpace(paragraph.Text))
             {
                 continue;
             }
 
-            paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, paragraph.Footnotes)
+            paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, currentChapter, currentVerse, paragraph.Footnotes)
             {
                 IsHeading = IsHeadingStyle(style),
                 InkStrokes = new List<BibleInkStroke>()
@@ -87,20 +88,20 @@ public sealed class UsxBibleParser
         return string.Join(' ', input.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     }
 
-    private static ParsedParagraph BuildParagraph(XElement paragraphElement, ref int verseCount)
+    private static ParsedParagraph BuildParagraph(XElement paragraphElement, ref int currentVerse, ref int verseCount)
     {
         var builder = new StringBuilder();
         var footnotes = new List<BibleFootnote>();
 
         foreach (var node in paragraphElement.Nodes())
         {
-            AppendNode(node, builder, footnotes, ref verseCount);
+            AppendNode(node, builder, footnotes, ref currentVerse, ref verseCount);
         }
 
         return new ParsedParagraph(builder.ToString(), footnotes);
     }
 
-    private static void AppendNode(XNode node, StringBuilder paragraphBuilder, List<BibleFootnote> footnotes, ref int verseCount)
+    private static void AppendNode(XNode node, StringBuilder paragraphBuilder, List<BibleFootnote> footnotes, ref int currentVerse, ref int verseCount)
     {
         if (node is XText textNode)
         {
@@ -127,6 +128,11 @@ public sealed class UsxBibleParser
                 return;
             }
 
+            if (int.TryParse(verseNumber, out var parsedVerse))
+            {
+                currentVerse = parsedVerse;
+            }
+
             verseCount++;
             paragraphBuilder.Append(ToSuperscript(verseNumber));
             return;
@@ -148,7 +154,7 @@ public sealed class UsxBibleParser
 
         foreach (var child in element.Nodes())
         {
-            AppendNode(child, paragraphBuilder, footnotes, ref verseCount);
+            AppendNode(child, paragraphBuilder, footnotes, ref currentVerse, ref verseCount);
         }
     }
 

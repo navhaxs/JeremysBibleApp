@@ -1,5 +1,7 @@
+﻿using ReactiveUI;
+
 namespace MyBibleApp.ViewModels;
 
-public abstract class ViewModelBase
+public abstract class ViewModelBase : ReactiveObject
 {
 }

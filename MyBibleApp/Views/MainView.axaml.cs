@@ -190,6 +190,11 @@ public partial class MainView : UserControl
         var fraction    = bookOffset / totalLength;
 
         _readerProgressFill.Height = _readerProgressTrack.Bounds.Height * fraction;
+
+        if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
+        {
+            vm.Header = $"{vm.BookTitle} {topParagraph.StartChapter}:{topParagraph.StartVerse}";
+        }
     }
 
     private (BibleParagraph? Paragraph, double OffsetWithinParagraph) GetTopVisibleParagraph()
