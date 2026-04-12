@@ -24,19 +24,19 @@ public partial class DebugDrawingView : UserControl
             // Hook pointer events to show status
             inkCanvas.AddHandler(PointerPressedEvent, (s, e) =>
             {
-                statusText.Text = $"Pen Pressed: {e.Pointer.Type} at {e.GetPosition(inkCanvas)}";
+                statusText?.Text = $"Pen Pressed: {e.Pointer.Type} at {e.GetPosition(inkCanvas)}";
             }, handledEventsToo: true);
 
             inkCanvas.AddHandler(PointerMovedEvent, (s, e) =>
             {
                 if (e.Pointer.Type == PointerType.Pen)
-                    statusText.Text = $"Pen Moved: {e.GetPosition(inkCanvas)} - Strokes: {inkCanvas.InkStrokes?.Count ?? 0}";
+                    statusText?.Text = $"Pen Moved: {e.GetPosition(inkCanvas)} - Strokes: {inkCanvas.InkStrokes?.Count ?? 0}";
             }, handledEventsToo: true);
 
             inkCanvas.AddHandler(PointerReleasedEvent, (s, e) =>
             {
                 if (e.Pointer.Type == PointerType.Pen)
-                    statusText.Text = $"Pen Released - Total strokes: {inkCanvas.InkStrokes?.Count ?? 0}";
+                    statusText?.Text = $"Pen Released - Total strokes: {inkCanvas.InkStrokes?.Count ?? 0}";
             }, handledEventsToo: true);
         }
 
@@ -47,7 +47,7 @@ public partial class DebugDrawingView : UserControl
                 if (inkCanvas?.InkStrokes != null)
                 {
                     inkCanvas.InkStrokes.Clear();
-                    statusText.Text = "Drawing cleared. Ready for new input.";
+                    statusText?.Text = "Drawing cleared. Ready for new input.";
                 }
             };
         }
