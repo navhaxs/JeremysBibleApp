@@ -37,6 +37,9 @@ public partial class MainView : UserControl
     private InkOverlayCanvas? _inkOverlay;
     private Border? _readerProgressTrack;
     private Avalonia.Controls.Shapes.Rectangle? _readerProgressFill;
+    private ScrollViewer? _paragraphScrollViewer;
+    private bool _isScrollTrackingAttached;
+    private bool _waitingForLayoutToAttachScrollViewer;
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
@@ -74,7 +77,18 @@ public partial class MainView : UserControl
         {
             if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
                 _paragraphs = vm.Paragraphs;
+
+            RefreshReaderProgress();
         };
+
+        this.GetObservable(IsVisibleProperty).Subscribe(isVisible =>
+        {
+            // The secondary split pane starts hidden; wire scroll tracking once it is shown.
+            if (isVisible)
+                EnsureScrollTrackingAttached();
+
+            RefreshReaderProgress();
+        });
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
@@ -129,20 +143,12 @@ public partial class MainView : UserControl
 
         if (_paragraphList == null || _annotationToggle == null) return;
 
+        if (_readerProgressTrack != null)
+            _readerProgressTrack.SizeChanged += (_, _) => RefreshReaderProgress();
+
         // ── Scroll offset tracking ───────────────────────────────────────────
-        var sv = _paragraphList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
-        if (sv != null)
-        {
-            sv.ScrollChanged += (_, _) =>
-            {
-                if (_inkOverlay != null)
-                    _inkOverlay.UpdateScrollOffset(sv.Offset.Y);
-
-                UpdateReaderProgress(sv);
-            };
-
-            UpdateReaderProgress(sv);
-        }
+        EnsureScrollTrackingAttached();
+        RefreshReaderProgress();
 
         // ── Pen event routing → InkOverlay ──────────────────────────────────
         _paragraphList.AddHandler(PointerPressedEvent, OnListBoxPenPressed,
@@ -150,6 +156,56 @@ public partial class MainView : UserControl
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
         UpdateAnnotationState();
+    }
+
+    private void EnsureScrollTrackingAttached()
+    {
+        if (_isScrollTrackingAttached || _paragraphList == null)
+            return;
+
+        var sv = _paragraphList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+        if (sv == null)
+        {
+            // For hidden/unrealized panes, wait for layout updates instead of posting
+            // recursive UI-thread callbacks that can starve startup.
+            if (!_waitingForLayoutToAttachScrollViewer)
+            {
+                _paragraphList.LayoutUpdated += OnParagraphListLayoutUpdated;
+                _waitingForLayoutToAttachScrollViewer = true;
+            }
+            return;
+        }
+
+        if (_waitingForLayoutToAttachScrollViewer)
+        {
+            _paragraphList.LayoutUpdated -= OnParagraphListLayoutUpdated;
+            _waitingForLayoutToAttachScrollViewer = false;
+        }
+
+        _paragraphScrollViewer = sv;
+        _paragraphScrollViewer.ScrollChanged += OnParagraphScrollChanged;
+        _isScrollTrackingAttached = true;
+    }
+
+    private void OnParagraphListLayoutUpdated(object? sender, EventArgs e)
+    {
+        EnsureScrollTrackingAttached();
+    }
+
+    private void OnParagraphScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (_paragraphScrollViewer == null)
+            return;
+
+        _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
+        UpdateReaderProgress(_paragraphScrollViewer);
+    }
+
+    private void RefreshReaderProgress()
+    {
+        EnsureScrollTrackingAttached();
+        if (_paragraphScrollViewer != null)
+            UpdateReaderProgress(_paragraphScrollViewer);
     }
 
     // ── Pen press routing ────────────────────────────────────────────────────
