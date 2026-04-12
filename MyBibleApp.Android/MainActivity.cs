@@ -9,7 +9,13 @@ namespace MyBibleApp.Android;
     Theme = "@style/MyTheme.NoActionBar",
     Icon = "@drawable/icon",
     MainLauncher = true,
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
+    ResizeableActivity = true,
+    ConfigurationChanges = ConfigChanges.Orientation |
+                           ConfigChanges.ScreenSize |
+                           ConfigChanges.SmallestScreenSize |
+                           ConfigChanges.ScreenLayout |
+                           ConfigChanges.Density |
+                           ConfigChanges.UiMode)]
 public class MainActivity : AvaloniaMainActivity
 {
 }
