@@ -171,7 +171,10 @@ public class MainViewModel : ViewModelBase
         try
         {
             var book = await _apiLoader.LoadFromApiAsync(bookCode).ConfigureAwait(false);
-            ApplyLoadedBook(book, "Loaded from fetch.bible API.", chapter, verse);
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+                ApplyLoadedBook(book, "Loaded from fetch.bible API.", chapter, verse));
+
             return (true, null);
         }
         catch (Exception ex)

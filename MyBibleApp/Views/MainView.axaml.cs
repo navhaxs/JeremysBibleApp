@@ -474,7 +474,7 @@ public partial class MainView : UserControl
             vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
 
             if (requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
-                ScrollToReference(vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+                ScrollToReference(requestedChapter, requestedVerse);
 
             if (_headerLookupButton?.Flyout is Flyout flyout)
                 flyout.Hide();

@@ -7,8 +7,25 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="MyBibleApp.Views.AppShellView"
              x:DataType="vm:MainViewModel">
-  <Grid RowDefinitions="Auto,*">
+  <UserControl.Styles>
+    <Style Selector="Button.passage-tab">
+      <Setter Property="Width" Value="78" />
+      <Setter Property="MinHeight" Value="46" />
+      <Setter Property="Padding" Value="6,4" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style Selector="Button.passage-tab.selected">
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
+      <Setter Property="BorderThickness" Value="2" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,*">
     <StackPanel Grid.Row="0"
+                Grid.Column="0"
                 Orientation="Horizontal"
                 Spacing="8"
                 Margin="8"
@@ -18,7 +35,7 @@
     </StackPanel>
 
     <!-- Split-capable content area -->
-    <Grid Grid.Row="1" x:Name="ContentGrid">
+    <Grid Grid.Row="1" Grid.Column="0" x:Name="ContentGrid">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" MinWidth="120" />
         <ColumnDefinition Width="0" MinWidth="0" />
@@ -41,5 +58,31 @@
       <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugView"        IsVisible="False" />
       <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugDrawingView" IsVisible="False" />
     </Grid>
+
+    <!-- Right-edge passage tabs -->
+    <Border Grid.Row="0"
+            Grid.RowSpan="2"
+            Grid.Column="1"
+            BorderThickness="1,0,0,0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+            Padding="6">
+      <Grid RowDefinitions="*,Auto" RowSpacing="8">
+        <ScrollViewer Grid.Row="0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="TabButtonsHost" Spacing="6" />
+        </ScrollViewer>
+
+        <Button Grid.Row="1"
+                x:Name="AddTabButton"
+                Width="78"
+                Height="38"
+                FontSize="20"
+                Content="+"
+                ToolTip.Tip="Add passage tab"
+                Click="OnAddTabButtonClick" />
+      </Grid>
+    </Border>
   </Grid>
 </UserControl>
