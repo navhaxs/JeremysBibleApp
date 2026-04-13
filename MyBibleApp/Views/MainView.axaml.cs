@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
@@ -57,6 +58,9 @@ public partial class MainView : UserControl
     private ColorView? _colorPickerView;
     private Button? _activeColorSwatch;
     private bool _suppressToolbarUpdates;
+
+    private bool _isMouseDragging;
+    private Point _lastMousePosition;
 
     public MainView()
     {
@@ -152,6 +156,14 @@ public partial class MainView : UserControl
 
         // ── Pen event routing → InkOverlay ──────────────────────────────────
         _paragraphList.AddHandler(PointerPressedEvent, OnListBoxPenPressed,
+            handledEventsToo: true);
+        
+        // ── Mouse drag scrolling ─────────────────────────────────────────────
+        _paragraphList.AddHandler(PointerPressedEvent, OnListBoxMousePressed,
+            handledEventsToo: true);
+        _paragraphList.AddHandler(PointerMovedEvent, OnListBoxMouseMoved,
+            handledEventsToo: true);
+        _paragraphList.AddHandler(PointerReleasedEvent, OnListBoxMouseReleased,
             handledEventsToo: true);
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
@@ -442,8 +454,7 @@ public partial class MainView : UserControl
         if (DataContext is MainViewModel vm)
         {
             vm.Header = $"{vm.BookTitle} {topParagraph.StartChapter}:{topParagraph.StartVerse}";
-            vm.SelectedLookupChapter = topParagraph.StartChapter;
-            vm.SelectedLookupVerse = topParagraph.StartVerse;
+            vm.UpdateLookupFromReaderProgress(topParagraph.StartChapter, topParagraph.StartVerse);
         }
     }
 
@@ -474,7 +485,7 @@ public partial class MainView : UserControl
             vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
 
             if (requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
-                ScrollToReference(requestedChapter, requestedVerse);
+                await ScrollToReferenceAsync(requestedChapter, requestedVerse);
 
             if (_headerLookupButton?.Flyout is Flyout flyout)
                 flyout.Hide();
@@ -486,16 +497,52 @@ public partial class MainView : UserControl
     }
 
 
-    private void ScrollToReference(int chapter, int verse)
+    private async Task ScrollToReferenceAsync(int chapter, int verse)
     {
         if (_paragraphList == null || _paragraphs.Count == 0) return;
 
-        var target = _paragraphs.FirstOrDefault(p =>
+        BibleParagraph? target = null;
+
+        if (verse == 1)
+        {
+            target = _paragraphs.FirstOrDefault(p =>
+                p.StartChapter == chapter && p.StartVerse == 1 && p.HasChapterDropCap);
+        }
+
+        target ??= _paragraphs.LastOrDefault(p =>
+            p.StartChapter < chapter || (p.StartChapter == chapter && p.StartVerse <= verse));
+
+        target ??= _paragraphs.FirstOrDefault(p =>
             p.StartChapter > chapter || (p.StartChapter == chapter && p.StartVerse >= verse));
 
         target ??= _paragraphs.LastOrDefault();
-        if (target != null)
-            _paragraphList.ScrollIntoView(target);
+        if (target == null)
+            return;
+
+        _paragraphList.ScrollIntoView(target);
+
+        // Wait for item realization, then adjust offset so the target lands at the top.
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Loaded);
+
+        EnsureScrollTrackingAttached();
+        if (_paragraphScrollViewer == null)
+            return;
+
+        var item = _paragraphList.GetVisualDescendants()
+            .OfType<ListBoxItem>()
+            .FirstOrDefault(x => ReferenceEquals(x.DataContext, target));
+        if (item == null)
+            return;
+
+        var itemTopInViewport = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
+        if (!itemTopInViewport.HasValue)
+            return;
+
+        var desiredY = _paragraphScrollViewer.Offset.Y + itemTopInViewport.Value;
+        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+        desiredY = Math.Clamp(desiredY, 0, maxY);
+
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, desiredY);
     }
 
     private (BibleParagraph? Paragraph, double OffsetWithinParagraph) GetTopVisibleParagraph()
@@ -572,4 +619,52 @@ public partial class MainView : UserControl
         if (sender is ListBox listBox && listBox.SelectedIndex != -1)
             listBox.SelectedIndex = -1;
     }
-}
+
+    // ── Mouse drag scrolling ─────────────────────────────────────────────────
+
+    private void OnListBoxMousePressed(object? sender, PointerPressedEventArgs e)
+    {
+        // Only handle mouse left or middle button for drag scrolling
+        if (e.Pointer.Type != PointerType.Mouse) return;
+        
+        var properties = e.GetCurrentPoint(this).Properties;
+        if (properties.PointerUpdateKind != PointerUpdateKind.LeftButtonPressed &&
+            properties.PointerUpdateKind != PointerUpdateKind.MiddleButtonPressed)
+            return;
+
+        _isMouseDragging = true;
+        _lastMousePosition = e.GetPosition(this);
+        e.Pointer.Capture(_paragraphList);
+        e.Handled = true;
+    }
+
+    private void OnListBoxMouseMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isMouseDragging || _paragraphScrollViewer == null) return;
+        if (e.Pointer.Type != PointerType.Mouse) return;
+
+        var currentPosition = e.GetPosition(this);
+        var deltaY = _lastMousePosition.Y - currentPosition.Y;
+
+        // Apply scroll with smooth movement
+        var newOffset = _paragraphScrollViewer.Offset.Y + deltaY;
+        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+        newOffset = Math.Clamp(newOffset, 0, maxY);
+
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+        _lastMousePosition = currentPosition;
+        
+        e.Handled = true;
+    }
+
+    private void OnListBoxMouseReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isMouseDragging || e.Pointer.Type != PointerType.Mouse) return;
+
+        _isMouseDragging = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+}    // ...existing code...
+
+

@@ -33,6 +33,7 @@ public class MainViewModel : ViewModelBase
     private ScriptureLookupBook? _selectedLookupBook;
     private int _selectedLookupChapter = 1;
     private int _selectedLookupVerse = 1;
+    private bool _preserveVerseOnChapterRefresh;
 
     private readonly Dictionary<string, int[]> _chapterVerseIndex = new(StringComparer.OrdinalIgnoreCase);
 
@@ -134,7 +135,7 @@ public class MainViewModel : ViewModelBase
                 if (_selectedLookupChapter < 1 || _selectedLookupChapter > chapterCount)
                     SelectedLookupChapter = 1;
                 else
-                    RefreshVerses();
+                    RefreshVerses(resetToFirstVerse: true);
             });
         }
     }
@@ -149,13 +150,20 @@ public class MainViewModel : ViewModelBase
 
             this.RaiseAndSetIfChanged(ref _selectedLookupChapter, value);
 
+            if (_preserveVerseOnChapterRefresh)
+            {
+                _preserveVerseOnChapterRefresh = false;
+                RefreshVerses(resetToFirstVerse: false);
+                return;
+            }
+
             // Same reason as above: defer verse source mutation until the current
             // chapter selection transaction has completed.
             Dispatcher.UIThread.Post(() =>
             {
                 if (_selectedLookupChapter != value)
                     return;
-                RefreshVerses();
+                RefreshVerses(resetToFirstVerse: true);
             });
         }
     }
@@ -164,6 +172,13 @@ public class MainViewModel : ViewModelBase
     {
         get => _selectedLookupVerse;
         set => this.RaiseAndSetIfChanged(ref _selectedLookupVerse, value);
+    }
+
+    public void UpdateLookupFromReaderProgress(int chapter, int verse)
+    {
+        _preserveVerseOnChapterRefresh = true;
+        SelectedLookupChapter = Math.Max(1, chapter);
+        SelectedLookupVerse = Math.Max(1, verse);
     }
 
     public async Task<(bool Success, string? Error)> TryLoadBookFromApiAsync(string bookCode, int chapter, int verse)
@@ -203,7 +218,7 @@ public class MainViewModel : ViewModelBase
         Header = $"{_bookTitle} {SelectedLookupChapter}:{SelectedLookupVerse}";
     }
 
-    private void RefreshVerses()
+    private void RefreshVerses(bool resetToFirstVerse)
     {
         var code = _selectedLookupBook?.Code;
         if (string.IsNullOrWhiteSpace(code))
@@ -215,7 +230,7 @@ public class MainViewModel : ViewModelBase
         var verseCount = GetVerseCount(code, _selectedLookupChapter);
         LookupVerses = Enumerable.Range(1, verseCount).ToArray();
 
-        if (_selectedLookupVerse < 1 || _selectedLookupVerse > verseCount)
+        if (resetToFirstVerse || _selectedLookupVerse < 1 || _selectedLookupVerse > verseCount)
             SelectedLookupVerse = 1;
     }
 
