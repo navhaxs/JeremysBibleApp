@@ -453,8 +453,12 @@ public partial class MainView : UserControl
 
         if (DataContext is MainViewModel vm)
         {
-            vm.Header = $"{vm.BookTitle} {topParagraph.StartChapter}:{topParagraph.StartVerse}";
-            vm.UpdateLookupFromReaderProgress(topParagraph.StartChapter, topParagraph.StartVerse);
+            // Use the first visible body-text paragraph for verse sync so that
+            // headings (which have no verse marker and inherit a stale StartVerse)
+            // and the large chapter drop-cap whitespace don't skew the reported position.
+            var syncParagraph = GetTopVisibleBodyTextParagraph() ?? topParagraph;
+            vm.Header = $"{vm.BookTitle} {syncParagraph.StartChapter}:{syncParagraph.StartVerse}";
+            vm.UpdateLookupFromReaderProgress(syncParagraph.StartChapter, syncParagraph.StartVerse);
         }
     }
 
@@ -501,14 +505,24 @@ public partial class MainView : UserControl
     {
         if (_paragraphList == null || _paragraphs.Count == 0) return;
 
+        // Prefer body-text paragraphs. Headings inherit a stale StartVerse from the
+        // previous body paragraph and don't contain verse content, so landing on them
+        // would place the user above the intended verse.
         BibleParagraph? target = null;
 
         if (verse == 1)
         {
-            target = _paragraphs.FirstOrDefault(p =>
-                p.StartChapter == chapter && p.StartVerse == 1 && p.HasChapterDropCap);
+            // Scroll to the very start of the chapter — the heading if one exists,
+            // otherwise the drop-cap paragraph — so the big chapter number and any
+            // chapter heading are visible at the top.
+            target = _paragraphs.FirstOrDefault(p => p.StartChapter == chapter);
         }
 
+        target ??= _paragraphs.LastOrDefault(p =>
+            p.IsBodyText &&
+            (p.StartChapter < chapter || (p.StartChapter == chapter && p.StartVerse <= verse)));
+
+        // Fallback: include non-body paragraphs if no body text matched.
         target ??= _paragraphs.LastOrDefault(p =>
             p.StartChapter < chapter || (p.StartChapter == chapter && p.StartVerse <= verse));
 
@@ -519,19 +533,24 @@ public partial class MainView : UserControl
         if (target == null)
             return;
 
-        _paragraphList.ScrollIntoView(target);
+        // Retry loop: re-issue ScrollIntoView on each attempt so that it fires after
+        // the ListBox has applied a newly-changed ItemsSource (book navigation) and
+        // after the virtualized container is realized in the visual tree.
+        ListBoxItem? item = null;
+        for (var attempt = 0; attempt < 5 && item == null; attempt++)
+        {
+            _paragraphList.ScrollIntoView(target);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Loaded);
+            item = _paragraphList.GetVisualDescendants()
+                .OfType<ListBoxItem>()
+                .FirstOrDefault(x => ReferenceEquals(x.DataContext, target));
+        }
 
-        // Wait for item realization, then adjust offset so the target lands at the top.
-        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Loaded);
+        if (item == null)
+            return;
 
         EnsureScrollTrackingAttached();
         if (_paragraphScrollViewer == null)
-            return;
-
-        var item = _paragraphList.GetVisualDescendants()
-            .OfType<ListBoxItem>()
-            .FirstOrDefault(x => ReferenceEquals(x.DataContext, target));
-        if (item == null)
             return;
 
         var itemTopInViewport = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
@@ -580,6 +599,60 @@ public partial class MainView : UserControl
         var top = candidates[0];
         var offsetWithinParagraph = Math.Clamp(-top.Top / top.Height, 0, 1);
         return (top.Paragraph, offsetWithinParagraph);
+    }
+
+    /// <summary>
+    /// Returns the topmost visible body-text paragraph for chapter/verse syncing.
+    /// Skips headings and parallel references (their <see cref="BibleParagraph.StartVerse"/>
+    /// is not updated by verse markers and may reflect a stale position).
+    /// Also skips the topmost item when it is mostly scrolled off AND is a chapter
+    /// drop-cap or heading, so that the large visual gap at the top of a chapter
+    /// doesn't prevent the next paragraph from becoming the reported position.
+    /// </summary>
+    private BibleParagraph? GetTopVisibleBodyTextParagraph()
+    {
+        if (_paragraphList == null)
+            return null;
+
+        var candidates = _paragraphList.GetVisualDescendants()
+            .OfType<ListBoxItem>()
+            .Select(item => new
+            {
+                Top = item.TranslatePoint(default, _paragraphList)?.Y,
+                Height = item.Bounds.Height,
+                Paragraph = item.DataContext as BibleParagraph
+            })
+            .Where(x => x.Paragraph != null && x.Top.HasValue && x.Height > 0)
+            .Select(x => new
+            {
+                Paragraph = x.Paragraph!,
+                Top = x.Top!.Value,
+                Height = x.Height
+            })
+            .Where(x => x.Top + x.Height > 0)
+            .OrderBy(x => x.Top)
+            .ToList();
+
+        if (candidates.Count == 0)
+            return null;
+
+        foreach (var candidate in candidates)
+        {
+            if (!candidate.Paragraph.IsBodyText)
+                continue;
+
+            // If this item is mostly scrolled off (>85 % hidden) AND it carries a
+            // chapter drop cap or the item after it is also body text, skip it so
+            // the heading/drop-cap whitespace at the top doesn't anchor the verse.
+            var visibleFraction = Math.Clamp((candidate.Top + candidate.Height) / candidate.Height, 0.0, 1.0);
+            if (visibleFraction < 0.15 && candidate.Paragraph.HasChapterDropCap)
+                continue;
+
+            return candidate.Paragraph;
+        }
+
+        // Fallback: return the first body-text paragraph found, even if it's mostly off-screen.
+        return candidates.FirstOrDefault(x => x.Paragraph.IsBodyText)?.Paragraph;
     }
 
     private int FindParagraphIndex(BibleParagraph paragraph)

@@ -67,7 +67,7 @@ public sealed class UsxBibleParser
                 continue;
             }
 
-            paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, currentChapter, currentVerse, paragraph.Footnotes)
+            paragraphs.Add(new BibleParagraph(paragraph.Text, chapterDropCapPending ? currentChapter : null, currentChapter, paragraph.StartVerse ?? currentVerse, paragraph.Footnotes)
             {
                 IsHeading = IsHeadingStyle(style),
                 IsParallelReference = IsParallelReferenceStyle(style),
@@ -94,12 +94,28 @@ public sealed class UsxBibleParser
         var builder = new StringBuilder();
         var footnotes = new List<BibleFootnote>();
 
+        // Pre-scan for the first verse start element so StartVerse is always the
+        // lowest verse number in the paragraph — even when it equals the already-
+        // current verse (e.g. the very first verse of a book).
+        int? startVerse = null;
+        var firstVerseElement = paragraphElement
+            .Descendants()
+            .FirstOrDefault(e =>
+                e.Name.LocalName == "verse" &&
+                e.Attribute("eid") is null &&
+                e.Attribute("number") is not null);
+        if (firstVerseElement != null &&
+            int.TryParse(firstVerseElement.Attribute("number")?.Value, out var firstVerseNumber))
+        {
+            startVerse = firstVerseNumber;
+        }
+
         foreach (var node in paragraphElement.Nodes())
         {
             AppendNode(node, builder, footnotes, ref currentVerse, ref verseCount);
         }
 
-        return new ParsedParagraph(builder.ToString(), footnotes);
+        return new ParsedParagraph(builder.ToString(), footnotes, startVerse);
     }
 
     private static void AppendNode(XNode node, StringBuilder paragraphBuilder, List<BibleFootnote> footnotes, ref int currentVerse, ref int verseCount)
@@ -242,6 +258,6 @@ public sealed class UsxBibleParser
         return builder.ToString();
     }
 
-    private sealed record ParsedParagraph(string Text, IReadOnlyList<BibleFootnote> Footnotes);
+    private sealed record ParsedParagraph(string Text, IReadOnlyList<BibleFootnote> Footnotes, int? StartVerse);
 }
 
