@@ -58,6 +58,7 @@ public class MainViewModel : ViewModelBase
     private string _syncStatus = string.Empty;
     private bool _isSyncing;
     private bool _isAuthenticated;
+    private string? _currentUserEmail;
     private IReadOnlyList<string> _syncDebugLogs = [];
     private string _syncDebugData = string.Empty;
     private string _syncDebugLastUpdated = "Never";
@@ -81,6 +82,7 @@ public class MainViewModel : ViewModelBase
             _syncCoordinator.SyncProgress += OnSyncProgress;
             _googleDriveAuthService.AuthStateChanged += OnAuthStateChanged;
             IsAuthenticated = _googleDriveAuthService.IsAuthenticated;
+            CurrentUserEmail = _googleDriveAuthService.CurrentUserEmail;
 
             SyncStatus = "Sync initialized";
             AppendSyncDebugLog("Sync services initialized.");
@@ -389,6 +391,7 @@ public class MainViewModel : ViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             IsAuthenticated = isAuthenticated;
+            CurrentUserEmail = isAuthenticated ? userEmail : null;
             _ = RefreshSyncDebugDataAsync();
         });
     }
@@ -423,6 +426,12 @@ public class MainViewModel : ViewModelBase
     public bool CanAuthenticate => !IsAuthenticated;
 
     public bool CanForceSync => IsAuthenticated && !IsSyncing;
+
+    public string? CurrentUserEmail
+    {
+        get => _currentUserEmail;
+        private set => this.RaiseAndSetIfChanged(ref _currentUserEmail, value);
+    }
 
     public IReadOnlyList<string> SyncDebugLogs
     {
@@ -493,7 +502,7 @@ public class MainViewModel : ViewModelBase
 
         try
         {
-            var authenticated = await _syncCoordinator.AuthenticateAsync().ConfigureAwait(false);
+            var authenticated = await _syncCoordinator.TrySilentAuthAsync().ConfigureAwait(false);
             await Dispatcher.UIThread.InvokeAsync(() => IsAuthenticated = authenticated);
 
             AppendSyncDebugLog(authenticated

@@ -21,6 +21,9 @@ public class iOSGoogleDriveAuthService : IGoogleDriveAuthService
 
     public event AuthStateChangedEventHandler? AuthStateChanged;
 
+    public Task<AuthenticationResult> TrySilentAuthAsync() =>
+        Task.FromResult(AuthenticationResult.Failure("No cached credentials available."));
+
     public async Task<AuthenticationResult> AuthenticateAsync()
     {
         try

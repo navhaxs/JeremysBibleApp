@@ -37,7 +37,8 @@ public partial class MainView : UserControl
 
     private InkOverlayCanvas? _inkOverlay;
     private Border? _readerProgressTrack;
-    private Avalonia.Controls.Shapes.Rectangle? _readerProgressFill;
+    private Border? _readerProgressThumb;
+    private bool _isDraggingProgressBar;
     private ScrollViewer? _paragraphScrollViewer;
     private bool _isScrollTrackingAttached;
     private bool _waitingForLayoutToAttachScrollViewer;
@@ -104,7 +105,7 @@ public partial class MainView : UserControl
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
-        _readerProgressFill  = this.FindControl<Avalonia.Controls.Shapes.Rectangle>("ReaderProgressFill");
+        _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
 
         // ── Annotation toolbar controls ──────────────────────────────────────
         _annotationToolbar = this.FindControl<Border>("AnnotationToolbar");
@@ -428,28 +429,27 @@ public partial class MainView : UserControl
 
     private void UpdateReaderProgress(ScrollViewer scrollViewer)
     {
-        if (_readerProgressTrack == null || _readerProgressFill == null)
-            return;
-
         if (_paragraphList == null || _paragraphs.Count == 0)
-        {
-            _readerProgressFill.Height = 0;
             return;
-        }
 
         var (topParagraph, topOffset) = GetTopVisibleParagraph();
         if (topParagraph == null)
             return;
 
-        var paragraphIndex = FindParagraphIndex(topParagraph);
-        if (paragraphIndex < 0)
-            return;
-
-        var totalLength = Math.Max(1, _paragraphs.Count);
-        var bookOffset  = Math.Clamp(paragraphIndex + topOffset, 0, totalLength);
-        var fraction    = bookOffset / totalLength;
-
-        _readerProgressFill.Height = _readerProgressTrack.Bounds.Height * fraction;
+        // Position the custom thumb by item-index fraction (accurate with virtualization).
+        if (_readerProgressTrack != null && _readerProgressThumb != null && !_isDraggingProgressBar)
+        {
+            var paragraphIndex = FindParagraphIndex(topParagraph);
+            if (paragraphIndex >= 0)
+            {
+                var totalLength   = Math.Max(1, _paragraphs.Count);
+                var fraction      = Math.Clamp((paragraphIndex + topOffset) / totalLength, 0, 1);
+                var trackHeight   = _readerProgressTrack.Bounds.Height;
+                var thumbHeight   = _readerProgressThumb.Height;
+                var maxTop        = Math.Max(0, trackHeight - thumbHeight);
+                Canvas.SetTop(_readerProgressThumb, fraction * maxTop);
+            }
+        }
 
         if (DataContext is MainViewModel vm)
         {
@@ -460,6 +460,51 @@ public partial class MainView : UserControl
             vm.Header = $"{vm.BookTitle} {syncParagraph.StartChapter}:{syncParagraph.StartVerse}";
             vm.UpdateLookupFromReaderProgress(syncParagraph.StartChapter, syncParagraph.StartVerse);
         }
+    }
+
+    // ── Custom index-based scrollbar ─────────────────────────────────────────
+
+    private void ScrollToFraction(double fraction)
+    {
+        if (_paragraphList == null || _paragraphs.Count == 0) return;
+        fraction = Math.Clamp(fraction, 0, 1);
+        var targetIndex = (int)(fraction * (_paragraphs.Count - 1));
+        _paragraphList.ScrollIntoView(_paragraphs[targetIndex]);
+    }
+
+    private void OnProgressTrackPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_readerProgressTrack == null) return;
+        _isDraggingProgressBar = true;
+        e.Pointer.Capture(_readerProgressTrack);
+        var y = e.GetPosition(_readerProgressTrack).Y;
+        ScrollToFraction(y / _readerProgressTrack.Bounds.Height);
+        e.Handled = true;
+    }
+
+    private void OnProgressTrackPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isDraggingProgressBar || _readerProgressTrack == null) return;
+        var y = e.GetPosition(_readerProgressTrack).Y;
+        ScrollToFraction(y / _readerProgressTrack.Bounds.Height);
+
+        // Move thumb immediately for responsive feel while scroll catches up.
+        if (_readerProgressThumb != null)
+        {
+            var trackHeight = _readerProgressTrack.Bounds.Height;
+            var thumbHeight = _readerProgressThumb.Height;
+            var maxTop      = Math.Max(0, trackHeight - thumbHeight);
+            Canvas.SetTop(_readerProgressThumb, Math.Clamp(y - thumbHeight / 2, 0, maxTop));
+        }
+        e.Handled = true;
+    }
+
+    private void OnProgressTrackPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isDraggingProgressBar) return;
+        _isDraggingProgressBar = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
     }
 
     private async void OnLookupGoButtonClick(object? sender, RoutedEventArgs e)
@@ -717,10 +762,16 @@ public partial class MainView : UserControl
     {
         // Only handle mouse left or middle button for drag scrolling
         if (e.Pointer.Type != PointerType.Mouse) return;
-        
+
         var properties = e.GetCurrentPoint(this).Properties;
         if (properties.PointerUpdateKind != PointerUpdateKind.LeftButtonPressed &&
             properties.PointerUpdateKind != PointerUpdateKind.MiddleButtonPressed)
+            return;
+
+        // Don't intercept clicks on the scrollbar or other interactive controls
+        if (e.Source is Visual sourceVisual &&
+            (sourceVisual.FindAncestorOfType<ScrollBar>(includeSelf: true) != null ||
+             sourceVisual.FindAncestorOfType<Button>(includeSelf: true) != null))
             return;
 
         _isMouseDragging = true;

@@ -55,7 +55,14 @@ public interface IGoogleDriveAuthService
     string? CurrentUserEmail { get; }
 
     /// <summary>
-    /// Authenticates the user with Google
+    /// Attempts authentication using cached credentials only (no browser/interactive flow).
+    /// Returns a failure result instead of prompting the user when no valid token is cached.
+    /// Safe to call on startup.
+    /// </summary>
+    Task<AuthenticationResult> TrySilentAuthAsync();
+
+    /// <summary>
+    /// Authenticates the user with Google (may open a browser / interactive prompt).
     /// </summary>
     Task<AuthenticationResult> AuthenticateAsync();
 

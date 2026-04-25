@@ -26,7 +26,13 @@ public class SyncProgressEventArgs : EventArgs
 public interface ISyncCoordinator : IDisposable
 {
     /// <summary>
-    /// Authenticates with Google Drive
+    /// Attempts authentication using cached credentials only — never opens a browser.
+    /// Safe to call on startup without risking a hang.
+    /// </summary>
+    Task<bool> TrySilentAuthAsync();
+
+    /// <summary>
+    /// Authenticates with Google Drive (may open a browser / interactive prompt).
     /// </summary>
     Task<bool> AuthenticateAsync(string? code = null);
 
@@ -119,6 +125,14 @@ public class SyncCoordinator : ISyncCoordinator
         _isOffline = !_networkMonitor.IsConnected;
 
         _networkMonitor.StartMonitoring();
+    }
+
+    public async Task<bool> TrySilentAuthAsync()
+    {
+        var result = await _authService.TrySilentAuthAsync().ConfigureAwait(false);
+        if (result.IsSuccess)
+            await _localStorage.SaveAsync("LastAuthenticatedUser", result.UserEmail ?? "Unknown").ConfigureAwait(false);
+        return result.IsSuccess;
     }
 
     public async Task<bool> AuthenticateAsync(string? code = null)
@@ -222,18 +236,7 @@ public class SyncCoordinator : ISyncCoordinator
             return;
         }
 
-        var pendingOps = await _queueManager.GetPendingOperationsAsync().ConfigureAwait(false);
-        if (pendingOps.Count == 0)
-        {
-            RaiseSyncProgress(false, "No pending changes to sync", 100);
-            return;
-        }
-
-        RaiseSyncProgress(true, $"Saving {pendingOps.Count} pending change(s) to Google Drive...", 0);
-
-        var processedCount = await DrainQueueAsync(pendingOps, reportProgress: true).ConfigureAwait(false);
-
-        RaiseSyncProgress(false, $"Saved {processedCount} pending change(s) to Google Drive.", 100);
+        await PullFromDriveAsync().ConfigureAwait(false);
     }
 
     /// <summary>

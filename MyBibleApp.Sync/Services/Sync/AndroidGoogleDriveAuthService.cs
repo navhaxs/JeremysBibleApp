@@ -85,7 +85,11 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
     public event AuthStateChangedEventHandler? AuthStateChanged;
 
     // ─── AuthenticateAsync ────────────────────────────────────────────────────
-    public async Task<AuthenticationResult> AuthenticateAsync()
+    public Task<AuthenticationResult> TrySilentAuthAsync() => AuthenticateInternalAsync(silentOnly: true);
+
+    public Task<AuthenticationResult> AuthenticateAsync() => AuthenticateInternalAsync(silentOnly: false);
+
+    private async Task<AuthenticationResult> AuthenticateInternalAsync(bool silentOnly)
     {
         System.Diagnostics.Debug.WriteLine("[AndroidAuth] AuthenticateAsync called.");
         System.Diagnostics.Debug.WriteLine($"[AndroidAuth] TokenStorePath={TokenStorePath}");
@@ -158,6 +162,12 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
             }
 
             // 4. Full interactive OAuth with PKCE (required for Android credentials – no client_secret).
+            if (silentOnly)
+            {
+                System.Diagnostics.Debug.WriteLine("[AndroidAuth] Silent-only mode — skipping interactive flow.");
+                return AuthenticationResult.Failure("No cached credentials available.");
+            }
+
             System.Diagnostics.Debug.WriteLine($"[AndroidAuth] LaunchUri is {(AndroidOAuthCallbackBridge.LaunchUri == null ? "NULL – aborting" : "set – proceeding")}.");
             if (AndroidOAuthCallbackBridge.LaunchUri == null)
             {
@@ -265,9 +275,37 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
     private AuthenticationResult CompleteAuthentication()
     {
         _currentAccessToken = _credential!.Token.AccessToken;
-        _currentUserEmail   = _credential.UserId ?? "Unknown User";
+        _currentUserEmail   = ExtractEmailFromIdToken(_credential.Token.IdToken) ?? "Unknown User";
         AuthStateChanged?.Invoke(true, _currentUserEmail);
         return AuthenticationResult.Success(_currentAccessToken, _currentUserEmail);
+    }
+
+    /// <summary>
+    /// Decodes the JWT ID token returned by Google and extracts the email claim.
+    /// No signature verification is needed — we trust the token we just received from Google.
+    /// </summary>
+    private static string? ExtractEmailFromIdToken(string? idToken)
+    {
+        if (string.IsNullOrWhiteSpace(idToken))
+            return null;
+
+        var parts = idToken.Split('.');
+        if (parts.Length < 2)
+            return null;
+
+        try
+        {
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+
+            var json = Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("email", out var email) ? email.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ─── PKCE helpers ─────────────────────────────────────────────────────────

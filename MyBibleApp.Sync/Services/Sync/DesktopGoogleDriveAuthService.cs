@@ -56,7 +56,11 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
     private readonly string _credentialsFilePath;
     private readonly Func<Stream>? _credentialsStreamFactory;
 
-    public async Task<AuthenticationResult> AuthenticateAsync()
+    public Task<AuthenticationResult> TrySilentAuthAsync() => AuthenticateInternalAsync(silentOnly: true);
+
+    public Task<AuthenticationResult> AuthenticateAsync() => AuthenticateInternalAsync(silentOnly: false);
+
+    private async Task<AuthenticationResult> AuthenticateInternalAsync(bool silentOnly)
     {
         try
         {
@@ -82,12 +86,59 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
 
             var validationError = ValidateDesktopCredentials(credentialsJson);
             if (!string.IsNullOrWhiteSpace(validationError))
-            {
                 return AuthenticationResult.Failure(validationError);
-            }
 
             await using var parsedCredentialsStream = new MemoryStream(Encoding.UTF8.GetBytes(credentialsJson));
             var clientSecrets = GoogleClientSecrets.FromStream(parsedCredentialsStream).Secrets;
+
+            if (silentOnly)
+            {
+                // Silent path: check cache and refresh only — never open a browser.
+                var flow = new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow(
+                    new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow.Initializer
+                    {
+                        ClientSecrets = clientSecrets,
+                        Scopes        = new[] { DriveService.Scope.DriveAppdata },
+                        DataStore     = new FileDataStore(TokenStorePath, true)
+                    });
+
+                var existingToken = await flow.LoadTokenAsync("user", System.Threading.CancellationToken.None)
+                                              .ConfigureAwait(false);
+
+                if (existingToken is { IsStale: false })
+                {
+                    _credential         = new UserCredential(flow, "user", existingToken);
+                    _currentAccessToken = existingToken.AccessToken;
+                    _currentUserEmail   = ExtractEmailFromIdToken(existingToken.IdToken) ?? "Unknown User";
+                    AuthStateChanged?.Invoke(true, _currentUserEmail);
+                    return AuthenticationResult.Success(_currentAccessToken, _currentUserEmail);
+                }
+
+                if (existingToken?.RefreshToken != null)
+                {
+                    try
+                    {
+                        var refreshed = await flow.RefreshTokenAsync(
+                            "user", existingToken.RefreshToken, System.Threading.CancellationToken.None)
+                            .ConfigureAwait(false);
+                        _credential         = new UserCredential(flow, "user", refreshed);
+                        _currentAccessToken = refreshed.AccessToken;
+                        _currentUserEmail   = ExtractEmailFromIdToken(refreshed.IdToken) ?? "Unknown User";
+                        AuthStateChanged?.Invoke(true, _currentUserEmail);
+                        return AuthenticationResult.Success(_currentAccessToken, _currentUserEmail);
+                    }
+                    catch
+                    {
+                        // Refresh failed — treat as unauthenticated.
+                    }
+                }
+
+                return AuthenticationResult.Failure("No cached credentials available.");
+            }
+
+            // Interactive path (full browser flow).
+            await using var interactiveStream = new MemoryStream(Encoding.UTF8.GetBytes(credentialsJson));
+            clientSecrets = GoogleClientSecrets.FromStream(interactiveStream).Secrets;
 
             _credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
                 clientSecrets,
@@ -97,9 +148,6 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
                 new FileDataStore(TokenStorePath, true)
             ).ConfigureAwait(false);
 
-            // If the cached access token is expired, refresh it now so IsAuthenticated
-            // returns true immediately (Token.IsStale would remain true otherwise until
-            // the first API call triggers an implicit refresh).
             if (_credential.Token.IsStale)
             {
                 await _credential.RefreshTokenAsync(System.Threading.CancellationToken.None)
@@ -107,10 +155,7 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
             }
 
             _currentAccessToken = _credential.Token.AccessToken;
-
-            // Extract user email from the token or credential
-            _currentUserEmail = _credential.UserId ?? "Unknown User";
-
+            _currentUserEmail   = ExtractEmailFromIdToken(_credential.Token.IdToken) ?? "Unknown User";
             AuthStateChanged?.Invoke(true, _currentUserEmail);
             return AuthenticationResult.Success(_currentAccessToken, _currentUserEmail);
         }
@@ -206,6 +251,35 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
         catch (Exception)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Decodes the JWT ID token returned by Google and extracts the email claim.
+    /// No signature verification is needed — we trust the token we just received from Google.
+    /// </summary>
+    private static string? ExtractEmailFromIdToken(string? idToken)
+    {
+        if (string.IsNullOrWhiteSpace(idToken))
+            return null;
+
+        var parts = idToken.Split('.');
+        if (parts.Length < 2)
+            return null;
+
+        try
+        {
+            // Base64url → Base64 (add padding if needed)
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(payload));
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("email", out var email) ? email.GetString() : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
