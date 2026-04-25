@@ -111,8 +111,8 @@
   </Design.DataContext>
 
   <Panel>
-    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
-      <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
+    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="0,16,0,0" MaxWidth="860" HorizontalAlignment="Left">
+      <Grid Grid.Row="0" Margin="16,0" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12">
 
         <!-- Main app menu button -->
         <Button Grid.Column="0" FontSize="18" Padding="8,4" VerticalAlignment="Center">
@@ -129,6 +129,37 @@
                 <ToggleSwitch OffContent="Debug mode"
                               OnContent="Debug mode"
                               IsChecked="{Binding IsDebugMode, Mode=TwoWay}" />
+
+                <Rectangle Height="1" Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Opacity="0.4" />
+                <TextBlock Text="Sync" FontWeight="SemiBold" FontSize="15" />
+
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="Syncing…"
+                             IsVisible="{Binding IsSyncing}"
+                             FontSize="12"
+                             VerticalAlignment="Center"
+                             Foreground="{DynamicResource SystemAccentColor}" />
+                  <TextBlock Text="{Binding SyncStatus}"
+                             FontSize="12"
+                             VerticalAlignment="Center"
+                             TextWrapping="Wrap"
+                             Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="Sign in"
+                          IsEnabled="{Binding CanAuthenticate}"
+                          Click="OnSyncAuthButtonClick"
+                          Padding="10,6" />
+                  <Button Content="Sign out"
+                          IsEnabled="{Binding IsAuthenticated}"
+                          Click="OnSyncSignOutButtonClick"
+                          Padding="10,6" />
+                  <Button Content="Sync now"
+                          IsEnabled="{Binding CanForceSync}"
+                          Click="OnSyncForceSyncButtonClick"
+                          Padding="10,6" />
+                </StackPanel>
               </StackPanel>
             </Flyout>
           </Button.Flyout>
@@ -202,6 +233,7 @@
         <ToggleSwitch Grid.Column="3" x:Name="AnnotationToggle" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
       </Grid>
       <TextBlock Grid.Row="1"
+                 Margin="16,0,16,0"
                  Text="{Binding Status}"
                  IsVisible="{Binding IsDebugMode}"
                  Opacity="0.8" />
@@ -217,7 +249,7 @@
                  ScrollViewer.VerticalScrollBarVisibility="Hidden">
         <ListBox.ItemTemplate>
             <DataTemplate x:DataType="model:BibleParagraph">
-              <Grid Margin="0,0,0,14" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+              <Grid Margin="24,0,64,14" ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
                 <TextBlock Grid.Column="0"
                            Grid.RowSpan="2"
                            IsVisible="{Binding HasChapterDropCap}"
@@ -277,25 +309,24 @@
              MainView routes captured pen events here when annotation mode is on. -->
         <controls:InkOverlayCanvas Grid.Row="0" x:Name="InkOverlay" IsHitTestVisible="False" ZIndex="10" />
 
+        <!-- Reader progress indicator — right edge of the reading column. -->
+        <Border x:Name="ReaderProgressTrack"
+                Grid.Row="0"
+                Width="4"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Stretch"
+                Background="#20808080"
+                IsHitTestVisible="False"
+                ZIndex="20">
+          <Rectangle x:Name="ReaderProgressFill"
+                     Fill="{DynamicResource SystemAccentColor}"
+                     HorizontalAlignment="Stretch"
+                     VerticalAlignment="Top"
+                     Height="0" />
+        </Border>
+
       </Grid>
     </Grid>
-
-    <!-- Reader progress indicator (replaces visible scrollbar). -->
-    <!-- Track: full-height strip on the right edge -->
-    <Border x:Name="ReaderProgressTrack"
-            Width="4"
-            HorizontalAlignment="Right"
-            VerticalAlignment="Stretch"
-            Background="#20808080"
-            IsHitTestVisible="False"
-            ZIndex="20">
-      <!-- Fill: sized from code-behind, top-anchored so it grows downward -->
-      <Rectangle x:Name="ReaderProgressFill"
-                 Fill="{DynamicResource SystemAccentColor}"
-                 HorizontalAlignment="Stretch"
-                 VerticalAlignment="Top"
-                 Height="0" />
-    </Border>
 
     <!-- ── Annotation toolbar (visible only while annotation mode is on) ───── -->
     <Border x:Name="AnnotationToolbar"

@@ -28,7 +28,7 @@
     </Style>
   </UserControl.Styles>
 
-  <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,*">
+  <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,*">
     <!-- Debug Controls: tab strip visible only in debug mode -->
     <TabStrip Grid.Row="0"
               Grid.Column="0"
@@ -42,16 +42,8 @@
       <TabStripItem Content="Sync Debug" />
     </TabStrip>
 
-    <!-- Sync Controls -->
-    <Border Grid.Row="1"
-            Grid.Column="0"
-            BorderThickness="0,0,0,1"
-            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}">
-      <views:SyncControlView DataContext="{Binding .}" />
-    </Border>
-
     <!-- Split-capable content area -->
-    <Grid Grid.Row="2" Grid.Column="0" x:Name="ContentGrid">
+    <Grid Grid.Row="1" Grid.Column="0" x:Name="ContentGrid">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" MinWidth="120" />
         <ColumnDefinition Width="0" MinWidth="0" />
@@ -78,7 +70,7 @@
 
     <!-- Right-edge passage tabs -->
     <Border Grid.Row="0"
-            Grid.RowSpan="3"
+            Grid.RowSpan="2"
             Grid.Column="1"
             x:Name="TabBar"
             BorderThickness="1,0,0,0"
@@ -105,7 +97,7 @@
 
     <!-- Startup loading overlay (full-shell, shown during initial auth + sync) -->
     <Panel x:Name="StartupOverlay"
-           Grid.Row="0" Grid.RowSpan="3"
+           Grid.Row="0" Grid.RowSpan="2"
            Grid.Column="0" Grid.ColumnSpan="2"
            IsVisible="True"
            Background="{DynamicResource SystemControlBackgroundAltHighBrush}">

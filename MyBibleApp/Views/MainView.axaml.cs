@@ -678,6 +678,24 @@ public partial class MainView : UserControl
             toggle.IsChecked == true ? ThemeVariant.Dark : ThemeVariant.Light;
     }
 
+    private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            await vm.AuthenticateAsync();
+    }
+
+    private void OnSyncSignOutButtonClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            vm.SignOut();
+    }
+
+    private void OnSyncForceSyncButtonClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+            vm.ForceSync();
+    }
+
     // ── Standard handlers ────────────────────────────────────────────────────
 
     private void OnFootnoteButtonClick(object? sender, global::Avalonia.Interactivity.RoutedEventArgs e)
