@@ -29,7 +29,7 @@ public class MainViewModel : ViewModelBase
     private string _bookTitle = string.Empty;
     private string _bookCode = string.Empty;
     private readonly IBookNameProvider _bookNameProvider;
-    private readonly UsxBibleApiLoader _apiLoader;
+    private readonly BibleContentService _bibleContent;
     private string _status = string.Empty;
 
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
@@ -65,7 +65,7 @@ public class MainViewModel : ViewModelBase
     public MainViewModel()
     {
         _bookNameProvider = new JsonBookNameProvider(BooksJsonUri);
-        _apiLoader = new UsxBibleApiLoader(new UsxBibleParser());
+        _bibleContent = BibleContentService.Instance;
 
         // Initialize sync services
         try
@@ -241,7 +241,7 @@ public class MainViewModel : ViewModelBase
     {
         try
         {
-            var book = await _apiLoader.LoadFromApiAsync(bookCode).ConfigureAwait(false);
+            var book = await _bibleContent.LoadBookAsync(bookCode).ConfigureAwait(false);
 
             await Dispatcher.UIThread.InvokeAsync(() =>
                 ApplyLoadedBook(book, "Loaded from fetch.bible API.", chapter, verse));
