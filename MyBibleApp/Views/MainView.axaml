@@ -263,7 +263,9 @@
                       IsCheckedChanged="OnSplitViewToggleIsCheckedChanged">
           <material:MaterialIcon Kind="ViewSplitVertical" Width="20" Height="20" />
         </ToggleButton>
-        <ToggleSwitch Grid.Column="3" x:Name="AnnotationToggle" OffContent="Annotate (Pen)" OnContent="Annotate (Pen)" />
+        <ToggleButton Grid.Column="3" x:Name="AnnotationToggle">
+          <material:MaterialIcon Kind="ViewSplitVertical" Width="20" Height="20" />
+        </ToggleButton>
         </Grid>
       </Border>
       <TextBlock Grid.Row="1"

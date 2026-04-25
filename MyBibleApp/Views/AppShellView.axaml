@@ -9,9 +9,9 @@
              x:DataType="vm:MainViewModel">
   <UserControl.Styles>
     <Style Selector="Button.passage-tab">
-      <Setter Property="Width" Value="78" />
-      <Setter Property="MinHeight" Value="46" />
-      <Setter Property="Padding" Value="6,4" />
+      <Setter Property="Width" Value="38" />
+      <Setter Property="MinHeight" Value="60" />
+      <Setter Property="Padding" Value="4,6" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="FontSize" Value="12" />
@@ -86,7 +86,7 @@
 
         <Button Grid.Row="1"
                 x:Name="AddTabButton"
-                Width="78"
+                Width="38"
                 Height="38"
                 FontSize="20"
                 Content="+"
@@ -118,6 +118,52 @@
                    FontSize="12"
                    HorizontalAlignment="Center"
                    Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+
+        <!-- Re-sign-in prompt shown when the previous session has expired -->
+        <StackPanel x:Name="StartupReSignInPanel"
+                    IsVisible="False"
+                    Spacing="8">
+          <Button x:Name="StartupSignInAgainButton"
+                  Content="Sign in again"
+                  HorizontalAlignment="Center"
+                  Padding="24,8"
+                  Click="OnStartupSignInAgainButtonClick" />
+          <Button x:Name="StartupContinueWithoutSignInButton"
+                  Content="Continue without signing in"
+                  HorizontalAlignment="Center"
+                  Padding="24,8"
+                  Click="OnStartupContinueWithoutSignInButtonClick" />
+        </StackPanel>
+      </StackPanel>
+    </Panel>
+
+    <!-- Sign-in in progress overlay (floats above all content while browser auth is open) -->
+    <Panel x:Name="SignInProgressOverlay"
+           Grid.Row="0" Grid.RowSpan="2"
+           Grid.Column="0" Grid.ColumnSpan="2"
+           IsVisible="False"
+           Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+      <StackPanel HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Spacing="20"
+                  MinWidth="260">
+        <TextBlock Text="Waiting for sign-in…"
+                   FontSize="17"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center" />
+        <ProgressBar IsIndeterminate="True" Height="4" />
+        <TextBlock Text="A sign-in page has been opened in your browser."
+                   FontSize="12"
+                   HorizontalAlignment="Center"
+                   TextWrapping="Wrap"
+                   TextAlignment="Center"
+                   MaxWidth="300"
+                   Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+        <Button x:Name="CancelSignInButton"
+                Content="Cancel"
+                HorizontalAlignment="Center"
+                Padding="24,8"
+                Click="OnCancelSignInButtonClick" />
       </StackPanel>
     </Panel>
   </Grid>

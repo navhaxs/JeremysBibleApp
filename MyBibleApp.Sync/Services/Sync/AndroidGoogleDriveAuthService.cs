@@ -76,6 +76,7 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
     private UserCredential? _credential;
     private string?         _currentUserEmail;
     private string?         _currentAccessToken;
+    private CancellationTokenSource? _interactiveCts;
 
     // ─── IGoogleDriveAuthService ───────────────────────────────────────────────
     public bool    IsAuthenticated    => _credential?.Token is { IsStale: false };
@@ -88,6 +89,12 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
     public Task<AuthenticationResult> TrySilentAuthAsync() => AuthenticateInternalAsync(silentOnly: true);
 
     public Task<AuthenticationResult> AuthenticateAsync() => AuthenticateInternalAsync(silentOnly: false);
+
+    public void CancelAuthentication()
+    {
+        _interactiveCts?.Cancel();
+        AndroidOAuthCallbackBridge.TryHandleCallback(string.Empty);
+    }
 
     private async Task<AuthenticationResult> AuthenticateInternalAsync(bool silentOnly)
     {
@@ -180,11 +187,24 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
             var authUrl = BuildAuthorizationUrl(clientSecrets.ClientId, redirectUri, codeChallenge);
             System.Diagnostics.Debug.WriteLine($"[AndroidAuth] Opening consent page (PKCE): {authUrl}");
 
+            _interactiveCts?.Cancel();
+            _interactiveCts?.Dispose();
+            _interactiveCts = new CancellationTokenSource();
+            var interactiveCt = _interactiveCts.Token;
+
             await AndroidOAuthCallbackBridge.LaunchUri(authUrl).ConfigureAwait(false);
 
-            var callbackUri = await AndroidOAuthCallbackBridge
-                                        .WaitForCallbackAsync(CancellationToken.None)
+            string? callbackUri;
+            try
+            {
+                callbackUri = await AndroidOAuthCallbackBridge
+                                        .WaitForCallbackAsync(interactiveCt)
                                         .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return AuthenticationResult.Failure("Authentication was cancelled.");
+            }
 
             if (string.IsNullOrEmpty(callbackUri))
                 return AuthenticationResult.Failure("Authentication was cancelled.");

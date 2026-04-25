@@ -85,6 +85,11 @@ public interface ISyncCoordinator : IDisposable
     void SignOut();
 
     /// <summary>
+    /// Cancels any in-progress interactive authentication flow.
+    /// </summary>
+    void CancelAuthentication();
+
+    /// <summary>
     /// Event for sync progress updates
     /// </summary>
     event EventHandler<SyncProgressEventArgs>? SyncProgress;
@@ -328,6 +333,8 @@ public class SyncCoordinator : ISyncCoordinator
         StopAutoSync();
         _ = _authService.RevokeAsync();
     }
+
+    public void CancelAuthentication() => _authService.CancelAuthentication();
 
     public async Task<PullResult> PullFromDriveAsync()
     {

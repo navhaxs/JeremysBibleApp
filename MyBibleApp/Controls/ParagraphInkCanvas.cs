@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
@@ -17,7 +18,7 @@ public class ParagraphInkCanvas : Control
     private BibleInkStroke? _activeInkStroke;
     private bool _isInking;
     // Discovered at attach-time; kept so we can unsubscribe on detach.
-    private ToggleSwitch? _annotationToggle;
+    private ToggleButton? _annotationToggle;
 
     // Nearly-transparent brush: visually invisible but creates a composition hit area
     // so pointer events reach this control when annotation mode is active.
@@ -61,7 +62,7 @@ public class ParagraphInkCanvas : Control
 
         // When annotation is active, fill the bounds with a near-transparent brush.
         // Avalonia 12's composition hit tester requires rendered content to consider
-        // a control hittable — without this, pointer events fall through to controls below.
+        // a control hittable ï¿½ without this, pointer events fall through to controls below.
         if (IsAnnotating)
         {
             context.DrawRectangle(HitAreaBrush, null, new Rect(Bounds.Size));
@@ -118,7 +119,7 @@ public class ParagraphInkCanvas : Control
         e.Pointer.Capture(this);
         e.Handled = true;
         InvalidateVisual();
-        // Do NOT call base — we own this event; calling base after Handled=true can
+        // Do NOT call base ï¿½ we own this event; calling base after Handled=true can
         // still trigger scroll-gesture recognizers on ancestor ScrollViewers.
     }
 
@@ -142,7 +143,7 @@ public class ParagraphInkCanvas : Control
         _activeInkStroke.Points.Add(e.GetPosition(this));
         e.Handled = true;
         InvalidateVisual();
-        // Do NOT call base — prevents the scroll recognizer from seeing the movement.
+        // Do NOT call base ï¿½ prevents the scroll recognizer from seeing the movement.
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)

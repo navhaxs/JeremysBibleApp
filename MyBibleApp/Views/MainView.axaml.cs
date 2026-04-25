@@ -25,7 +25,7 @@ public partial class MainView : UserControl
     private readonly Flyout _footnoteFlyout;
     private readonly SelectableTextBlock _footnoteTextBlock;
     private ListBox? _paragraphList;
-    private ToggleSwitch? _annotationToggle;
+    private ToggleButton? _annotationToggle;
     private ToggleSwitch? _darkModeToggle;
     private ToggleButton? _splitViewToggle;
     private Button? _headerLookupButton;
@@ -99,7 +99,7 @@ public partial class MainView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
-        _annotationToggle = this.FindControl<ToggleSwitch>("AnnotationToggle");
+        _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
         _darkModeToggle   = this.FindControl<ToggleSwitch>("DarkModeToggle");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");

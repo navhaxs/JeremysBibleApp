@@ -23,6 +23,7 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
     private UserCredential? _credential;
     private string? _currentUserEmail;
     private string? _currentAccessToken;
+    private CancellationTokenSource? _interactiveCts;
 
     public bool IsAuthenticated => _credential?.Token is { IsStale: false };
 
@@ -59,6 +60,11 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
     public Task<AuthenticationResult> TrySilentAuthAsync() => AuthenticateInternalAsync(silentOnly: true);
 
     public Task<AuthenticationResult> AuthenticateAsync() => AuthenticateInternalAsync(silentOnly: false);
+
+    public void CancelAuthentication()
+    {
+        _interactiveCts?.Cancel();
+    }
 
     private async Task<AuthenticationResult> AuthenticateInternalAsync(bool silentOnly)
     {
@@ -137,6 +143,11 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
             }
 
             // Interactive path (full browser flow).
+            _interactiveCts?.Cancel();
+            _interactiveCts?.Dispose();
+            _interactiveCts = new CancellationTokenSource();
+            var interactiveCt = _interactiveCts.Token;
+
             await using var interactiveStream = new MemoryStream(Encoding.UTF8.GetBytes(credentialsJson));
             clientSecrets = GoogleClientSecrets.FromStream(interactiveStream).Secrets;
 
@@ -144,7 +155,7 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
                 clientSecrets,
                 new[] { DriveService.Scope.DriveAppdata },
                 "user",
-                System.Threading.CancellationToken.None,
+                interactiveCt,
                 new FileDataStore(TokenStorePath, true)
             ).ConfigureAwait(false);
 

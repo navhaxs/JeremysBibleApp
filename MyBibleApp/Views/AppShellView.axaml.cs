@@ -10,6 +10,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Threading;
 using MyBibleApp.Models;
 using MyBibleApp.Services;
@@ -36,6 +37,11 @@ public partial class AppShellView : UserControl
     private int _lastPersistedActiveIndex = -1;
     private int _activeTabIndex = -1;
     private bool _isRestoringTabs;
+
+    // Sign-in overlay tracking
+    private MainViewModel? _trackedAuthVm;
+    private PropertyChangedEventHandler? _authStateHandler;
+    private TaskCompletionSource<bool>? _startupSignInPromptTcs;
 
     // Split sizing policy
     private const double PreferredPaneMinWidth = 300;
@@ -121,6 +127,7 @@ public partial class AppShellView : UserControl
         var vm = _tabs[index];
         DataContext = vm;
         _primaryView.DataContext = vm;
+        TrackAuthStateOf(vm);
         RefreshTabButtons();
         if (!_isRestoringTabs)
             RequestPersistOpenTabReferences();
@@ -136,11 +143,23 @@ public partial class AppShellView : UserControl
         for (var i = 0; i < _tabs.Count; i++)
         {
             var vm = _tabs[i];
+
+            var rotatedLabel = new LayoutTransformControl
+            {
+                LayoutTransform = new RotateTransform(-90),
+                Child = new TextBlock
+                {
+                    Text = GetTabLabel(vm, i),
+                    TextAlignment = TextAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                }
+            };
+
             var button = new Button
             {
                 Classes = { "passage-tab" },
                 Tag = i,
-                Content = GetTabLabel(vm, i)
+                Content = rotatedLabel
             };
 
             button.Flyout = CreateTabFlyout(i);
@@ -173,6 +192,63 @@ public partial class AppShellView : UserControl
     private void OnAddTabButtonClick(object? sender, RoutedEventArgs e)
     {
         AddTabInternal(new MainViewModel(), makeActive: true);
+    }
+
+    // ── Sign-in overlay ───────────────────────────────────────────────────────
+
+    private void TrackAuthStateOf(MainViewModel? vm)
+    {
+        if (_trackedAuthVm != null && _authStateHandler != null)
+            _trackedAuthVm.PropertyChanged -= _authStateHandler;
+
+        _trackedAuthVm = vm;
+        _authStateHandler = vm == null ? null : (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainViewModel.IsAuthenticating))
+                Dispatcher.UIThread.Post(UpdateSignInOverlayVisibility);
+        };
+
+        if (vm != null && _authStateHandler != null)
+            vm.PropertyChanged += _authStateHandler;
+
+        UpdateSignInOverlayVisibility();
+    }
+
+    private void UpdateSignInOverlayVisibility()
+    {
+        var overlay = this.FindControl<Panel>("SignInProgressOverlay");
+        if (overlay != null)
+            overlay.IsVisible = _trackedAuthVm?.IsAuthenticating == true;
+    }
+
+    private void OnCancelSignInButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _trackedAuthVm?.CancelAuthentication();
+    }
+
+    // ── Startup re-sign-in prompt ─────────────────────────────────────────────
+
+    private void OnStartupSignInAgainButtonClick(object? sender, RoutedEventArgs e)
+    {
+        var panel = this.FindControl<StackPanel>("StartupReSignInPanel");
+        if (panel != null) panel.IsVisible = false;
+        _startupSignInPromptTcs?.TrySetResult(true);
+    }
+
+    private void OnStartupContinueWithoutSignInButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _startupSignInPromptTcs?.TrySetResult(false);
+    }
+
+    private Task<bool> ShowStartupReSignInPromptAsync(string detail)
+    {
+        UpdateStartupOverlay("Session expired", detail, 100);
+        var progressBar = this.FindControl<ProgressBar>("StartupOverlayProgress");
+        if (progressBar != null) progressBar.IsVisible = false;
+        var panel = this.FindControl<StackPanel>("StartupReSignInPanel");
+        if (panel != null) panel.IsVisible = true;
+        _startupSignInPromptTcs = new TaskCompletionSource<bool>();
+        return _startupSignInPromptTcs.Task;
     }
 
     private Flyout CreateTabFlyout(int tabIndex)
@@ -253,8 +329,6 @@ public partial class AppShellView : UserControl
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
         // Suppress persistence-to-queue for the entire startup sequence.
-        // Auth, pull, and tab restore are all restoring state — not generating
-        // new changes that need uploading. The queue will be empty after pull.
         _isRestoringTabs = true;
         foreach (var vm in _tabs) vm.SetReadingProgressSyncSuppressed(true);
         try
@@ -265,6 +339,15 @@ public partial class AppShellView : UserControl
 
             // Smooth UX on reopen: this uses cached OAuth token when available.
             await ownerVm.TryAutoAuthenticateOnStartupAsync();
+
+            // If silent auth failed but there was a previous session, offer to re-sign-in.
+            if (!ownerVm.IsAuthenticated && await ownerVm.HasPreviousAuthenticationAsync())
+            {
+                var shouldSignIn = await ShowStartupReSignInPromptAsync(
+                    "Your previous sign-in has expired.");
+                if (shouldSignIn)
+                    await ownerVm.AuthenticateAsync();
+            }
 
             if (ownerVm.IsAuthenticated)
             {

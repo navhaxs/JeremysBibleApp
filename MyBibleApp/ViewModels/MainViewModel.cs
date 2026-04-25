@@ -58,6 +58,7 @@ public class MainViewModel : ViewModelBase
     private string _syncStatus = string.Empty;
     private bool _isSyncing;
     private bool _isAuthenticated;
+    private bool _isAuthenticating;
     private string? _currentUserEmail;
     private IReadOnlyList<string> _syncDebugLogs = [];
     private string _syncDebugData = string.Empty;
@@ -427,6 +428,12 @@ public class MainViewModel : ViewModelBase
 
     public bool CanForceSync => IsAuthenticated && !IsSyncing;
 
+    public bool IsAuthenticating
+    {
+        get => _isAuthenticating;
+        private set => this.RaiseAndSetIfChanged(ref _isAuthenticating, value);
+    }
+
     public string? CurrentUserEmail
     {
         get => _currentUserEmail;
@@ -459,6 +466,7 @@ public class MainViewModel : ViewModelBase
             return false;
         }
 
+        IsAuthenticating = true;
         try
         {
             AppendSyncDebugLog($"[Auth] Starting authentication. Platform={PlatformHelper.GetPlatformName()}, IsAuthenticated={IsAuthenticated}, CanAuthenticate={CanAuthenticate}.");
@@ -478,6 +486,29 @@ public class MainViewModel : ViewModelBase
             System.Diagnostics.Debug.WriteLine($"Authentication error: {ex.Message}");
             AppendSyncDebugLog($"Authentication error: {ex.Message}");
             IsAuthenticated = false;
+            return false;
+        }
+        finally
+        {
+            IsAuthenticating = false;
+        }
+    }
+
+    public void CancelAuthentication()
+    {
+        _syncCoordinator?.CancelAuthentication();
+    }
+
+    public async Task<bool> HasPreviousAuthenticationAsync()
+    {
+        if (_localStorageProvider == null) return false;
+        try
+        {
+            var lastUser = await _localStorageProvider.GetAsync("LastAuthenticatedUser").ConfigureAwait(false);
+            return !string.IsNullOrWhiteSpace(lastUser);
+        }
+        catch
+        {
             return false;
         }
     }

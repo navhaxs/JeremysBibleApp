@@ -67,6 +67,12 @@ public interface IGoogleDriveAuthService
     Task<AuthenticationResult> AuthenticateAsync();
 
     /// <summary>
+    /// Cancels any in-progress interactive authentication flow.
+    /// Safe to call even when no auth is in progress.
+    /// </summary>
+    void CancelAuthentication();
+
+    /// <summary>
     /// Revokes the current authentication
     /// </summary>
     Task<bool> RevokeAsync();
