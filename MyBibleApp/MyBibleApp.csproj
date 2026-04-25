@@ -15,6 +15,7 @@
         <PackageReference Include="Avalonia.Controls.ColorPicker" />
         <PackageReference Include="Avalonia.Themes.Fluent"/>
         <PackageReference Include="Avalonia.Fonts.Inter"/>
+        <PackageReference Include="Avalonia.Skia"/>
         <PackageReference Include="Material.Icons.Avalonia" />
         <PackageReference Include="ReactiveUI.Avalonia"/>
     </ItemGroup>

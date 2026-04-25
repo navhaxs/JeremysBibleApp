@@ -49,6 +49,7 @@ public partial class MainView : UserControl
     // ── Annotation toolbar controls ──────────────────────────────────────────
     private Border? _annotationToolbar;
     private ToggleButton? _penModeButton;
+    private ToggleButton? _highlighterModeButton;
     private ToggleButton? _eraserModeButton;
     private Button? _colorAmber;
     private Button? _colorRed;
@@ -109,8 +110,9 @@ public partial class MainView : UserControl
 
         // ── Annotation toolbar controls ──────────────────────────────────────
         _annotationToolbar = this.FindControl<Border>("AnnotationToolbar");
-        _penModeButton     = this.FindControl<ToggleButton>("PenModeButton");
-        _eraserModeButton  = this.FindControl<ToggleButton>("EraserModeButton");
+        _penModeButton        = this.FindControl<ToggleButton>("PenModeButton");
+        _highlighterModeButton = this.FindControl<ToggleButton>("HighlighterModeButton");
+        _eraserModeButton     = this.FindControl<ToggleButton>("EraserModeButton");
         _colorAmber        = this.FindControl<Button>("ColorAmber");
         _colorRed          = this.FindControl<Button>("ColorRed");
         _colorBlue         = this.FindControl<Button>("ColorBlue");
@@ -319,17 +321,42 @@ public partial class MainView : UserControl
         if (_penModeButton?.IsChecked == true)
         {
             _suppressToolbarUpdates = true;
+            if (_highlighterModeButton != null) _highlighterModeButton.IsChecked = false;
             if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
             _suppressToolbarUpdates = false;
-            if (_inkOverlay != null) _inkOverlay.IsEraserMode = false;
+            if (_inkOverlay != null) { _inkOverlay.IsEraserMode = false; _inkOverlay.IsHighlighterMode = false; }
         }
         else
         {
-            // Prevent un-checking pen unless eraser is the one taking over.
-            if (_eraserModeButton?.IsChecked != true)
+            // Prevent un-checking pen unless another mode is taking over.
+            if (_highlighterModeButton?.IsChecked != true && _eraserModeButton?.IsChecked != true)
             {
                 _suppressToolbarUpdates = true;
                 if (_penModeButton != null) _penModeButton.IsChecked = true;
+                _suppressToolbarUpdates = false;
+            }
+        }
+    }
+
+    private void OnHighlighterModeIsCheckedChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressToolbarUpdates) return;
+
+        if (_highlighterModeButton?.IsChecked == true)
+        {
+            _suppressToolbarUpdates = true;
+            if (_penModeButton    != null) _penModeButton.IsChecked    = false;
+            if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
+            _suppressToolbarUpdates = false;
+            if (_inkOverlay != null) { _inkOverlay.IsEraserMode = false; _inkOverlay.IsHighlighterMode = true; }
+        }
+        else
+        {
+            // Prevent un-checking highlighter unless another mode is taking over.
+            if (_penModeButton?.IsChecked != true && _eraserModeButton?.IsChecked != true)
+            {
+                _suppressToolbarUpdates = true;
+                if (_highlighterModeButton != null) _highlighterModeButton.IsChecked = true;
                 _suppressToolbarUpdates = false;
             }
         }
@@ -342,14 +369,15 @@ public partial class MainView : UserControl
         if (_eraserModeButton?.IsChecked == true)
         {
             _suppressToolbarUpdates = true;
-            if (_penModeButton != null) _penModeButton.IsChecked = false;
+            if (_penModeButton        != null) _penModeButton.IsChecked        = false;
+            if (_highlighterModeButton != null) _highlighterModeButton.IsChecked = false;
             _suppressToolbarUpdates = false;
-            if (_inkOverlay != null) _inkOverlay.IsEraserMode = true;
+            if (_inkOverlay != null) { _inkOverlay.IsEraserMode = true; _inkOverlay.IsHighlighterMode = false; }
         }
         else
         {
-            // Prevent un-checking eraser unless pen is taking over.
-            if (_penModeButton?.IsChecked != true)
+            // Prevent un-checking eraser unless another mode is taking over.
+            if (_penModeButton?.IsChecked != true && _highlighterModeButton?.IsChecked != true)
             {
                 _suppressToolbarUpdates = true;
                 if (_eraserModeButton != null) _eraserModeButton.IsChecked = true;
@@ -382,14 +410,15 @@ public partial class MainView : UserControl
         // Sync ColorView so it reflects the chosen preset.
         if (_colorPickerView != null) _colorPickerView.Color = brush.Color;
 
-        // Switch back to pen mode when a colour is chosen.
-        if (_penModeButton?.IsChecked != true)
+        // Switch out of eraser mode when a colour is chosen; preserve pen/highlighter mode.
+        if (_eraserModeButton?.IsChecked == true)
         {
             _suppressToolbarUpdates = true;
             if (_penModeButton    != null) _penModeButton.IsChecked    = true;
             if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
+            if (_highlighterModeButton != null) _highlighterModeButton.IsChecked = false;
             _suppressToolbarUpdates = false;
-            if (_inkOverlay != null) _inkOverlay.IsEraserMode = false;
+            if (_inkOverlay != null) { _inkOverlay.IsEraserMode = false; _inkOverlay.IsHighlighterMode = false; }
         }
     }
 
@@ -404,14 +433,15 @@ public partial class MainView : UserControl
         // Deselect preset swatches – a custom colour is now active.
         SetActiveColorSwatch(null);
 
-        // Switch back to pen mode when a colour is chosen.
-        if (_penModeButton?.IsChecked != true)
+        // Switch out of eraser mode when a colour is chosen; preserve pen/highlighter mode.
+        if (_eraserModeButton?.IsChecked == true)
         {
             _suppressToolbarUpdates = true;
             if (_penModeButton    != null) _penModeButton.IsChecked    = true;
             if (_eraserModeButton != null) _eraserModeButton.IsChecked = false;
+            if (_highlighterModeButton != null) _highlighterModeButton.IsChecked = false;
             _suppressToolbarUpdates = false;
-            if (_inkOverlay != null) _inkOverlay.IsEraserMode = false;
+            if (_inkOverlay != null) { _inkOverlay.IsEraserMode = false; _inkOverlay.IsHighlighterMode = false; }
         }
     }
 

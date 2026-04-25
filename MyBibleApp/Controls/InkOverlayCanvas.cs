@@ -3,6 +3,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Rendering.SceneGraph;
+using Avalonia.Skia;
+using SkiaSharp;
 
 namespace MyBibleApp.Controls;
 
@@ -14,6 +17,10 @@ namespace MyBibleApp.Controls;
 /// Strokes are stored in content-space coordinates (y + scrollOffset at time of
 /// drawing) and rendered back to viewport space via a single PushTransform so they
 /// appear to scroll along with the text.
+///
+/// Highlight strokes are composited with SKBlendMode.Multiply via a custom Skia draw
+/// operation so they darken the underlying text rather than covering it.
+/// Pen strokes use regular SourceOver rendering on top.
 /// </summary>
 public class InkOverlayCanvas : Control
 {
@@ -38,6 +45,18 @@ public class InkOverlayCanvas : Control
         set => SetValue(IsEraserModeProperty, value);
     }
 
+    public static readonly StyledProperty<bool> IsHighlighterModeProperty =
+        AvaloniaProperty.Register<InkOverlayCanvas, bool>(nameof(IsHighlighterMode), false);
+
+    public bool IsHighlighterMode
+    {
+        get => GetValue(IsHighlighterModeProperty);
+        set => SetValue(IsHighlighterModeProperty, value);
+    }
+
+    private const double PenStrokeWidth         = 2.5;
+    private const double HighlighterStrokeWidth = 14.0;
+
     // ── Stroke cache ──────────────────────────────────────────────────────────
 
     // Represents a completed, immutable stroke.
@@ -46,6 +65,8 @@ public class InkOverlayCanvas : Control
         Point DotCenter,            // used only when Geo is null
         Rect ContentBounds,         // content-space AABB for culling / eraser
         Color Color,                // per-stroke ink colour
+        double StrokeWidth,         // pen width used when drawing this stroke
+        bool IsHighlight,           // true → drawn with multiply blend
         IReadOnlyList<Point>? Points); // raw points for eraser hit-testing (null for dots)
 
     private readonly List<StrokeCache> _cachedStrokes = new();
@@ -55,10 +76,12 @@ public class InkOverlayCanvas : Control
     private StreamGeometry? _activeGeo;     // rebuilt lazily when _activeStrokeDirty
     private bool _activeStrokeDirty;
     private Color _activeStrokeColor;
+    private double _activeStrokeWidth;
+    private bool _activeIsHighlight;
 
     private double _scrollOffsetY;
 
-    private readonly Dictionary<Color, Pen> _penCache = new();
+    private readonly Dictionary<(Color, double), Pen> _penCache = new();
 
     // ── Public API called by MainView ─────────────────────────────────────────
 
@@ -78,6 +101,8 @@ public class InkOverlayCanvas : Control
             return;
         }
         _activeStrokeColor = PenColor;
+        _activeStrokeWidth  = IsHighlighterMode ? HighlighterStrokeWidth : PenStrokeWidth;
+        _activeIsHighlight  = IsHighlighterMode;
         _activeStroke = new List<Point> { ToContent(viewportPoint) };
         _activeGeo = null;
         _activeStrokeDirty = true;
@@ -110,7 +135,7 @@ public class InkOverlayCanvas : Control
                 _cachedStrokes.Add(new StrokeCache(
                     null, p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
-                    _activeStrokeColor, null));
+                    _activeStrokeColor, _activeStrokeWidth, _activeIsHighlight, null));
             }
             else
             {
@@ -120,6 +145,8 @@ public class InkOverlayCanvas : Control
                     default,
                     ComputeBounds(_activeStroke),
                     _activeStrokeColor,
+                    _activeStrokeWidth,
+                    _activeIsHighlight,
                     pts));
             }
         }
@@ -245,23 +272,41 @@ public class InkOverlayCanvas : Control
         // Clip to the visible viewport so strokes don't render outside our bounds.
         using var clip = context.PushClip(new Rect(Bounds.Size));
 
-        // Apply scroll offset as a single transform instead of converting every
-        // point individually. All drawing below is in content-space coordinates.
-        using var transform = context.PushTransform(
-            Matrix.CreateTranslation(0, -_scrollOffsetY));
-
-        // Visible content-space Y range (with a small margin).
         double viewTop    = _scrollOffsetY - 10;
         double viewBottom = _scrollOffsetY + Bounds.Height + 10;
 
-        // Draw completed strokes, culling those outside the viewport.
+        // ── Highlight strokes: rendered first with Skia Multiply blend ────────
+        // Collect visible highlight strokes for the custom Skia draw operation.
+        List<StrokeCache>? highlightStrokes = null;
+        foreach (var s in _cachedStrokes)
+        {
+            if (!s.IsHighlight) continue;
+            if (s.ContentBounds.Bottom >= viewTop && s.ContentBounds.Top <= viewBottom)
+                (highlightStrokes ??= new()).Add(s);
+        }
+
+        // Include an in-progress highlight stroke if one is active.
+        StrokeCache? activeHighlight = (_activeStroke != null && _activeIsHighlight)
+            ? new StrokeCache(null, default, default, _activeStrokeColor, _activeStrokeWidth, true,
+                              _activeStroke.AsReadOnly())
+            : null;
+
+        if (highlightStrokes?.Count > 0 || activeHighlight.HasValue)
+            context.Custom(new HighlightDrawOperation(
+                new Rect(Bounds.Size), highlightStrokes, activeHighlight, _scrollOffsetY));
+
+        // ── Pen strokes: regular SourceOver rendering on top of highlights ────
+        using var transform = context.PushTransform(
+            Matrix.CreateTranslation(0, -_scrollOffsetY));
+
         foreach (var stroke in _cachedStrokes)
         {
+            if (stroke.IsHighlight) continue;
             if (stroke.ContentBounds.Bottom < viewTop ||
                 stroke.ContentBounds.Top    > viewBottom)
                 continue;
 
-            var pen   = GetPen(stroke.Color);
+            var pen   = GetPen(stroke.Color, stroke.StrokeWidth);
             var brush = pen.Brush!;
 
             if (stroke.Geo is null)
@@ -270,17 +315,15 @@ public class InkOverlayCanvas : Control
                 context.DrawGeometry(null, pen, stroke.Geo);
         }
 
-        // Draw the active (in-progress) stroke.
-        if (_activeStroke != null && _activeStroke.Count > 0)
+        if (_activeStroke != null && !_activeIsHighlight && _activeStroke.Count > 0)
         {
-            var activePen = GetPen(_activeStrokeColor);
+            var activePen = GetPen(_activeStrokeColor, _activeStrokeWidth);
             if (_activeStroke.Count == 1)
             {
                 context.DrawEllipse(activePen.Brush!, null, _activeStroke[0], 1.5, 1.5);
             }
             else
             {
-                // Rebuild the cached geometry only when new points were added.
                 if (_activeStrokeDirty)
                 {
                     _activeGeo = BuildGeometry(_activeStroke);
@@ -291,14 +334,115 @@ public class InkOverlayCanvas : Control
         }
     }
 
+    // ── Highlight draw operation (Skia Multiply blend) ────────────────────────
+
+    /// <summary>
+    /// Custom draw operation that renders highlight strokes directly via the Skia
+    /// canvas using SKBlendMode.Multiply so the highlight darkens the underlying
+    /// Bible text rather than covering it.
+    /// </summary>
+    private sealed class HighlightDrawOperation : ICustomDrawOperation
+    {
+        private readonly IReadOnlyList<StrokeCache>? _strokes;
+        private readonly StrokeCache? _activeStroke;
+        private readonly double _scrollOffsetY;
+
+        public Rect Bounds { get; }
+
+        public HighlightDrawOperation(
+            Rect bounds,
+            IReadOnlyList<StrokeCache>? strokes,
+            StrokeCache? activeStroke,
+            double scrollOffsetY)
+        {
+            Bounds         = bounds;
+            _strokes       = strokes;
+            _activeStroke  = activeStroke;
+            _scrollOffsetY = scrollOffsetY;
+        }
+
+        public bool Equals(ICustomDrawOperation? other) => false;
+        public bool HitTest(Point p) => false;
+        public void Dispose() { }
+
+        public void Render(ImmediateDrawingContext context)
+        {
+            var leaseFeature = context.TryGetFeature(typeof(ISkiaSharpApiLeaseFeature)) as ISkiaSharpApiLeaseFeature;
+            if (leaseFeature == null) return;
+
+            using var lease  = leaseFeature.Lease();
+            var canvas = lease.SkCanvas;
+            canvas.Save();
+            canvas.ClipRect(new SKRect(0, 0, (float)Bounds.Width, (float)Bounds.Height));
+            canvas.Translate(0, -(float)_scrollOffsetY);
+
+            using var paint = new SKPaint
+            {
+                Style       = SKPaintStyle.Stroke,
+                StrokeCap   = SKStrokeCap.Round,
+                StrokeJoin  = SKStrokeJoin.Round,
+                IsAntialias = true,
+                BlendMode   = SKBlendMode.Multiply,
+            };
+
+            if (_strokes != null)
+                foreach (var s in _strokes)
+                    DrawStroke(canvas, paint, s);
+
+            if (_activeStroke.HasValue)
+                DrawStroke(canvas, paint, _activeStroke.Value);
+
+            canvas.Restore();
+        }
+
+        private static void DrawStroke(SKCanvas canvas, SKPaint paint, StrokeCache stroke)
+        {
+            // Force full opacity: multiply blend works correctly with opaque colours.
+            // Semi-transparent stroke colours are made fully opaque here so the
+            // multiply effect uses the full ink colour (yellow × text = readable text).
+            paint.Color       = new SKColor(stroke.Color.R, stroke.Color.G, stroke.Color.B, 255);
+            paint.StrokeWidth = (float)stroke.StrokeWidth;
+
+            var pts = stroke.Points;
+
+            if (pts == null)
+            {
+                // Completed single-tap dot (no points list).
+                paint.Style = SKPaintStyle.Fill;
+                canvas.DrawCircle(
+                    (float)stroke.DotCenter.X, (float)stroke.DotCenter.Y,
+                    (float)(stroke.StrokeWidth / 2), paint);
+                paint.Style = SKPaintStyle.Stroke;
+                return;
+            }
+
+            if (pts.Count == 1)
+            {
+                paint.Style = SKPaintStyle.Fill;
+                canvas.DrawCircle(
+                    (float)pts[0].X, (float)pts[0].Y,
+                    (float)(stroke.StrokeWidth / 2), paint);
+                paint.Style = SKPaintStyle.Stroke;
+                return;
+            }
+
+            using var path = new SKPath();
+            path.MoveTo((float)pts[0].X, (float)pts[0].Y);
+            for (int i = 1; i < pts.Count; i++)
+                path.LineTo((float)pts[i].X, (float)pts[i].Y);
+            canvas.DrawPath(path, paint);
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private Pen GetPen(Color color)
+    private Pen GetPen(Color color, double width)
     {
-        if (_penCache.TryGetValue(color, out var pen)) return pen;
-        pen = new Pen(new SolidColorBrush(color), 2.5,
+        var key = (color, width);
+        if (_penCache.TryGetValue(key, out var pen)) return pen;
+        pen = new Pen(new SolidColorBrush(color), width,
             lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
-        _penCache[color] = pen;
+        _penCache[key] = pen;
         return pen;
     }
 

@@ -263,8 +263,9 @@
                       IsCheckedChanged="OnSplitViewToggleIsCheckedChanged">
           <material:MaterialIcon Kind="ViewSplitVertical" Width="20" Height="20" />
         </ToggleButton>
-        <ToggleButton Grid.Column="3" x:Name="AnnotationToggle">
-          <material:MaterialIcon Kind="ViewSplitVertical" Width="20" Height="20" />
+        <ToggleButton Grid.Column="3" x:Name="AnnotationToggle"
+                      Classes="tool-btn">
+          <material:MaterialIcon Kind="Pen" Width="20" Height="20" />
         </ToggleButton>
         </Grid>
       </Border>
@@ -403,6 +404,14 @@
                       ToolTip.Tip="Draw"
                       IsCheckedChanged="OnPenModeIsCheckedChanged">
           <material:MaterialIcon Kind="Pencil" Width="20" Height="20" />
+        </ToggleButton>
+
+        <!-- Highlighter mode -->
+        <ToggleButton x:Name="HighlighterModeButton"
+                      Classes="tool-btn"
+                      ToolTip.Tip="Highlight"
+                      IsCheckedChanged="OnHighlighterModeIsCheckedChanged">
+          <material:MaterialIcon Kind="Marker" Width="20" Height="20" />
         </ToggleButton>
 
         <!-- Eraser mode -->
