@@ -8,5 +8,37 @@
         x:Class="MyBibleApp.Views.MainWindow"
         Icon="/Assets/avalonia-logo.ico"
         Title="MyBibleApp">
-        <views:AppShellView />
+    <Panel>
+        <views:AppShellView x:Name="Shell" />
+
+        <!-- Shutdown sync overlay -->
+        <Panel x:Name="SyncOverlay"
+               IsVisible="False"
+               Background="#88000000">
+            <Border HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+                    BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="32,24"
+                    MinWidth="280">
+                <StackPanel Spacing="16" HorizontalAlignment="Center">
+                    <TextBlock Text="Saving to Google Drive…"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center" />
+                    <ProgressBar x:Name="SyncOverlayProgress"
+                                 IsIndeterminate="True"
+                                 MinWidth="220"
+                                 Height="4" />
+                    <TextBlock x:Name="SyncOverlayStatus"
+                               Text="Preparing to save pending changes..."
+                               FontSize="12"
+                               HorizontalAlignment="Center"
+                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+                </StackPanel>
+            </Border>
+        </Panel>
+    </Panel>
 </Window>

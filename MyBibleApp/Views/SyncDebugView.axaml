@@ -1,0 +1,52 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:MyBibleApp.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+             x:Class="MyBibleApp.Views.SyncDebugView"
+             x:DataType="vm:MainViewModel">
+  <Grid RowDefinitions="Auto,Auto,*,*" RowSpacing="8" Margin="16">
+    <TextBlock Grid.Row="0" Text="Debug: Sync Inspector" FontSize="18" FontWeight="Bold" />
+
+    <WrapPanel Grid.Row="1" Orientation="Horizontal">
+      <Button Content="Refresh" MinWidth="100" Margin="0,0,8,4" Click="OnRefreshClick" />
+      <Button Content="Clear Logs" MinWidth="100" Margin="0,0,8,4" Click="OnClearLogsClick" />
+      <Button Content="Copy Snapshot" MinWidth="110" Margin="0,0,8,4" Click="OnCopySnapshotClick" />
+      <Button Content="Sync Now" MinWidth="100" Margin="0,0,8,4" Click="OnSyncNowClick" IsEnabled="{Binding CanForceSync}" />
+      <Button Content="Clear Remote Data" MinWidth="130" Margin="0,0,8,4" Click="OnClearRemoteDataClick" IsEnabled="{Binding IsAuthenticated}" />
+      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="0,0,0,4">
+        <TextBlock Text="Last Updated:" VerticalAlignment="Center" />
+        <TextBlock Text="{Binding SyncDebugLastUpdated}" VerticalAlignment="Center" FontFamily="monospace" />
+      </StackPanel>
+    </WrapPanel>
+
+    <Border Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Padding="8">
+      <Grid RowDefinitions="Auto,*" RowSpacing="6">
+        <TextBlock Grid.Row="0" Text="Sync Data Snapshot" FontWeight="Bold" />
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+          <TextBox x:Name="SnapshotTextBox"
+                   Text="{Binding SyncDebugData}"
+                   IsReadOnly="True"
+                   TextWrapping="Wrap"
+                   AcceptsReturn="True"
+                   BorderThickness="0"
+                   Background="Transparent"
+                   FontFamily="monospace"
+                   FontSize="12" />
+        </ScrollViewer>
+      </Grid>
+    </Border>
+
+    <Border Grid.Row="3" BorderThickness="1" BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Padding="8">
+      <Grid RowDefinitions="Auto,*" RowSpacing="6">
+        <TextBlock Grid.Row="0" Text="Sync Logs (most recent first)" FontWeight="Bold" />
+        <ListBox Grid.Row="1" x:Name="SyncLogsListBox" ItemsSource="{Binding SyncDebugLogs}" FontFamily="monospace" FontSize="12"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
+
+
+

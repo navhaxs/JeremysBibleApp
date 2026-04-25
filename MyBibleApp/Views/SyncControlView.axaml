@@ -1,0 +1,58 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:MyBibleApp.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="100"
+             x:Class="MyBibleApp.Views.SyncControlView"
+             x:DataType="vm:MainViewModel">
+  
+  <Border Padding="8" Background="{DynamicResource SystemControlBackgroundAltLowBrush}">
+    <WrapPanel Orientation="Horizontal">
+      <!-- Sync Status Indicator -->
+      <StackPanel Orientation="Vertical" VerticalAlignment="Center" Spacing="4" Margin="0,0,8,4">
+        <TextBlock Text="Sync Status:" FontSize="12" FontWeight="Bold" />
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <TextBlock Text="Syncing..."
+                     IsVisible="{Binding IsSyncing}"
+                     FontSize="11"
+                     Foreground="{DynamicResource SystemAccentColor}" />
+
+          <!-- Status text -->
+          <TextBlock Text="{Binding SyncStatus}"
+                     FontSize="11"
+                     VerticalAlignment="Center"
+                     Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+        </StackPanel>
+      </StackPanel>
+
+      <!-- Auth/Sync Buttons -->
+      <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Button Name="AuthButton"
+                Content="Authenticate"
+                IsEnabled="{Binding CanAuthenticate}"
+                Click="OnAuthButtonClick"
+                Padding="8,4"
+                Margin="0,0,4,4"
+                FontSize="11" />
+
+        <Button Name="SignOutButton"
+                Content="Sign Out"
+                IsEnabled="{Binding IsAuthenticated}"
+                Click="OnSignOutButtonClick"
+                Padding="8,4"
+                Margin="0,0,4,4"
+                FontSize="11" />
+
+        <Button Name="ForceSyncButton"
+                Content="Sync Now"
+                IsEnabled="{Binding CanForceSync}"
+                Click="OnForceSyncButtonClick"
+                Padding="8,4"
+                Margin="0,0,4,4"
+                FontSize="11" />
+      </WrapPanel>
+    </WrapPanel>
+  </Border>
+</UserControl>
+

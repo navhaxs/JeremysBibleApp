@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Sync.Demo",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build Sync.Demo",
+      "program": "${workspaceFolder}/MyBibleApp.Sync.Demo/bin/Debug/net10.0/MyBibleApp.Sync.Demo.dll",
+      "cwd": "${workspaceFolder}/MyBibleApp.Sync.Demo",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}

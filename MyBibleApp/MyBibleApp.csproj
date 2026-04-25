@@ -18,4 +18,8 @@
         <PackageReference Include="Material.Icons.Avalonia" />
         <PackageReference Include="ReactiveUI.Avalonia"/>
     </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\MyBibleApp.Sync\MyBibleApp.Sync.csproj" />
+    </ItemGroup>
 </Project>

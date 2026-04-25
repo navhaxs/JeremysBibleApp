@@ -45,7 +45,16 @@ I plan to use the [fetch.bible](https://fetch.bible/) API to access free Bible t
 
 ## Platform Support
 
-**Primary**: Android  
+**Primary**: Android
 **Theoretically Supported**: Windows, macOS, iOS
 
-Given that both .NET and Avalonia are cross-platform frameworks, this app already builds on all major platforms. However other platforms are untested. 
+Given that both .NET and Avalonia are cross-platform frameworks, this app already builds on all major platforms. However other platforms are untested.
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [GETTING_STARTED.md](./GETTING_STARTED.md) | Google Drive sync setup checklist |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Architecture diagrams and sync lifecycle |
+| [ANDROID_SETUP.md](./ANDROID_SETUP.md) | Android authentication setup and troubleshooting |
+| [AGENTS.md](./AGENTS.md) | Developer/agent guide for this codebase |

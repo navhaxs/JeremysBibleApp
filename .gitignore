@@ -3,6 +3,8 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+credentials.*.json
+
 # User-specific files
 *.rsuser
 *.suo
@@ -443,6 +445,10 @@ $RECYCLE.BIN/
 # JetBrains Rider
 .idea/
 *.sln.iml
+
+# OAuth token cache and credentials (user-specific)
+token_cache*/
+credentials.json
 
 ##
 ## Visual Studio Code

@@ -1,40 +1,65 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
+using MyBibleApp.Models;
+using MyBibleApp.Services;
+using MyBibleApp.Services.Sync;
 using MyBibleApp.ViewModels;
 
 namespace MyBibleApp.Views;
 
 public partial class AppShellView : UserControl
 {
-    private Grid?         _contentGrid;
-    private GridSplitter? _paneSplitter;
-    private MainView?     _primaryView;
-    private MainView?     _secondaryView;
-    private StackPanel?   _tabButtonsHost;
-    private bool          _isSplit;
+    private Grid?             _contentGrid;
+    private GridSplitter?     _paneSplitter;
+    private MainView?         _primaryView;
+    private MainView?         _secondaryView;
+    private StackPanel?       _tabButtonsHost;
+    private bool              _isSplit;
+    private DebugPointerView? _debugPointerView;
+    private DebugDrawingView? _debugDrawingView;
+    private SyncDebugView?    _syncDebugView;
     private readonly List<MainViewModel> _tabs = [];
     private readonly Dictionary<MainViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
+    private CancellationTokenSource? _persistTabsCts;
+    private string _lastPersistedTabStateJson = string.Empty;
+    private int _lastPersistedActiveIndex = -1;
     private int _activeTabIndex = -1;
+    private bool _isRestoringTabs;
 
     // Split sizing policy
     private const double PreferredPaneMinWidth = 300;
     private const double AbsolutePaneMinWidth  = 180;
     private const double SplitterWidth         = 4;
+    private const double TabBarMinWidth        = 600;
+    private const int TabStatePersistDebounceMilliseconds = 300;
+    private Border?      _tabBar;
 
     public AppShellView()
     {
         InitializeComponent();
 
-        _contentGrid   = this.FindControl<Grid>("ContentGrid");
-        _paneSplitter  = this.FindControl<GridSplitter>("PaneSplitter");
-        _primaryView   = this.FindControl<MainView>("MainView");
-        _secondaryView = this.FindControl<MainView>("SecondaryView");
+        _contentGrid    = this.FindControl<Grid>("ContentGrid");
+        _paneSplitter   = this.FindControl<GridSplitter>("PaneSplitter");
+        _primaryView    = this.FindControl<MainView>("MainView");
+        _secondaryView  = this.FindControl<MainView>("SecondaryView");
         _tabButtonsHost = this.FindControl<StackPanel>("TabButtonsHost");
+        _tabBar         = this.FindControl<Border>("TabBar");
+        _debugPointerView = this.FindControl<DebugPointerView>("DebugView");
+        _debugDrawingView = this.FindControl<DebugDrawingView>("DebugDrawingView");
+        _syncDebugView    = this.FindControl<SyncDebugView>("SyncDebugView");
+
+        SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress += OnSyncProgress;
 
         // Give the secondary pane its own VM up front so it never inherits the
         // AppShell DataContext (which is used by the primary pane/debug UI).
@@ -42,10 +67,12 @@ public partial class AppShellView : UserControl
             _secondaryView.DataContext = new MainViewModel();
 
         InitializeTabs();
+        _ = RestoreTabsAndAuthAsync();
 
         if (_primaryView != null) _primaryView.SplitToggled += OnSplitToggled;
         if (_secondaryView != null) _secondaryView.SplitToggled += OnSplitToggled;
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
+        this.SizeChanged += OnShellSizeChanged;
     }
 
     private void InitializeTabs()
@@ -62,6 +89,15 @@ public partial class AppShellView : UserControl
         {
             if (args.PropertyName == nameof(MainViewModel.Header))
                 RefreshTabButtons();
+
+            if (args.PropertyName == nameof(MainViewModel.Header)
+                || args.PropertyName == nameof(MainViewModel.SelectedLookupBook)
+                || args.PropertyName == nameof(MainViewModel.SelectedLookupChapter)
+                || args.PropertyName == nameof(MainViewModel.SelectedLookupVerse))
+            {
+                if (!_isRestoringTabs)
+                    RequestPersistOpenTabReferences();
+            }
         };
 
         vm.PropertyChanged += handler;
@@ -71,6 +107,9 @@ public partial class AppShellView : UserControl
 
         if (makeActive)
             SelectTab(_tabs.Count - 1);
+
+        if (!_isRestoringTabs)
+            RequestPersistOpenTabReferences();
     }
 
     private void SelectTab(int index)
@@ -83,6 +122,8 @@ public partial class AppShellView : UserControl
         DataContext = vm;
         _primaryView.DataContext = vm;
         RefreshTabButtons();
+        if (!_isRestoringTabs)
+            RequestPersistOpenTabReferences();
     }
 
     private void RefreshTabButtons()
@@ -182,6 +223,7 @@ public partial class AppShellView : UserControl
         }
 
         _tabs.RemoveAt(index);
+        vm.Dispose();
 
         if (_activeTabIndex == index)
             _activeTabIndex = Math.Min(index, _tabs.Count - 1);
@@ -199,6 +241,160 @@ public partial class AppShellView : UserControl
         }
 
         RefreshTabButtons();
+        if (!_isRestoringTabs)
+            RequestPersistOpenTabReferences();
+    }
+
+    private async Task RestoreTabsAndAuthAsync()
+    {
+        if (_tabs.Count == 0)
+            return;
+
+        var overlay = this.FindControl<Panel>("StartupOverlay");
+
+        // Suppress persistence-to-queue for the entire startup sequence.
+        // Auth, pull, and tab restore are all restoring state — not generating
+        // new changes that need uploading. The queue will be empty after pull.
+        _isRestoringTabs = true;
+        foreach (var vm in _tabs) vm.SetReadingProgressSyncSuppressed(true);
+        try
+        {
+            var ownerVm = _tabs[Math.Clamp(_activeTabIndex, 0, _tabs.Count - 1)];
+
+            UpdateStartupOverlay("Loading...", "Checking saved sign-in...", 0);
+
+            // Smooth UX on reopen: this uses cached OAuth token when available.
+            await ownerVm.TryAutoAuthenticateOnStartupAsync();
+
+            if (ownerVm.IsAuthenticated)
+            {
+                UpdateStartupOverlay("Loading...", "Syncing with Google Drive...", 0);
+
+                await ownerVm.PullFromDriveAsync();
+            }
+
+            UpdateStartupOverlay("Loading...", "Restoring your open tabs...", 100);
+
+            var (persistedTabs, persistedActiveIndex) = await ownerVm.LoadPersistedOpenTabReferencesAsync();
+            if (persistedTabs.Count == 0)
+                return;
+
+            foreach (var vm in _tabs)
+            {
+                if (_tabHeaderHandlers.TryGetValue(vm, out var handler))
+                    vm.PropertyChanged -= handler;
+
+                vm.Dispose();
+            }
+
+            _tabHeaderHandlers.Clear();
+            _tabs.Clear();
+            _activeTabIndex = -1;
+
+            foreach (var state in persistedTabs.OrderBy(t => t.TabIndex))
+            {
+                var vm = new MainViewModel();
+                vm.SetReadingProgressSyncSuppressed(true);
+                ApplyPersistedTabReference(vm, state);
+                AddTabInternal(vm, makeActive: false);
+            }
+
+            if (_tabs.Count > 0)
+                SelectTab(Math.Clamp(persistedActiveIndex, 0, _tabs.Count - 1));
+
+            // No PersistOpenTabReferencesAsync() here — local storage is already
+            // correct after the Drive pull + tab restore. Calling it would enqueue
+            // preferences identical to what's on Drive, causing a spurious upload
+            // on the next app launch.
+        }
+        finally
+        {
+            // Always re-enable normal persistence tracking and hide the overlay,
+            // even if we returned early or an exception occurred.
+            _isRestoringTabs = false;
+            foreach (var vm in _tabs) vm.SetReadingProgressSyncSuppressed(false);
+            if (overlay != null)
+                overlay.IsVisible = false;
+        }
+    }
+
+    private static void ApplyPersistedTabReference(MainViewModel vm, OpenTabReferenceState state)
+    {
+        var book = vm.LookupBooks.FirstOrDefault(b =>
+            string.Equals(b.Code, state.BookCode, StringComparison.OrdinalIgnoreCase));
+
+        if (book != null)
+            vm.SelectedLookupBook = book;
+
+        vm.UpdateLookupFromReaderProgress(Math.Max(1, state.Chapter), Math.Max(1, state.Verse));
+
+        if (!string.IsNullOrWhiteSpace(state.Header))
+            vm.Header = state.Header;
+    }
+
+    private async Task PersistOpenTabReferencesAsync()
+    {
+        if (_tabs.Count == 0)
+            return;
+
+        var refs = new List<OpenTabReferenceState>(_tabs.Count);
+        for (var i = 0; i < _tabs.Count; i++)
+        {
+            var vm = _tabs[i];
+            refs.Add(new OpenTabReferenceState
+            {
+                TabIndex = i,
+                Header = vm.Header,
+                BookCode = vm.SelectedLookupBook?.Code ?? vm.BookCode,
+                Chapter = Math.Max(1, vm.SelectedLookupChapter),
+                Verse = Math.Max(1, vm.SelectedLookupVerse)
+            });
+        }
+
+        var activeIndex = _activeTabIndex >= 0 ? _activeTabIndex : 0;
+        var tabStateJson = JsonSerializer.Serialize(refs);
+        if (tabStateJson == _lastPersistedTabStateJson && activeIndex == _lastPersistedActiveIndex)
+            return;
+
+        var ownerVm = _tabs[Math.Clamp(activeIndex, 0, _tabs.Count - 1)];
+        await ownerVm.PersistOpenTabReferencesAsync(refs, activeIndex);
+
+        _lastPersistedTabStateJson = tabStateJson;
+        _lastPersistedActiveIndex = activeIndex;
+    }
+
+    private void RequestPersistOpenTabReferences()
+    {
+        _persistTabsCts?.Cancel();
+        _persistTabsCts?.Dispose();
+
+        _persistTabsCts = new CancellationTokenSource();
+        var cancellationToken = _persistTabsCts.Token;
+
+        _ = Task.Delay(TabStatePersistDebounceMilliseconds, cancellationToken).ContinueWith(async _ =>
+        {
+            if (!cancellationToken.IsCancellationRequested)
+                await PersistOpenTabReferencesAsync();
+        }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    // ── Shutdown ──────────────────────────────────────────────────────────────
+
+    public bool HasAuthenticatedTabs() => _tabs.Any(vm => vm.IsAuthenticated);
+
+    public async Task ShutdownAsync()
+    {
+        var ownerVm = _tabs.FirstOrDefault(vm => vm.IsAuthenticated);
+        if (ownerVm != null)
+            await ownerVm.ForceSyncAsync().ConfigureAwait(false);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress -= OnSyncProgress;
+        _persistTabsCts?.Cancel();
+        _persistTabsCts?.Dispose();
+        base.OnDetachedFromVisualTree(e);
     }
 
     // ── Split management ──────────────────────────────────────────────────────
@@ -241,6 +437,12 @@ public partial class AppShellView : UserControl
             ApplySplitSizing();
     }
 
+    private void OnShellSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (_tabBar != null)
+            _tabBar.IsVisible = e.NewSize.Width >= TabBarMinWidth;
+    }
+
     private void ApplySplitSizing()
     {
         if (_contentGrid == null) return;
@@ -260,35 +462,66 @@ public partial class AppShellView : UserControl
 
     // ── Debug view handlers ───────────────────────────────────────────────────
 
-    private void OnDebugToggleClick(object? sender, RoutedEventArgs e)
+    private void SetDebugSurface(bool showPointer, bool showDrawing, bool showSync)
     {
-        var mainView        = this.FindControl<MainView>("MainView");
-        var debugView       = this.FindControl<DebugPointerView>("DebugView");
-        var debugDrawing    = this.FindControl<DebugDrawingView>("DebugDrawingView");
-        var button          = (Button?)sender;
+        if (_primaryView is null || _debugPointerView is null || _debugDrawingView is null || _syncDebugView is null)
+            return;
 
-        if (mainView is null || debugView is null || debugDrawing is null || button is null) return;
-
-        var showDebug   = !debugView.IsVisible;
-        mainView.IsVisible  = !showDebug;
-        debugView.IsVisible = showDebug;
-        debugDrawing.IsVisible = false;
-        button.Content = showDebug ? "Show Bible Reader" : "Show Debug Pointer (Dev)";
+        _primaryView.IsVisible = !(showPointer || showDrawing || showSync);
+        _debugPointerView.IsVisible = showPointer;
+        _debugDrawingView.IsVisible = showDrawing;
+        _syncDebugView.IsVisible = showSync;
     }
 
-    private void OnDebugDrawingToggleClick(object? sender, RoutedEventArgs e)
+    private async void OnDebugTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        var mainView     = this.FindControl<MainView>("MainView");
-        var debugView    = this.FindControl<DebugPointerView>("DebugView");
-        var debugDrawing = this.FindControl<DebugDrawingView>("DebugDrawingView");
-        var button       = (Button?)sender;
+        if (sender is not TabStrip tabStrip) return;
 
-        if (mainView is null || debugDrawing is null || button is null) return;
+        switch (tabStrip.SelectedIndex)
+        {
+            case 1:
+                SetDebugSurface(showPointer: true, showDrawing: false, showSync: false);
+                break;
+            case 2:
+                SetDebugSurface(showPointer: false, showDrawing: true, showSync: false);
+                break;
+            case 3:
+                SetDebugSurface(showPointer: false, showDrawing: false, showSync: true);
+                if (DataContext is MainViewModel vm)
+                    await vm.RefreshSyncDebugDataAsync();
+                break;
+            default:
+                SetDebugSurface(showPointer: false, showDrawing: false, showSync: false);
+                break;
+        }
+    }
 
-        var showDebugDrawing = !debugDrawing.IsVisible;
-        mainView.IsVisible    = !showDebugDrawing;
-        if (debugView != null) debugView.IsVisible = false;
-        debugDrawing.IsVisible = showDebugDrawing;
-        button.Content = showDebugDrawing ? "Show Bible Reader" : "Show Debug Drawing (Dev)";
+    private void OnSyncProgress(object? sender, SyncProgressEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var startupOverlay = this.FindControl<Panel>("StartupOverlay");
+            if (startupOverlay?.IsVisible == true)
+                UpdateStartupOverlay("Loading...", e.Message, e.Progress);
+        });
+    }
+
+    private void UpdateStartupOverlay(string title, string detail, int progress)
+    {
+        var titleText = this.FindControl<TextBlock>("StartupOverlayMessage");
+        var detailText = this.FindControl<TextBlock>("StartupOverlayDetail");
+        var progressBar = this.FindControl<ProgressBar>("StartupOverlayProgress");
+
+        if (titleText != null)
+            titleText.Text = title;
+
+        if (detailText != null)
+            detailText.Text = string.IsNullOrWhiteSpace(detail) ? "Preparing local data..." : detail;
+
+        if (progressBar != null)
+        {
+            progressBar.IsIndeterminate = progress <= 0 || progress >= 100;
+            progressBar.Value = progress;
+        }
     }
 }
