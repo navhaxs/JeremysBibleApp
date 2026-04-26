@@ -1,0 +1,178 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:MyBibleApp.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
+             x:Class="MyBibleApp.Views.BibleReadingView"
+             x:DataType="vm:BibleReadingViewModel">
+
+  <UserControl.Styles>
+
+    <!-- Chapter toggle button: compact numbered cell -->
+    <Style Selector="ToggleButton.chapter-cell">
+      <Setter Property="Width" Value="26" />
+      <Setter Property="Height" Value="22" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="CornerRadius" Value="0" />
+      <Setter Property="FontSize" Value="9" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="BorderThickness" Value="0.5" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" />
+      <Style.Resources>
+        <SolidColorBrush x:Key="ToggleButtonBackground"             Color="Transparent" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver"  Color="#18808080" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundPressed"      Color="#30808080" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundChecked"      Color="{DynamicResource SystemAccentColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{DynamicResource SystemAccentColorLight1}" />
+        <SolidColorBrush x:Key="ToggleButtonForegroundChecked"      Color="White" />
+        <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked"     Color="{DynamicResource SystemAccentColor}" />
+      </Style.Resources>
+    </Style>
+
+    <!-- Book card container -->
+    <Style Selector="Border.book-card">
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Margin" Value="6,4" />
+      <Setter Property="Padding" Value="8,6" />
+    </Style>
+
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*">
+
+    <!-- ── Header ─────────────────────────────────────────────────────────── -->
+    <Border Grid.Row="0"
+            Padding="16,12"
+            BorderThickness="0,0,0,1"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
+          <TextBlock Text="My Bible Reading"
+                     FontSize="22"
+                     FontWeight="Bold" />
+          <TextBlock x:Name="ProgressSummary"
+                     FontSize="12"
+                     Opacity="0.6"
+                     Margin="0,2,0,0" />
+        </StackPanel>
+        <Button Grid.Column="1"
+                x:Name="CloseButton"
+                Width="40" Height="40"
+                CornerRadius="20"
+                Padding="0"
+                VerticalAlignment="Center"
+                ToolTip.Tip="Close"
+                Click="OnCloseButtonClick">
+          <TextBlock Text="✕" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Button>
+      </Grid>
+    </Border>
+
+    <!-- ── Free-pan canvas ────────────────────────────────────────────────── -->
+    <ScrollViewer Grid.Row="1"
+                  x:Name="PanScrollViewer"
+                  HorizontalScrollBarVisibility="Hidden"
+                  VerticalScrollBarVisibility="Hidden"
+                  AllowAutoHide="True"
+                  PointerPressed="OnPanPointerPressed"
+                  PointerMoved="OnPanPointerMoved"
+                  PointerReleased="OnPanPointerReleased"
+                  PointerCaptureLost="OnPanPointerCaptureLost">
+
+      <!-- Two-column grid: OT (left) / NT (right) -->
+      <Grid ColumnDefinitions="Auto,Auto" Margin="16,12" ColumnSpacing="24">
+
+        <!-- ── Old Testament ────────────────────────────────────────────── -->
+        <StackPanel Grid.Column="0" Spacing="0">
+          <TextBlock Text="Old Testament"
+                     FontSize="11"
+                     FontWeight="SemiBold"
+                     Opacity="0.5"
+                     Margin="6,0,0,4"
+                     LetterSpacing="1.5" />
+          <ItemsControl ItemsSource="{Binding OtBooks}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:BibleReadingBookEntry">
+                <Border Classes="book-card">
+                  <Grid ColumnDefinitions="110,*" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Name}"
+                               FontSize="13"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap" />
+                    <ItemsControl Grid.Column="1"
+                                  Width="260"
+                                  ItemsSource="{Binding Chapters}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <WrapPanel ItemWidth="26" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BibleReadingChapterCell">
+                          <ToggleButton Classes="chapter-cell"
+                                        Content="{Binding Number}"
+                                        IsChecked="{Binding IsRead, Mode=TwoWay}"
+                                        Click="OnChapterCellClick" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+        <!-- ── New Testament ────────────────────────────────────────────── -->
+        <StackPanel Grid.Column="1" Spacing="0">
+          <TextBlock Text="New Testament"
+                     FontSize="11"
+                     FontWeight="SemiBold"
+                     Opacity="0.5"
+                     Margin="6,0,0,4"
+                     LetterSpacing="1.5" />
+          <ItemsControl ItemsSource="{Binding NtBooks}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:BibleReadingBookEntry">
+                <Border Classes="book-card">
+                  <Grid ColumnDefinitions="110,*" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Name}"
+                               FontSize="13"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap" />
+                    <ItemsControl Grid.Column="1"
+                                  Width="260"
+                                  ItemsSource="{Binding Chapters}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <WrapPanel ItemWidth="26" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BibleReadingChapterCell">
+                          <ToggleButton Classes="chapter-cell"
+                                        Content="{Binding Number}"
+                                        IsChecked="{Binding IsRead, Mode=TwoWay}"
+                                        Click="OnChapterCellClick" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+      </Grid>
+    </ScrollViewer>
+
+  </Grid>
+</UserControl>

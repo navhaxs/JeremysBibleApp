@@ -102,6 +102,13 @@
       <Setter Property="Height" Value="40" />
       <Setter Property="CornerRadius" Value="20" />
       <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.tool-btn">
+      <Setter Property="Width" Value="40" />
+      <Setter Property="Height" Value="40" />
+      <Setter Property="CornerRadius" Value="20" />
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <!-- Color swatch buttons: solid-colour circles -->
@@ -132,7 +139,7 @@
               Padding="12,12,12,10"
               BorderThickness="0,0,0,1"
               BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}">
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
 
         <!-- Main app menu button -->
         <Button Grid.Column="0" Classes="tool-btn" VerticalAlignment="Center">
@@ -267,6 +274,13 @@
                       Classes="tool-btn">
           <material:MaterialIcon Kind="Pen" Width="20" Height="20" />
         </ToggleButton>
+        <Button Grid.Column="4"
+                x:Name="BibleReadingButton"
+                Classes="tool-btn"
+                ToolTip.Tip="My Bible Reading"
+                Click="OnBibleReadingButtonClick">
+          <material:MaterialIcon Kind="BookOpenPageVariant" Width="20" Height="20" />
+        </Button>
         </Grid>
       </Border>
       <TextBlock Grid.Row="1"
@@ -379,6 +393,17 @@
                     Height="40" />
           </Canvas>
         </Border>
+
+        <!-- Chapter markers — shown to the left of the scrollbar while dragging the thumb. -->
+        <Canvas x:Name="ChapterMarkersCanvas"
+                Grid.Row="0"
+                Width="52"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Stretch"
+                Margin="0,0,14,0"
+                IsVisible="False"
+                IsHitTestVisible="False"
+                ZIndex="19" />
 
       </Grid>
     </Grid>

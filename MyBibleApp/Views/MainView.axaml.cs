@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -15,6 +16,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
 using MyBibleApp.Models;
+using MyBibleApp.Services;
 using MyBibleApp.ViewModels;
 using Color = Avalonia.Media.Color;
 
@@ -35,10 +37,15 @@ public partial class MainView : UserControl
     // Raised when the user taps the split-view toggle (true = split on, false = off).
     public event EventHandler<bool>? SplitToggled;
 
+    // Raised when the user taps the My Bible Reading button.
+    public event EventHandler? BibleReadingRequested;
+
     private InkOverlayCanvas? _inkOverlay;
     private Border? _readerProgressTrack;
     private Border? _readerProgressThumb;
+    private Canvas? _chapterMarkersCanvas;
     private bool _isDraggingProgressBar;
+    private CancellationTokenSource? _scrollbarHideCts;
     private ScrollViewer? _paragraphScrollViewer;
     private bool _isScrollTrackingAttached;
     private bool _waitingForLayoutToAttachScrollViewer;
@@ -107,6 +114,7 @@ public partial class MainView : UserControl
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
+        _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
 
         // ── Annotation toolbar controls ──────────────────────────────────────
         _annotationToolbar = this.FindControl<Border>("AnnotationToolbar");
@@ -171,6 +179,13 @@ public partial class MainView : UserControl
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
         UpdateAnnotationState();
+
+        // ── Scrollbar visibility (desktop: always visible; mobile: tap-to-reveal) ──
+        if (!PlatformHelper.IsDesktop && _readerProgressTrack != null)
+        {
+            _readerProgressTrack.Opacity = 0;
+            _paragraphList.AddHandler(TappedEvent, OnListBoxTapped, handledEventsToo: false);
+        }
     }
 
     private void EnsureScrollTrackingAttached()
@@ -250,6 +265,11 @@ public partial class MainView : UserControl
         UpdateAnnotationState();
     }
 
+    // ── Bible Reading overlay ─────────────────────────────────────────────────
+
+    private void OnBibleReadingButtonClick(object? sender, RoutedEventArgs e) =>
+        BibleReadingRequested?.Invoke(this, EventArgs.Empty);
+
     // ── Split-view toggle ────────────────────────────────────────────────────
 
     private void OnSplitViewToggleIsCheckedChanged(object? sender, RoutedEventArgs e)
@@ -257,6 +277,12 @@ public partial class MainView : UserControl
         if (_suppressSplitEvent) return;
         SplitToggled?.Invoke(this, _splitViewToggle?.IsChecked == true);
     }
+
+    /// <summary>Captures the current ink strokes so they can be stored per-tab.</summary>
+    public Controls.InkOverlayCanvas.InkState? CaptureInkState() => _inkOverlay?.CaptureState();
+
+    /// <summary>Restores a previously captured ink state when switching back to a tab.</summary>
+    public void RestoreInkState(Controls.InkOverlayCanvas.InkState? state) => _inkOverlay?.RestoreState(state);
 
     /// <summary>Called by AppShellView to sync the button state without re-firing the event.</summary>
     public void SetSplitActive(bool isActive)
@@ -507,6 +533,10 @@ public partial class MainView : UserControl
         if (_readerProgressTrack == null) return;
         _isDraggingProgressBar = true;
         e.Pointer.Capture(_readerProgressTrack);
+        // Keep the scrollbar visible while the thumb is being dragged.
+        if (!PlatformHelper.IsDesktop)
+            _scrollbarHideCts?.Cancel();
+        BuildChapterMarkers();
         var y = e.GetPosition(_readerProgressTrack).Y;
         ScrollToFraction(y / _readerProgressTrack.Bounds.Height);
         e.Handled = true;
@@ -533,8 +563,79 @@ public partial class MainView : UserControl
     {
         if (!_isDraggingProgressBar) return;
         _isDraggingProgressBar = false;
+        if (_chapterMarkersCanvas != null)
+            _chapterMarkersCanvas.IsVisible = false;
+        // Restart the auto-hide countdown after the thumb is released.
+        if (!PlatformHelper.IsDesktop)
+            ShowScrollbarBriefly();
         e.Pointer.Capture(null);
         e.Handled = true;
+    }
+
+    // ── Mobile scrollbar auto-hide ────────────────────────────────────────────
+
+    private void OnListBoxTapped(object? sender, TappedEventArgs e) =>
+        ShowScrollbarBriefly();
+
+    private void ShowScrollbarBriefly()
+    {
+        if (_readerProgressTrack == null) return;
+        _readerProgressTrack.Opacity = 1;
+
+        _scrollbarHideCts?.Cancel();
+        _scrollbarHideCts = new CancellationTokenSource();
+        var cts = _scrollbarHideCts;
+
+        _ = Task.Delay(2000, cts.Token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_isDraggingProgressBar && _readerProgressTrack != null)
+                    _readerProgressTrack.Opacity = 0;
+            });
+        }, TaskScheduler.Default);
+    }
+
+    private void BuildChapterMarkers()
+    {
+        if (_chapterMarkersCanvas == null || _readerProgressTrack == null || _paragraphs.Count == 0)
+            return;
+
+        _chapterMarkersCanvas.Children.Clear();
+
+        var trackHeight = _readerProgressTrack.Bounds.Height;
+        var total       = (double)_paragraphs.Count;
+        const double LabelHalfHeight = 9.0; // half of approx label height for vertical centering
+
+        for (var i = 0; i < _paragraphs.Count; i++)
+        {
+            var p = _paragraphs[i];
+            if (!p.HasChapterDropCap) continue;
+
+            var fraction = i / total;
+            var top      = Math.Clamp(fraction * trackHeight - LabelHalfHeight, 0, trackHeight - LabelHalfHeight * 2);
+
+            var label = new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                Background   = new SolidColorBrush(Color.FromArgb(0xCC, 0x40, 0x40, 0x40)),
+                Padding      = new Thickness(5, 2),
+                Child        = new TextBlock
+                {
+                    Text       = p.ChapterDropCap!.Value.ToString(),
+                    FontSize   = 11,
+                    Foreground = Brushes.White,
+                    FontWeight = FontWeight.SemiBold,
+                }
+            };
+
+            Canvas.SetTop(label, top);
+            Canvas.SetRight(label, 0);
+            _chapterMarkersCanvas.Children.Add(label);
+        }
+
+        _chapterMarkersCanvas.IsVisible = true;
     }
 
     private async void OnLookupGoButtonClick(object? sender, RoutedEventArgs e)

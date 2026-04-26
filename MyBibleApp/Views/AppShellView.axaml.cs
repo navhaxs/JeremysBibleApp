@@ -12,6 +12,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
+using MyBibleApp.Controls;
 using MyBibleApp.Models;
 using MyBibleApp.Services;
 using MyBibleApp.Services.Sync;
@@ -30,8 +31,10 @@ public partial class AppShellView : UserControl
     private DebugPointerView? _debugPointerView;
     private DebugDrawingView? _debugDrawingView;
     private SyncDebugView?    _syncDebugView;
+    private BibleReadingView? _bibleReadingView;
     private readonly List<MainViewModel> _tabs = [];
     private readonly Dictionary<MainViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
+    private readonly Dictionary<MainViewModel, InkOverlayCanvas.InkState?> _tabInkStates = [];
     private CancellationTokenSource? _persistTabsCts;
     private string _lastPersistedTabStateJson = string.Empty;
     private int _lastPersistedActiveIndex = -1;
@@ -64,6 +67,13 @@ public partial class AppShellView : UserControl
         _debugPointerView = this.FindControl<DebugPointerView>("DebugView");
         _debugDrawingView = this.FindControl<DebugDrawingView>("DebugDrawingView");
         _syncDebugView    = this.FindControl<SyncDebugView>("SyncDebugView");
+        _bibleReadingView = this.FindControl<BibleReadingView>("BibleReadingView");
+
+        if (_bibleReadingView != null)
+        {
+            _bibleReadingView.DataContext    = new BibleReadingViewModel();
+            _bibleReadingView.CloseRequested += OnBibleReadingCloseRequested;
+        }
 
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress += OnSyncProgress;
 
@@ -77,6 +87,7 @@ public partial class AppShellView : UserControl
 
         if (_primaryView != null) _primaryView.SplitToggled += OnSplitToggled;
         if (_secondaryView != null) _secondaryView.SplitToggled += OnSplitToggled;
+        if (_primaryView != null) _primaryView.BibleReadingRequested += OnBibleReadingRequested;
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
         this.SizeChanged += OnShellSizeChanged;
     }
@@ -90,6 +101,7 @@ public partial class AppShellView : UserControl
     private void AddTabInternal(MainViewModel vm, bool makeActive)
     {
         _tabs.Add(vm);
+        _tabInkStates[vm] = null;
 
         PropertyChangedEventHandler handler = (_, args) =>
         {
@@ -123,10 +135,18 @@ public partial class AppShellView : UserControl
         if (index < 0 || index >= _tabs.Count || _primaryView == null)
             return;
 
+        // Save ink state for the tab we're leaving.
+        if (_activeTabIndex >= 0 && _activeTabIndex < _tabs.Count)
+            _tabInkStates[_tabs[_activeTabIndex]] = _primaryView.CaptureInkState();
+
         _activeTabIndex = index;
         var vm = _tabs[index];
         DataContext = vm;
         _primaryView.DataContext = vm;
+
+        // Restore ink state for the tab we're entering.
+        _primaryView.RestoreInkState(_tabInkStates.TryGetValue(vm, out var inkState) ? inkState : null);
+
         TrackAuthStateOf(vm);
         RefreshTabButtons();
         if (!_isRestoringTabs)
@@ -298,6 +318,7 @@ public partial class AppShellView : UserControl
             _tabHeaderHandlers.Remove(vm);
         }
 
+        _tabInkStates.Remove(vm);
         _tabs.RemoveAt(index);
         vm.Dispose();
 
@@ -314,6 +335,7 @@ public partial class AppShellView : UserControl
             var activeVm = _tabs[_activeTabIndex];
             DataContext = activeVm;
             _primaryView.DataContext = activeVm;
+            _primaryView.RestoreInkState(_tabInkStates.TryGetValue(activeVm, out var inkState) ? inkState : null);
         }
 
         RefreshTabButtons();
@@ -353,7 +375,12 @@ public partial class AppShellView : UserControl
             {
                 UpdateStartupOverlay("Loading...", "Syncing with Google Drive...", 0);
 
-                await ownerVm.PullFromDriveAsync();
+                var pullResult = await ownerVm.PullFromDriveAsync();
+                if (pullResult.BibleReadingProgress != null
+                    && _bibleReadingView?.DataContext is BibleReadingViewModel brVm)
+                {
+                    brVm.ApplyRemoteSnapshot(pullResult.BibleReadingProgress);
+                }
             }
 
             UpdateStartupOverlay("Loading...", "Restoring your open tabs...", 100);
@@ -372,6 +399,7 @@ public partial class AppShellView : UserControl
 
             _tabHeaderHandlers.Clear();
             _tabs.Clear();
+            _tabInkStates.Clear();
             _activeTabIndex = -1;
 
             foreach (var state in persistedTabs.OrderBy(t => t.TabIndex))
@@ -478,6 +506,20 @@ public partial class AppShellView : UserControl
         _persistTabsCts?.Cancel();
         _persistTabsCts?.Dispose();
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // ── Bible Reading overlay ─────────────────────────────────────────────────
+
+    private void OnBibleReadingRequested(object? sender, EventArgs e)
+    {
+        if (_bibleReadingView == null) return;
+        _bibleReadingView.IsVisible = true;
+    }
+
+    private void OnBibleReadingCloseRequested(object? sender, EventArgs e)
+    {
+        if (_bibleReadingView == null) return;
+        _bibleReadingView.IsVisible = false;
     }
 
     // ── Split management ──────────────────────────────────────────────────────

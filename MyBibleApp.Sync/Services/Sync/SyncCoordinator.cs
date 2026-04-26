@@ -52,6 +52,11 @@ public interface ISyncCoordinator : IDisposable
     Task<SyncResult> SyncPreferencesAsync(PreferencesSnapshot preferences);
 
     /// <summary>
+    /// Synchronizes Bible chapter reading progress (which chapters have been read)
+    /// </summary>
+    Task<SyncResult> SyncBibleReadingProgressAsync(Dictionary<string, int[]> readChapters);
+
+    /// <summary>
     /// Starts automatic background sync
     /// </summary>
     void StartAutoSync(TimeSpan interval);
@@ -183,8 +188,11 @@ public class SyncCoordinator : ISyncCoordinator
             var prefs = await _localStorage
                 .GetObjectAsync<PreferencesSnapshot>("UserPreferences")
                 .ConfigureAwait(false);
+            var bibleReading = await _localStorage
+                .GetObjectAsync<BibleReadingProgressSnapshot>("BibleReadingProgress")
+                .ConfigureAwait(false);
             await _queueManager.QueueOperationAsync("UserData",
-                new UserDataSnapshot { ReadingProgress = progress, Preferences = prefs })
+                new UserDataSnapshot { ReadingProgress = progress, Preferences = prefs, BibleReadingProgress = bibleReading })
                 .ConfigureAwait(false);
         }
 
@@ -207,8 +215,28 @@ public class SyncCoordinator : ISyncCoordinator
         var progress = await _localStorage
             .GetObjectAsync<ReadingProgressSnapshot>("CurrentReadingProgress")
             .ConfigureAwait(false);
+        var bibleReading = await _localStorage
+            .GetObjectAsync<BibleReadingProgressSnapshot>("BibleReadingProgress")
+            .ConfigureAwait(false);
         await _queueManager.QueueOperationAsync("UserData",
-            new UserDataSnapshot { ReadingProgress = progress, Preferences = preferences })
+            new UserDataSnapshot { ReadingProgress = progress, Preferences = preferences, BibleReadingProgress = bibleReading })
+            .ConfigureAwait(false);
+        return SyncResult.Success(1);
+    }
+
+    public async Task<SyncResult> SyncBibleReadingProgressAsync(Dictionary<string, int[]> readChapters)
+    {
+        var snapshot = new BibleReadingProgressSnapshot { ReadChapters = readChapters };
+        await _localStorage.SaveObjectAsync("BibleReadingProgress", snapshot).ConfigureAwait(false);
+
+        var progress = await _localStorage
+            .GetObjectAsync<ReadingProgressSnapshot>("CurrentReadingProgress")
+            .ConfigureAwait(false);
+        var prefs = await _localStorage
+            .GetObjectAsync<PreferencesSnapshot>("UserPreferences")
+            .ConfigureAwait(false);
+        await _queueManager.QueueOperationAsync("UserData",
+            new UserDataSnapshot { ReadingProgress = progress, Preferences = prefs, BibleReadingProgress = snapshot })
             .ConfigureAwait(false);
         return SyncResult.Success(1);
     }
@@ -350,6 +378,7 @@ public class SyncCoordinator : ISyncCoordinator
 
             ReadingProgressSnapshot? pulledProgress = null;
             PreferencesSnapshot? pulledPreferences = null;
+            BibleReadingProgressSnapshot? pulledBibleReading = null;
 
             var remoteTime = remoteTimes.GetValueOrDefault("user_data.json");
             var cachedTime = await GetCachedModifiedTimeAsync("user_data.json").ConfigureAwait(false);
@@ -386,6 +415,19 @@ public class SyncCoordinator : ISyncCoordinator
                     }
                 }
 
+                if (remote?.BibleReadingProgress is { } remoteBibleReading)
+                {
+                    var local = await _localStorage
+                        .GetObjectAsync<BibleReadingProgressSnapshot>("BibleReadingProgress")
+                        .ConfigureAwait(false);
+
+                    if (local == null || remoteBibleReading.LastModified > local.LastModified)
+                    {
+                        await _localStorage.SaveObjectAsync("BibleReadingProgress", remoteBibleReading).ConfigureAwait(false);
+                        pulledBibleReading = remoteBibleReading;
+                    }
+                }
+
                 await SaveCachedModifiedTimeAsync("user_data.json", remoteTime.Value).ConfigureAwait(false);
             }
 
@@ -397,10 +439,10 @@ public class SyncCoordinator : ISyncCoordinator
                 await DrainQueueAsync(pendingOps).ConfigureAwait(false);
             }
 
-            var hadChanges = pulledProgress != null || pulledPreferences != null;
+            var hadChanges = pulledProgress != null || pulledPreferences != null || pulledBibleReading != null;
             RaiseSyncProgress(false, hadChanges ? "Sync complete — remote changes applied." : "Sync complete — already up to date.", 100);
 
-            return PullResult.Success(hadChanges, pulledProgress, pulledPreferences);
+            return PullResult.Success(hadChanges, pulledProgress, pulledPreferences, pulledBibleReading);
         }
         catch (Exception ex)
         {
@@ -492,13 +534,15 @@ public class SyncCoordinator : ISyncCoordinator
             "ReadingProgress" => await _syncService.SaveUserDataAsync(new UserDataSnapshot
             {
                 ReadingProgress = item.Data.Deserialize<ReadingProgressSnapshot>(JsonHelper.Options),
-                Preferences = await _localStorage.GetObjectAsync<PreferencesSnapshot>("UserPreferences").ConfigureAwait(false)
+                Preferences = await _localStorage.GetObjectAsync<PreferencesSnapshot>("UserPreferences").ConfigureAwait(false),
+                BibleReadingProgress = await _localStorage.GetObjectAsync<BibleReadingProgressSnapshot>("BibleReadingProgress").ConfigureAwait(false)
             }).ConfigureAwait(false),
 
             "Preferences" => await _syncService.SaveUserDataAsync(new UserDataSnapshot
             {
                 ReadingProgress = await _localStorage.GetObjectAsync<ReadingProgressSnapshot>("CurrentReadingProgress").ConfigureAwait(false),
-                Preferences = item.Data.Deserialize<PreferencesSnapshot>(JsonHelper.Options)
+                Preferences = item.Data.Deserialize<PreferencesSnapshot>(JsonHelper.Options),
+                BibleReadingProgress = await _localStorage.GetObjectAsync<BibleReadingProgressSnapshot>("BibleReadingProgress").ConfigureAwait(false)
             }).ConfigureAwait(false),
 
             _ => SyncResult.Failure($"Unknown operation type: {item.OperationType}")

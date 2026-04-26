@@ -60,7 +60,7 @@ public class InkOverlayCanvas : Control
     // ── Stroke cache ──────────────────────────────────────────────────────────
 
     // Represents a completed, immutable stroke.
-    private readonly record struct StrokeCache(
+    internal readonly record struct StrokeCache(
         StreamGeometry? Geo,        // null → single-dot stroke
         Point DotCenter,            // used only when Geo is null
         Rect ContentBounds,         // content-space AABB for culling / eraser
@@ -150,6 +150,31 @@ public class InkOverlayCanvas : Control
                     pts));
             }
         }
+        _activeStroke = null;
+        _activeGeo = null;
+        _activeStrokeDirty = false;
+        InvalidateVisual();
+    }
+
+    // ── Per-tab ink state snapshot ────────────────────────────────────────────
+
+    /// <summary>Opaque snapshot of all completed strokes for a single tab.</summary>
+    public sealed class InkState
+    {
+        internal IReadOnlyList<StrokeCache> Strokes { get; }
+        internal InkState(List<StrokeCache> strokes) =>
+            Strokes = new List<StrokeCache>(strokes);
+    }
+
+    /// <summary>Captures current completed strokes so they can be restored later.</summary>
+    public InkState CaptureState() => new InkState(_cachedStrokes);
+
+    /// <summary>Replaces the stroke list with a previously captured snapshot.</summary>
+    public void RestoreState(InkState? state)
+    {
+        _cachedStrokes.Clear();
+        if (state != null)
+            _cachedStrokes.AddRange(state.Strokes);
         _activeStroke = null;
         _activeGeo = null;
         _activeStrokeDirty = false;
