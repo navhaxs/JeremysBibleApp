@@ -6,7 +6,7 @@
              xmlns:vm="using:MyBibleApp.ViewModels"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="MyBibleApp.Views.AppShellView"
-             x:DataType="vm:MainViewModel">
+             x:DataType="vm:AppViewModel">
   <UserControl.Styles>
     <Style Selector="Button.passage-tab">
       <Setter Property="Width" Value="38" />
@@ -18,7 +18,7 @@
     </Style>
 
     <Style Selector="Button.passage-tab.selected">
-      <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ThemeAccentBrush}" />
       <Setter Property="BorderThickness" Value="2" />
     </Style>
 
@@ -41,6 +41,8 @@
       <TabStripItem Content="Debug Drawing" />
       <TabStripItem Content="Sync Debug" />
       <TabStripItem Content="Theme Resources" />
+      <TabStripItem Content="Local Storage" />
+      <TabStripItem Content="Debug Logs" />
     </TabStrip>
 
     <!-- Split-capable content area -->
@@ -51,7 +53,7 @@
         <ColumnDefinition Width="0" MinWidth="0" />
       </Grid.ColumnDefinitions>
 
-      <views:MainView Grid.Column="0" x:Name="MainView" />
+      <views:MainView Grid.Column="0" x:Name="MainView" DataContext="{x:Null}" />
 
       <GridSplitter Grid.Column="1"
                     x:Name="PaneSplitter"
@@ -61,17 +63,46 @@
                     Background="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
                     HorizontalAlignment="Stretch" />
 
-      <views:MainView Grid.Column="2" x:Name="SecondaryView" IsVisible="False" />
+      <views:MainView Grid.Column="2" x:Name="SecondaryView" IsVisible="False" DataContext="{x:Null}" />
 
       <!-- Debug overlays span both panes -->
       <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugView"             IsVisible="False" />
       <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugDrawingView"      IsVisible="False" />
       <views:SyncDebugView     Grid.Column="0" Grid.ColumnSpan="3" x:Name="SyncDebugView"         IsVisible="False" />
       <views:ThemeResourcesDebugView Grid.Column="0" Grid.ColumnSpan="3" x:Name="ThemeResourcesDebugView" IsVisible="False" />
+      <views:LocalStorageDebugView   Grid.Column="0" Grid.ColumnSpan="3" x:Name="LocalStorageDebugView"   IsVisible="False" />
+      <views:DebugLogsView            Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugLogsView"          IsVisible="False" />
 
       <!-- Bible Reading overlay — full-shell, toggled via header button -->
       <views:BibleReadingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="BibleReadingView" IsVisible="False" ZIndex="25"
-                               Background="{DynamicResource SystemControlBackgroundAltHighBrush}" />
+                               Background="{DynamicResource ThemeBackgroundBrush}" />
+
+      <!-- Debug log overlay — bottom-left, non-interactive, visible only in debug mode -->
+      <Border Grid.Column="0" Grid.ColumnSpan="3"
+              IsVisible="{Binding IsDebugMode}"
+              IsHitTestVisible="False"
+              HorizontalAlignment="Left"
+              VerticalAlignment="Bottom"
+              MaxWidth="500"
+              MaxHeight="180"
+              Margin="8,0,0,8"
+              Padding="6,4"
+              CornerRadius="4"
+              ZIndex="50"
+              Background="#CC000000">
+        <ItemsControl ItemsSource="{Binding DebugLogOverlayLines}"
+                      x:Name="DebugLogOverlayItems">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <TextBlock Text="{Binding}"
+                         FontFamily="Consolas,Courier New,monospace"
+                         FontSize="10"
+                         Foreground="#CCCCCC"
+                         TextTrimming="CharacterEllipsis" />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
     </Grid>
 
     <!-- Right-edge passage tabs -->
@@ -106,7 +137,7 @@
            Grid.Row="0" Grid.RowSpan="2"
            Grid.Column="0" Grid.ColumnSpan="2"
            IsVisible="True"
-           Background="{DynamicResource SystemControlBackgroundAltHighBrush}">
+           Background="{DynamicResource ThemeBackgroundBrush}">
       <StackPanel HorizontalAlignment="Center"
                   VerticalAlignment="Center"
                   Spacing="20"

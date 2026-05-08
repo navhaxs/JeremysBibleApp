@@ -25,10 +25,10 @@
         <SolidColorBrush x:Key="ToggleButtonBackground"             Color="Transparent" />
         <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver"  Color="#18808080" />
         <SolidColorBrush x:Key="ToggleButtonBackgroundPressed"      Color="#30808080" />
-        <SolidColorBrush x:Key="ToggleButtonBackgroundChecked"      Color="{DynamicResource SystemAccentColor}" />
-        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{DynamicResource SystemAccentColorLight1}" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundChecked"      Color="{DynamicResource ThemeAccentColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{DynamicResource ThemeAccentColor2}" />
         <SolidColorBrush x:Key="ToggleButtonForegroundChecked"      Color="White" />
-        <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked"     Color="{DynamicResource SystemAccentColor}" />
+        <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked"     Color="{DynamicResource ThemeAccentColor}" />
       </Style.Resources>
     </Style>
 

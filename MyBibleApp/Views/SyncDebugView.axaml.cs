@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.Metadata;
 using Avalonia.Interactivity;
@@ -39,25 +39,25 @@ public partial class SyncDebugView : UserControl
 
     private async void OnRefreshClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
+        if (DataContext is AppViewModel vm)
             await vm.RefreshSyncDebugDataAsync();
     }
 
     private void OnClearLogsClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
+        if (DataContext is AppViewModel vm)
             vm.ClearSyncDebugLogs();
     }
 
     private void OnSyncNowClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
+        if (DataContext is AppViewModel vm)
             vm.ForceSync();
     }
 
     private async void OnClearRemoteDataClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
+        if (DataContext is AppViewModel vm)
             await vm.ClearRemoteDataAsync();
     }
 

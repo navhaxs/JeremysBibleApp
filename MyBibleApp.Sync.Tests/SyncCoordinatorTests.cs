@@ -70,36 +70,35 @@ public sealed class SyncCoordinatorTests : IDisposable
     // ── SyncReadingProgressAsync ────────────────────────────────────────
 
     [Fact]
-    public async Task SyncReadingProgress_WhenOnlineAndAuthenticated_QueuesOperation()
+    public async Task SyncReadingProgress_WhenOnlineAndAuthenticated_SavesLocallyOnly()
     {
         _authService.IsAuthenticated.Returns(true);
 
         var result = await _coordinator.SyncReadingProgressAsync("JHN", 3, 16);
 
         Assert.True(result.IsSuccess);
-        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _localStorage.Received(1).SaveObjectAsync("CurrentReadingProgress", Arg.Any<ReadingProgressSnapshot>());
+        await _queueManager.DidNotReceive().QueueOperationAsync(Arg.Any<string>(), Arg.Any<object>());
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
-    public async Task SyncReadingProgress_WhenOffline_QueuesOperation()
+    public async Task SyncReadingProgress_WhenOffline_SavesLocallyOnly()
     {
-        // Simulate offline by returning IsConnected = false
         _networkMonitor.IsConnected.Returns(false);
-
-        // Need to recreate coordinator to pick up the offline state
         using var offlineCoordinator = new SyncCoordinator(
             _authService, _syncService, _queueManager, _networkMonitor, _localStorage);
 
         var result = await offlineCoordinator.SyncReadingProgressAsync("JHN", 3, 16);
 
         Assert.True(result.IsSuccess);
-        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _localStorage.Received(1).SaveObjectAsync("CurrentReadingProgress", Arg.Any<ReadingProgressSnapshot>());
+        await _queueManager.DidNotReceive().QueueOperationAsync(Arg.Any<string>(), Arg.Any<object>());
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
-    public async Task SyncReadingProgress_WhenNotAuthenticated_StillQueuesLocally()
+    public async Task SyncReadingProgress_WhenNotAuthenticated_SavesLocallyOnly()
     {
         _authService.IsAuthenticated.Returns(false);
 
@@ -107,7 +106,7 @@ public sealed class SyncCoordinatorTests : IDisposable
 
         Assert.True(result.IsSuccess);
         await _localStorage.Received(1).SaveObjectAsync("CurrentReadingProgress", Arg.Any<ReadingProgressSnapshot>());
-        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _queueManager.DidNotReceive().QueueOperationAsync(Arg.Any<string>(), Arg.Any<object>());
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
@@ -166,7 +165,7 @@ public sealed class SyncCoordinatorTests : IDisposable
     // ── SyncPreferencesAsync ────────────────────────────────────────────
 
     [Fact]
-    public async Task SyncPreferences_WhenOnlineAndAuthenticated_QueuesAndSavesLocally()
+    public async Task SyncPreferences_AlwaysSavesLocallyOnly()
     {
         _authService.IsAuthenticated.Returns(true);
         var prefs = new PreferencesSnapshot { Theme = "Dark", FontSize = 20 };
@@ -175,12 +174,12 @@ public sealed class SyncCoordinatorTests : IDisposable
 
         Assert.True(result.IsSuccess);
         await _localStorage.Received(1).SaveObjectAsync("UserPreferences", prefs);
-        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _queueManager.DidNotReceive().QueueOperationAsync(Arg.Any<string>(), Arg.Any<object>());
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
-    public async Task SyncPreferences_WhenOffline_QueuesAndSavesLocally()
+    public async Task SyncPreferences_WhenOffline_SavesLocallyOnly()
     {
         _networkMonitor.IsConnected.Returns(false);
         using var offlineCoordinator = new SyncCoordinator(
@@ -190,19 +189,24 @@ public sealed class SyncCoordinatorTests : IDisposable
         var result = await offlineCoordinator.SyncPreferencesAsync(prefs);
 
         Assert.True(result.IsSuccess);
-        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
         await _localStorage.Received(1).SaveObjectAsync("UserPreferences", prefs);
+        await _queueManager.DidNotReceive().QueueOperationAsync(Arg.Any<string>(), Arg.Any<object>());
     }
 
+    // ── SyncBibleReadingProgressAsync ───────────────────────────────────
+
     [Fact]
-    public async Task SyncPreferences_AlwaysSavesLocally()
+    public async Task SyncBibleReadingProgress_QueuesAndSavesLocally()
     {
         _authService.IsAuthenticated.Returns(true);
-        var prefs = new PreferencesSnapshot { Theme = "Dark" };
+        var chapters = new Dictionary<string, int[]> { ["GEN"] = [1, 2, 3] };
 
-        await _coordinator.SyncPreferencesAsync(prefs);
+        var result = await _coordinator.SyncBibleReadingProgressAsync(chapters);
 
-        await _localStorage.Received(1).SaveObjectAsync("UserPreferences", prefs);
+        Assert.True(result.IsSuccess);
+        await _localStorage.Received(1).SaveObjectAsync("BibleReadingProgress", Arg.Any<BibleReadingProgressSnapshot>());
+        await _queueManager.Received(1).QueueOperationAsync("BibleReadingProgress", Arg.Any<BibleReadingProgressSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     // ── StartAutoSync / StopAutoSync ────────────────────────────────────
@@ -266,8 +270,11 @@ public sealed class SyncCoordinatorTests : IDisposable
             new()
             {
                 Id = "item1",
-                OperationType = "Preferences",
-                Data = System.Text.Json.JsonSerializer.SerializeToElement(new PreferencesSnapshot { Theme = "Dark" })
+                OperationType = "BibleReadingProgress",
+                Data = System.Text.Json.JsonSerializer.SerializeToElement(new BibleReadingProgressSnapshot
+                {
+                    ReadChapters = new Dictionary<string, int[]> { ["GEN"] = [1] }
+                })
             }
         };
         _queueManager.GetPendingOperationsAsync().Returns(items);

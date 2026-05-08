@@ -5,7 +5,7 @@
              xmlns:vm="using:MyBibleApp.ViewModels"
              mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="100"
              x:Class="MyBibleApp.Views.SyncControlView"
-             x:DataType="vm:MainViewModel">
+             x:DataType="vm:AppViewModel">
   
   <Border Padding="8" Background="{DynamicResource SystemControlBackgroundAltLowBrush}">
     <WrapPanel Orientation="Horizontal">
@@ -16,7 +16,7 @@
           <TextBlock Text="Syncing..."
                      IsVisible="{Binding IsSyncing}"
                      FontSize="11"
-                     Foreground="{DynamicResource SystemAccentColor}" />
+                     Foreground="{DynamicResource ThemeAccentBrush}" />
 
           <!-- Status text -->
           <TextBlock Text="{Binding SyncStatus}"

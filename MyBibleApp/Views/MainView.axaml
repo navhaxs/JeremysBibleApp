@@ -8,7 +8,7 @@
              xmlns:material="using:Material.Icons.Avalonia"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="MyBibleApp.Views.MainView"
-             x:DataType="vm:MainViewModel">
+             x:DataType="vm:ScriptureViewModel">
   <UserControl.Styles>
     <Style Selector="Button.footnote-chip">
       <Setter Property="FontSize" Value="12" />
@@ -22,6 +22,7 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Focusable" Value="False" />
       <Setter Property="IsTabStop" Value="False" />
+      <Setter Property="Padding" Value="0,0,0,80" />
 
       <Style.Resources>
         <SolidColorBrush x:Key="ListBoxItemBackgroundPressed" Color="Transparent" />
@@ -109,6 +110,7 @@
       <Setter Property="Height" Value="40" />
       <Setter Property="CornerRadius" Value="20" />
       <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
     </Style>
 
     <!-- Color swatch buttons: solid-colour circles -->
@@ -134,7 +136,7 @@
     <!-- Pressed: slightly thicker accent ring -->
     <Style Selector="Button.color-swatch:pressed">
       <Setter Property="BorderThickness" Value="2.5" />
-      <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource ThemeAccentBrush}" />
     </Style>
 
     <!-- Selected (active) swatch: white ring -->
@@ -149,11 +151,9 @@
     </Style>
   </UserControl.Styles>
 
-  <Design.DataContext>
-    <!-- This only sets the DataContext for the previewer in an IDE,
-         to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-    <vm:MainViewModel />
-  </Design.DataContext>
+  <!--<Design.DataContext>
+    <vm:ScriptureViewModel />
+  </Design.DataContext>-->
 
   <Panel>
     <Grid RowDefinitions="Auto,Auto,*" RowSpacing="0">
@@ -177,13 +177,13 @@
                               IsCheckedChanged="OnDarkModeToggleChanged" />
                 <ToggleSwitch OffContent="Debug mode"
                               OnContent="Debug mode"
-                              IsChecked="{Binding IsDebugMode, Mode=TwoWay}" />
+                              IsChecked="{Binding AppVM.IsDebugMode, Mode=TwoWay}" />
 
                 <Rectangle Height="1" Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Opacity="0.4" />
                 <TextBlock Text="Sync" FontWeight="SemiBold" FontSize="15" />
 
                 <!-- Signed-in account -->
-                <Border IsVisible="{Binding IsAuthenticated}"
+                <Border IsVisible="{Binding AppVM.IsAuthenticated}"
                         Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
                         CornerRadius="8"
                         Padding="10,8">
@@ -191,7 +191,7 @@
                     <TextBlock Text="Signed in as"
                                FontSize="11"
                                Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-                    <TextBlock Text="{Binding CurrentUserEmail}"
+                    <TextBlock Text="{Binding AppVM.CurrentUserEmail}"
                                FontSize="13"
                                FontWeight="SemiBold"
                                TextTrimming="CharacterEllipsis" />
@@ -200,11 +200,11 @@
 
                 <StackPanel Orientation="Horizontal" Spacing="6">
                   <TextBlock Text="Syncing…"
-                             IsVisible="{Binding IsSyncing}"
+                             IsVisible="{Binding AppVM.IsSyncing}"
                              FontSize="12"
                              VerticalAlignment="Center"
-                             Foreground="{DynamicResource SystemAccentColor}" />
-                  <TextBlock Text="{Binding SyncStatus}"
+                             Foreground="{DynamicResource ThemeAccentBrush}" />
+                  <TextBlock Text="{Binding AppVM.SyncStatus}"
                              FontSize="12"
                              VerticalAlignment="Center"
                              TextWrapping="Wrap"
@@ -213,15 +213,15 @@
 
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Content="Sign in"
-                          IsEnabled="{Binding CanAuthenticate}"
+                          IsEnabled="{Binding AppVM.CanAuthenticate}"
                           Click="OnSyncAuthButtonClick"
                           Padding="10,6" />
                   <Button Content="Sign out"
-                          IsEnabled="{Binding IsAuthenticated}"
+                          IsEnabled="{Binding AppVM.IsAuthenticated}"
                           Click="OnSyncSignOutButtonClick"
                           Padding="10,6" />
                   <Button Content="Sync now"
-                          IsEnabled="{Binding CanForceSync}"
+                          IsEnabled="{Binding AppVM.CanForceSync}"
                           Click="OnSyncForceSyncButtonClick"
                           Padding="10,6" />
                 </StackPanel>
@@ -308,7 +308,7 @@
       <TextBlock Grid.Row="1"
                  Margin="16,6,16,0"
                  Text="{Binding Status}"
-                 IsVisible="{Binding IsDebugMode}"
+                 IsVisible="{Binding AppVM.IsDebugMode}"
                  Opacity="0.8" />
       
       <!-- Main content grid (row 2) with overlay -->
@@ -411,7 +411,7 @@
                     Canvas.Left="2"
                     Canvas.Top="0"
                     CornerRadius="4"
-                    Background="{DynamicResource SystemAccentColor}"
+                    Background="{DynamicResource ThemeAccentBrush}"
                     Opacity="0.55"
                     Height="40" />
           </Canvas>

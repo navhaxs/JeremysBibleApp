@@ -14,7 +14,7 @@ public partial class SyncControlView : UserControl
 
     private async void OnAuthButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel viewModel)
+        if (DataContext is AppViewModel viewModel)
         {
             viewModel.AppendSyncDebugLog("[UI] Authenticate button tapped.");
             await viewModel.AuthenticateAsync();
@@ -23,7 +23,7 @@ public partial class SyncControlView : UserControl
 
     private void OnSignOutButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel viewModel)
+        if (DataContext is AppViewModel viewModel)
         {
             viewModel.SignOut();
         }
@@ -31,7 +31,7 @@ public partial class SyncControlView : UserControl
 
     private void OnForceSyncButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel viewModel)
+        if (DataContext is AppViewModel viewModel)
         {
             viewModel.ForceSync();
         }

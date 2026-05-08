@@ -25,7 +25,7 @@ public partial class MainWindow : Window
         var shell = this.FindControl<AppShellView>("Shell")
                     ?? this.Content as AppShellView;
 
-        if (shell == null || !shell.HasAuthenticatedTabs())
+        if (shell == null)
         {
             Closing -= OnWindowClosing;
             return;
@@ -33,11 +33,13 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
 
+        var hasAuthenticatedTabs = shell.HasAuthenticatedTabs();
         var overlay = this.FindControl<Panel>("SyncOverlay");
-        if (overlay != null)
+        if (overlay != null && hasAuthenticatedTabs)
+        {
             overlay.IsVisible = true;
-
-        UpdateSyncOverlay("Saving pending changes to Google Drive...", progress: 0);
+            UpdateSyncOverlay("Saving pending changes to Google Drive...", progress: 0);
+        }
 
         try
         {

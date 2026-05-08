@@ -92,8 +92,8 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         Assert.Equal(3, localProgress.Chapter);
         Assert.Equal(16, localProgress.Verse);
 
-        // Remote sync is deferred until a later force sync or reconnect.
-        Assert.Equal(1, await _queueManager.GetPendingCountAsync());
+        // Reading progress is local-only — nothing queued for remote sync.
+        Assert.Equal(0, await _queueManager.GetPendingCountAsync());
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
 
         // ── Act 3: Sign out ────────────────────────────────────────────
@@ -160,8 +160,8 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         var r2 = await coordinator.SyncAnnotationAsync(annotation);
         Assert.True(r2.IsSuccess);
 
-        // Both were queued for later remote sync.
-        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
+        // Only the annotation queued for remote sync — reading progress is local-only.
+        Assert.Equal(1, await _queueManager.GetPendingCountAsync());
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
         await _syncService.DidNotReceive().SyncAnnotationAsync(Arg.Any<AnnotationBundle>());
     }
@@ -171,7 +171,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task OfflineThenOnline_QueuesOperations_ForceSyncDrainsQueue()
+    public async Task OfflineThenOnline_BibleReadingProgressQueued_ForceSyncDrainsQueue()
     {
         // Start offline
         _networkMonitor.IsConnected.Returns(false);
@@ -188,29 +188,22 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         using var coordinator = CreateCoordinator();
         await coordinator.AuthenticateAsync();
 
-        // ── While offline: sync operations get queued ──────────────────
-        var r1 = await coordinator.SyncReadingProgressAsync("GEN", 1, 1);
-        Assert.True(r1.IsSuccess); // queued locally
-
-        var prefs = new PreferencesSnapshot { Theme = "Dark", FontSize = 18 };
-        var r2 = await coordinator.SyncPreferencesAsync(prefs);
-        Assert.True(r2.IsSuccess); // queued locally
+        // ── While offline: BibleReadingProgress gets queued ───────────
+        var r1 = await coordinator.SyncBibleReadingProgressAsync(
+            new Dictionary<string, int[]> { ["GEN"] = [1, 2, 3] });
+        Assert.True(r1.IsSuccess);
 
         // Drive was NOT called
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
 
-        // Queue has 1 item (compacted), local storage has the data
+        // Queue has 1 item, local storage has the data
         Assert.Equal(1, await _queueManager.GetPendingCountAsync());
-        Assert.NotNull(await _localStorage.GetAsync("CurrentReadingProgress"));
-        Assert.NotNull(await _localStorage.GetAsync("UserPreferences"));
+        Assert.NotNull(await _localStorage.GetAsync("BibleReadingProgress"));
 
         // ── Come back online: ForceSync processes the queue ────────────
         _networkMonitor.IsConnected.Returns(true);
-        // Simulate the coordinator seeing the network change
-        // (the coordinator constructor wired ConnectivityChanged → _isOffline toggle)
         _connectivityHandler?.Invoke(true);
 
-        // ForceSync runs on a background thread — give it time to process
         coordinator.ForceSync();
         await Task.Delay(1000);
 
@@ -232,7 +225,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         using var coordinator = CreateCoordinator();
         await coordinator.AuthenticateAsync();
 
-        // Sync all three types
+        // Sync: annotation queues for cloud, reading progress and preferences are local-only
         Assert.True((await coordinator.SyncReadingProgressAsync("PSA", 23, 1)).IsSuccess);
         Assert.True((await coordinator.SyncAnnotationAsync(
             new AnnotationBundle { BookCode = "PSA", Chapter = 23, Verse = 1 })).IsSuccess);
@@ -245,10 +238,10 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         // After sign out, auth service reports not authenticated
         _authService.IsAuthenticated.Returns(false);
 
-        // Further syncs still succeed locally and remain queued for later.
+        // Further reading progress syncs still succeed locally — nothing queued.
         var result = await coordinator.SyncReadingProgressAsync("PSA", 23, 2);
         Assert.True(result.IsSuccess);
-        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
+        Assert.Equal(1, await _queueManager.GetPendingCountAsync()); // only the annotation
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
@@ -267,6 +260,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         using (var session1 = CreateCoordinator())
         {
             await session1.AuthenticateAsync();
+            // Reading progress is local-only; annotation queues for cloud sync
             await session1.SyncReadingProgressAsync("MAT", 5, 3);
             await session1.SyncAnnotationAsync(new AnnotationBundle
             {
@@ -276,8 +270,8 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         }
         // session1 disposed — simulates app exit
 
-        // Queue should persist (file-based)
-        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
+        // Only the annotation is queued (reading progress is local-only)
+        Assert.Equal(1, await _queueManager.GetPendingCountAsync());
 
         // ── Session 2: app resumes, online, auth cached ────────────────
         _networkMonitor.IsConnected.Returns(true);
@@ -297,7 +291,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         session2.ForceSync();
         await Task.Delay(1000);
 
-        await _syncService.Received().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
         await _syncService.Received().SyncAnnotationAsync(
             Arg.Is<AnnotationBundle>(a => a.BookCode == "MAT" && a.Chapter == 5));
     }
@@ -351,7 +345,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         // Sync reading progress
         await coordinator.SyncReadingProgressAsync("REV", 21, 4);
 
-        // Sync preferences with custom settings (simulates open tabs)
+        // Sync preferences with custom settings (tabs are no longer stored in UserPreferences)
         var prefs = new PreferencesSnapshot
         {
             Theme = "Dark",
@@ -359,12 +353,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
             Language = "en-US",
             CustomSettings =
             {
-                ["open_tabs_v1"] = JsonSerializer.Serialize(new[]
-                {
-                    new { BookCode = "REV", Chapter = 21, Verse = 4 },
-                    new { BookCode = "JHN", Chapter = 3, Verse = 16 }
-                }),
-                ["active_tab_index"] = "0"
+                ["some_setting"] = "some_value"
             }
         };
         await coordinator.SyncPreferencesAsync(prefs);
@@ -376,8 +365,8 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
 
         var storedPrefs = await _localStorage.GetObjectAsync<PreferencesSnapshot>("UserPreferences");
         Assert.Equal("Dark", storedPrefs!.Theme);
-        Assert.Equal(2, storedPrefs.CustomSettings.Count);
-        Assert.Contains("REV", storedPrefs.CustomSettings["open_tabs_v1"]);
+        Assert.Single(storedPrefs.CustomSettings);
+        Assert.Equal("some_value", storedPrefs.CustomSettings["some_setting"]);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -398,7 +387,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         await coordinator.AuthenticateAsync();
 
         // Queue an item while offline
-        await coordinator.SyncReadingProgressAsync("EXO", 14, 21);
+        await coordinator.SyncAnnotationAsync(new AnnotationBundle { BookCode = "EXO", Chapter = 14, Verse = 21 });
         Assert.Equal(1, await _queueManager.GetPendingCountAsync());
 
         // Simulate network coming back online
@@ -434,7 +423,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         var r3 = await coordinator.SyncPreferencesAsync(new PreferencesSnapshot());
         Assert.True(r3.IsSuccess);
 
-        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
+        Assert.Equal(1, await _queueManager.GetPendingCountAsync()); // only annotation queued
 
         // Drive was never called
         await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());

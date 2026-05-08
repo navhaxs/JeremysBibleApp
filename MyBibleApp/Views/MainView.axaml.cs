@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -50,6 +51,12 @@ public partial class MainView : UserControl
     private bool _isScrollTrackingAttached;
     private bool _waitingForLayoutToAttachScrollViewer;
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
+    private ScriptureViewModel? _subscribedVm;
+    // Sustained-scroll chapter marker reveal
+    private DateTime _scrollStartTime;
+    private bool _isScrolling;
+    private bool _chapterMarkersShownByScroll;
+    private CancellationTokenSource? _scrollStopCts;
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
@@ -71,6 +78,9 @@ public partial class MainView : UserControl
     private bool _isMouseDragging;
     private Point _lastMousePosition;
     private bool _suppressReaderProgressSync;
+    private bool _suppressScrollEventsForTabSwitch;
+    private double? _pendingScrollRestoreY;
+    private int _scrollRestoreRetries;
 
     public MainView()
     {
@@ -89,8 +99,18 @@ public partial class MainView : UserControl
         // (e.g. the secondary split pane gets its VM assigned lazily).
         DataContextChanged += (_, _) =>
         {
-            if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
+            if (_subscribedVm != null)
+            {
+                _subscribedVm.PropertyChanged -= OnVmPropertyChanged;
+                _subscribedVm = null;
+            }
+
+            if (DataContext is MyBibleApp.ViewModels.ScriptureViewModel vm)
+            {
                 _paragraphs = vm.Paragraphs;
+                _subscribedVm = vm;
+                vm.PropertyChanged += OnVmPropertyChanged;
+            }
 
             RefreshReaderProgress();
         };
@@ -152,7 +172,7 @@ public partial class MainView : UserControl
         if (_darkModeToggle != null)
             _darkModeToggle.IsChecked = Application.Current?.ActualThemeVariant == ThemeVariant.Dark;
 
-        if (DataContext is MyBibleApp.ViewModels.MainViewModel vm)
+        if (DataContext is MyBibleApp.ViewModels.ScriptureViewModel vm)
         {
             _paragraphs = vm.Paragraphs;
         }
@@ -228,8 +248,62 @@ public partial class MainView : UserControl
         if (_paragraphScrollViewer == null)
             return;
 
+        // During tab switch, suppress all scroll-driven side effects until restore completes.
+        if (_suppressScrollEventsForTabSwitch)
+            return;
+
         _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
         UpdateReaderProgress(_paragraphScrollViewer);
+
+        // On mobile, briefly reveal the scrollbar during touch scrolling.
+        if (!PlatformHelper.IsDesktop)
+            ShowScrollbarBriefly();
+
+        // Don't interfere while the user is dragging the scrollbar thumb.
+        if (_isDraggingProgressBar) return;
+
+        // Track sustained scrolling to reveal chapter markers.
+        var now = DateTime.UtcNow;
+        if (!_isScrolling)
+        {
+            _isScrolling = true;
+            _scrollStartTime = now;
+        }
+
+        // Show markers after 2 seconds of continuous scrolling.
+        if (!_chapterMarkersShownByScroll && (now - _scrollStartTime).TotalSeconds >= 1)
+        {
+            _chapterMarkersShownByScroll = true;
+            BuildChapterMarkers();
+        }
+
+        // Reset the "scroll stopped" timer — hide markers after scrolling stops.
+        _scrollStopCts?.Cancel();
+        _scrollStopCts = new CancellationTokenSource();
+        var cts = _scrollStopCts;
+        _ = Task.Delay(800, cts.Token).ContinueWith(t =>
+        {
+            if (t.IsCanceled) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                _isScrolling = false;
+                if (_chapterMarkersShownByScroll)
+                {
+                    _chapterMarkersShownByScroll = false;
+                    if (_chapterMarkersCanvas != null)
+                        _chapterMarkersCanvas.IsVisible = false;
+                }
+            });
+        }, TaskScheduler.Default);
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ScriptureViewModel.Paragraphs) && sender is ScriptureViewModel vm)
+            _paragraphs = vm.Paragraphs;
+        // Don't call RefreshReaderProgress() here — the ListBox is mid-render when
+        // Paragraphs changes; reading the visual tree now gives stale positions.
+        // OnParagraphScrollChanged fires naturally once the list settles.
     }
 
     private void RefreshReaderProgress()
@@ -284,6 +358,99 @@ public partial class MainView : UserControl
 
     /// <summary>Restores a previously captured ink state when switching back to a tab.</summary>
     public void RestoreInkState(Controls.InkOverlayCanvas.InkState? state) => _inkOverlay?.RestoreState(state);
+
+    /// <summary>Captures the current scroll offset so it can be stored per-tab.</summary>
+    public double? CaptureScrollOffset()
+    {
+        var offset = _paragraphScrollViewer?.Offset.Y;
+        if (DataContext is ScriptureViewModel vm)
+            vm.AppVM.AppendSyncDebugLog($"[Scroll] CaptureScrollOffset → Y={offset?.ToString("F1") ?? "null"}");
+        return offset;
+    }
+
+    /// <summary>Restores a previously captured scroll offset when switching back to a tab.
+    /// Scroll-driven events (header sync, chapter markers) are suppressed until restore completes.</summary>
+    public void RestoreScrollOffset(double? offsetY)
+    {
+        // Cancel any in-progress restore from a previous tab switch.
+        ClearScrollRestoreHook();
+
+        if (offsetY == null || _paragraphScrollViewer == null)
+        {
+            if (DataContext is ScriptureViewModel vm2)
+                vm2.AppVM.AppendSyncDebugLog($"[Scroll] RestoreScrollOffset skipped (offsetY={offsetY?.ToString("F1") ?? "null"}, scrollViewer={((_paragraphScrollViewer != null) ? "present" : "null")})");
+            return;
+        }
+
+        _suppressScrollEventsForTabSwitch = true;
+        _suppressReaderProgressSync = true;
+        _pendingScrollRestoreY = offsetY.Value;
+        _scrollRestoreRetries = 0;
+
+        if (DataContext is ScriptureViewModel vm)
+            vm.AppVM.AppendSyncDebugLog($"[Scroll] RestoreScrollOffset pending Y={offsetY.Value:F1}, suppressing events");
+
+        // Hook LayoutUpdated to repeatedly apply the offset until it sticks.
+        // The virtualizing panel may reset scroll to 0 across several layout passes
+        // as it re-measures after an ItemsSource change.
+        if (_paragraphList != null)
+            _paragraphList.LayoutUpdated += OnScrollRestoreLayoutUpdated;
+    }
+
+    private void OnScrollRestoreLayoutUpdated(object? sender, EventArgs e)
+    {
+        if (_pendingScrollRestoreY == null || _paragraphScrollViewer == null)
+        {
+            FinishScrollRestore();
+            return;
+        }
+
+        var target = _pendingScrollRestoreY.Value;
+        var current = _paragraphScrollViewer.Offset.Y;
+        _scrollRestoreRetries++;
+
+        // If the offset is already where we want it, count as stable.
+        if (Math.Abs(current - target) < 1.0)
+        {
+            if (DataContext is ScriptureViewModel vm)
+                vm.AppVM.AppendSyncDebugLog($"[Scroll] RestoreScrollOffset stable at Y={current:F1} (after {_scrollRestoreRetries} passes)");
+            FinishScrollRestore();
+            return;
+        }
+
+        // Safety: don't loop forever.
+        if (_scrollRestoreRetries > 20)
+        {
+            if (DataContext is ScriptureViewModel vm)
+                vm.AppVM.AppendSyncDebugLog($"[Scroll] RestoreScrollOffset gave up after {_scrollRestoreRetries} passes (current={current:F1}, target={target:F1})");
+            FinishScrollRestore();
+            return;
+        }
+
+        // Re-apply the offset on each layout pass until it sticks.
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, target);
+    }
+
+    private void FinishScrollRestore()
+    {
+        _pendingScrollRestoreY = null;
+        ClearScrollRestoreHook();
+
+        // Clear suppression after one more layout pass so the offset is stable.
+        Dispatcher.UIThread.Post(() =>
+        {
+            _suppressScrollEventsForTabSwitch = false;
+            _suppressReaderProgressSync = false;
+            if (DataContext is ScriptureViewModel vm)
+                vm.AppVM.AppendSyncDebugLog("[Scroll] Suppress flags cleared");
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void ClearScrollRestoreHook()
+    {
+        if (_paragraphList != null)
+            _paragraphList.LayoutUpdated -= OnScrollRestoreLayoutUpdated;
+    }
 
     /// <summary>Called by AppShellView to sync the button state without re-firing the event.</summary>
     public void SetSplitActive(bool isActive)
@@ -490,32 +657,49 @@ public partial class MainView : UserControl
         if (_paragraphList == null || _paragraphs.Count == 0)
             return;
 
-        var (topParagraph, topOffset) = GetTopVisibleParagraph();
-        if (topParagraph == null)
-            return;
-
-        // Position the custom thumb by item-index fraction (accurate with virtualization).
+        // Position the custom thumb using paragraph-index fraction (works with
+        // virtualization), but detect true top/bottom via ScrollViewer offset
+        // so the thumb reaches both extremes.
         if (_readerProgressTrack != null && _readerProgressThumb != null && !_isDraggingProgressBar)
         {
-            var paragraphIndex = FindParagraphIndex(topParagraph);
-            if (paragraphIndex >= 0)
+            double fraction;
+            var scrollableHeight = scrollViewer.Extent.Height - scrollViewer.Viewport.Height;
+            if (scrollViewer.Offset.Y <= 0)
             {
-                var totalLength   = Math.Max(1, _paragraphs.Count);
-                var fraction      = Math.Clamp((paragraphIndex + topOffset) / totalLength, 0, 1);
-                var trackHeight   = _readerProgressTrack.Bounds.Height;
-                var thumbHeight   = _readerProgressThumb.Height;
-                var maxTop        = Math.Max(0, trackHeight - thumbHeight);
-                Canvas.SetTop(_readerProgressThumb, fraction * maxTop);
+                fraction = 0;
             }
+            else if (scrollableHeight > 0 && scrollViewer.Offset.Y >= scrollableHeight - 1)
+            {
+                fraction = 1;
+            }
+            else
+            {
+                var (topPara, topOff) = GetTopVisibleParagraph();
+                if (topPara != null)
+                {
+                    var idx = FindParagraphIndex(topPara);
+                    var maxIndex = Math.Max(1, _paragraphs.Count - 1);
+                    fraction = idx >= 0 ? Math.Clamp((idx + topOff) / maxIndex, 0, 1) : 0;
+                }
+                else
+                {
+                    fraction = 0;
+                }
+            }
+
+            var trackHeight = _readerProgressTrack.Bounds.Height;
+            var thumbHeight = _readerProgressThumb.Height;
+            var maxTop      = Math.Max(0, trackHeight - thumbHeight);
+            Canvas.SetTop(_readerProgressThumb, fraction * maxTop);
         }
 
         if (_suppressReaderProgressSync) return;
 
-        if (DataContext is MainViewModel vm)
+        var (topParagraph, _) = GetTopVisibleParagraph();
+        if (topParagraph == null) return;
+
+        if (DataContext is ScriptureViewModel vm)
         {
-            // Use the first visible body-text paragraph for verse sync so that
-            // headings (which have no verse marker and inherit a stale StartVerse)
-            // and the large chapter drop-cap whitespace don't skew the reported position.
             var syncParagraph = GetTopVisibleBodyTextParagraph() ?? topParagraph;
             vm.Header = $"{vm.BookTitle} {syncParagraph.StartChapter}:{syncParagraph.StartVerse}";
             vm.UpdateLookupFromReaderProgress(syncParagraph.StartChapter, syncParagraph.StartVerse);
@@ -528,6 +712,21 @@ public partial class MainView : UserControl
     {
         if (_paragraphList == null || _paragraphs.Count == 0) return;
         fraction = Math.Clamp(fraction, 0, 1);
+
+        if (fraction <= 0 && _paragraphScrollViewer != null)
+        {
+            _paragraphScrollViewer.Offset = new Avalonia.Vector(0, 0);
+            return;
+        }
+
+        if (fraction >= 1 && _paragraphScrollViewer != null)
+        {
+            var scrollableHeight = _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height;
+            if (scrollableHeight > 0)
+                _paragraphScrollViewer.Offset = new Avalonia.Vector(0, scrollableHeight);
+            return;
+        }
+
         var targetIndex = (int)(fraction * (_paragraphs.Count - 1));
         _paragraphList.ScrollIntoView(_paragraphs[targetIndex]);
     }
@@ -646,7 +845,7 @@ public partial class MainView : UserControl
     {
         if (_isApplyingLookupSelection) return;
 
-        if (DataContext is not MainViewModel vm) return;
+        if (DataContext is not ScriptureViewModel vm) return;
         if (vm.SelectedLookupBook == null) return;
         if (vm.SelectedLookupChapter < 1 || vm.SelectedLookupVerse < 1) return;
 
@@ -684,6 +883,9 @@ public partial class MainView : UserControl
         }
     }
 
+
+    /// <summary>Navigates the scroll position to the given chapter and verse.</summary>
+    public Task NavigateToVerseAsync(int chapter, int verse) => ScrollToReferenceAsync(chapter, verse);
 
     private async Task ScrollToReferenceAsync(int chapter, int verse)
     {
@@ -859,7 +1061,7 @@ public partial class MainView : UserControl
 
     private async void OnPrevChapterClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is not MainViewModel vm) return;
+        if (DataContext is not ScriptureViewModel vm) return;
         vm.GoToPreviousChapter();
         vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
         _suppressReaderProgressSync = true;
@@ -869,7 +1071,7 @@ public partial class MainView : UserControl
 
     private async void OnNextChapterClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is not MainViewModel vm) return;
+        if (DataContext is not ScriptureViewModel vm) return;
         vm.GoToNextChapter();
         vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
         _suppressReaderProgressSync = true;
@@ -886,20 +1088,20 @@ public partial class MainView : UserControl
 
     private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
-            await vm.AuthenticateAsync();
+        if (DataContext is ScriptureViewModel vm)
+            await vm.AppVM.AuthenticateAsync();
     }
 
     private void OnSyncSignOutButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
-            vm.SignOut();
+        if (DataContext is ScriptureViewModel vm)
+            vm.AppVM.SignOut();
     }
 
     private void OnSyncForceSyncButtonClick(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is MainViewModel vm)
-            vm.ForceSync();
+        if (DataContext is ScriptureViewModel vm)
+            vm.AppVM.ForceSync();
     }
 
     // ── Standard handlers ────────────────────────────────────────────────────

@@ -32,10 +32,14 @@ public partial class AppShellView : UserControl
     private DebugDrawingView? _debugDrawingView;
     private SyncDebugView?    _syncDebugView;
     private ThemeResourcesDebugView? _themeResourcesDebugView;
+    private LocalStorageDebugView? _localStorageDebugView;
+    private DebugLogsView? _debugLogsView;
     private BibleReadingView? _bibleReadingView;
-    private readonly List<MainViewModel> _tabs = [];
-    private readonly Dictionary<MainViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
-    private readonly Dictionary<MainViewModel, InkOverlayCanvas.InkState?> _tabInkStates = [];
+    private readonly AppViewModel _appVM = new();
+    private readonly List<ScriptureViewModel> _tabs = [];
+    private readonly Dictionary<ScriptureViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
+    private readonly Dictionary<ScriptureViewModel, InkOverlayCanvas.InkState?> _tabInkStates = [];
+    private readonly Dictionary<ScriptureViewModel, double?> _tabScrollOffsets = [];
     private CancellationTokenSource? _persistTabsCts;
     private string _lastPersistedTabStateJson = string.Empty;
     private int _lastPersistedActiveIndex = -1;
@@ -43,7 +47,6 @@ public partial class AppShellView : UserControl
     private bool _isRestoringTabs;
 
     // Sign-in overlay tracking
-    private MainViewModel? _trackedAuthVm;
     private PropertyChangedEventHandler? _authStateHandler;
     private TaskCompletionSource<bool>? _startupSignInPromptTcs;
 
@@ -69,6 +72,8 @@ public partial class AppShellView : UserControl
         _debugDrawingView = this.FindControl<DebugDrawingView>("DebugDrawingView");
         _syncDebugView    = this.FindControl<SyncDebugView>("SyncDebugView");
         _themeResourcesDebugView = this.FindControl<ThemeResourcesDebugView>("ThemeResourcesDebugView");
+        _localStorageDebugView   = this.FindControl<LocalStorageDebugView>("LocalStorageDebugView");
+        _debugLogsView           = this.FindControl<DebugLogsView>("DebugLogsView");
         _bibleReadingView = this.FindControl<BibleReadingView>("BibleReadingView");
 
         if (_bibleReadingView != null)
@@ -79,12 +84,13 @@ public partial class AppShellView : UserControl
 
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress += OnSyncProgress;
 
-        // Give the secondary pane its own VM up front so it never inherits the
-        // AppShell DataContext (which is used by the primary pane/debug UI).
-        if (_secondaryView != null)
-            _secondaryView.DataContext = new MainViewModel();
+        DataContext = _appVM;
 
-        InitializeTabs();
+        // Give the secondary pane its own VM up front so it never inherits the
+        // AppShell DataContext (which is the global AppViewModel).
+        if (_secondaryView != null)
+            _secondaryView.DataContext = new ScriptureViewModel(_appVM);
+
         _ = RestoreTabsAndAuthAsync();
 
         if (_primaryView != null) _primaryView.SplitToggled += OnSplitToggled;
@@ -92,28 +98,25 @@ public partial class AppShellView : UserControl
         if (_primaryView != null) _primaryView.BibleReadingRequested += OnBibleReadingRequested;
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
         this.SizeChanged += OnShellSizeChanged;
+
+        TrackAuthState();
     }
 
-    private void InitializeTabs()
-    {
-        var initialVm = DataContext as MainViewModel ?? new MainViewModel();
-        AddTabInternal(initialVm, makeActive: true);
-    }
-
-    private void AddTabInternal(MainViewModel vm, bool makeActive)
+    private void AddTabInternal(ScriptureViewModel vm, bool makeActive)
     {
         _tabs.Add(vm);
         _tabInkStates[vm] = null;
+        _tabScrollOffsets[vm] = null;
 
         PropertyChangedEventHandler handler = (_, args) =>
         {
-            if (args.PropertyName == nameof(MainViewModel.Header))
+            if (args.PropertyName == nameof(ScriptureViewModel.Header))
                 RefreshTabButtons();
 
-            if (args.PropertyName == nameof(MainViewModel.Header)
-                || args.PropertyName == nameof(MainViewModel.SelectedLookupBook)
-                || args.PropertyName == nameof(MainViewModel.SelectedLookupChapter)
-                || args.PropertyName == nameof(MainViewModel.SelectedLookupVerse))
+            if (args.PropertyName == nameof(ScriptureViewModel.Header)
+                || args.PropertyName == nameof(ScriptureViewModel.SelectedLookupBook)
+                || args.PropertyName == nameof(ScriptureViewModel.SelectedLookupChapter)
+                || args.PropertyName == nameof(ScriptureViewModel.SelectedLookupVerse))
             {
                 if (!_isRestoringTabs)
                     RequestPersistOpenTabReferences();
@@ -137,19 +140,26 @@ public partial class AppShellView : UserControl
         if (index < 0 || index >= _tabs.Count || _primaryView == null)
             return;
 
-        // Save ink state for the tab we're leaving.
+        // Save ink and scroll state for the tab we're leaving.
         if (_activeTabIndex >= 0 && _activeTabIndex < _tabs.Count)
-            _tabInkStates[_tabs[_activeTabIndex]] = _primaryView.CaptureInkState();
+        {
+            var leavingVm = _tabs[_activeTabIndex];
+            _tabInkStates[leavingVm] = _primaryView.CaptureInkState();
+            var capturedOffset = _primaryView.CaptureScrollOffset();
+            _tabScrollOffsets[leavingVm] = capturedOffset;
+            _appVM.AppendSyncDebugLog($"[Tab] Leaving tab {_activeTabIndex} \"{leavingVm.Header}\" — saved scroll Y={capturedOffset?.ToString("F1") ?? "null"}");
+        }
 
         _activeTabIndex = index;
         var vm = _tabs[index];
-        DataContext = vm;
         _primaryView.DataContext = vm;
 
-        // Restore ink state for the tab we're entering.
+        // Restore ink and scroll state for the tab we're entering.
         _primaryView.RestoreInkState(_tabInkStates.TryGetValue(vm, out var inkState) ? inkState : null);
+        var restoreOffset = _tabScrollOffsets.TryGetValue(vm, out var scrollOffset) ? scrollOffset : null;
+        _appVM.AppendSyncDebugLog($"[Tab] Entering tab {index} \"{vm.Header}\" — restoring scroll Y={restoreOffset?.ToString("F1") ?? "null"}");
+        _primaryView.RestoreScrollOffset(restoreOffset);
 
-        TrackAuthStateOf(vm);
         RefreshTabButtons();
         if (!_isRestoringTabs)
             RequestPersistOpenTabReferences();
@@ -196,7 +206,7 @@ public partial class AppShellView : UserControl
         }
     }
 
-    private static string GetTabLabel(MainViewModel vm, int index)
+    private static string GetTabLabel(ScriptureViewModel vm, int index)
     {
         var header = vm.Header;
         if (string.IsNullOrWhiteSpace(header))
@@ -213,26 +223,20 @@ public partial class AppShellView : UserControl
 
     private void OnAddTabButtonClick(object? sender, RoutedEventArgs e)
     {
-        AddTabInternal(new MainViewModel(), makeActive: true);
+        AddTabInternal(new ScriptureViewModel(_appVM), makeActive: true);
     }
 
     // ── Sign-in overlay ───────────────────────────────────────────────────────
 
-    private void TrackAuthStateOf(MainViewModel? vm)
+    private void TrackAuthState()
     {
-        if (_trackedAuthVm != null && _authStateHandler != null)
-            _trackedAuthVm.PropertyChanged -= _authStateHandler;
-
-        _trackedAuthVm = vm;
-        _authStateHandler = vm == null ? null : (_, args) =>
+        _authStateHandler = (_, args) =>
         {
-            if (args.PropertyName == nameof(MainViewModel.IsAuthenticating))
+            if (args.PropertyName == nameof(AppViewModel.IsAuthenticating))
                 Dispatcher.UIThread.Post(UpdateSignInOverlayVisibility);
         };
 
-        if (vm != null && _authStateHandler != null)
-            vm.PropertyChanged += _authStateHandler;
-
+        _appVM.PropertyChanged += _authStateHandler;
         UpdateSignInOverlayVisibility();
     }
 
@@ -240,17 +244,17 @@ public partial class AppShellView : UserControl
     {
         var overlay = this.FindControl<Panel>("SignInProgressOverlay");
         if (overlay != null)
-            overlay.IsVisible = _trackedAuthVm?.IsAuthenticating == true;
+            overlay.IsVisible = _appVM.IsAuthenticating;
     }
 
     private void OnCancelSignInButtonClick(object? sender, RoutedEventArgs e)
     {
-        _trackedAuthVm?.CancelAuthentication();
+        _appVM.CancelAuthentication();
     }
 
     private void OnReopenBrowserButtonClick(object? sender, RoutedEventArgs e)
     {
-        _trackedAuthVm?.ReopenAuthBrowser();
+        _appVM.ReopenAuthBrowser();
     }
 
     // ── Startup re-sign-in prompt ─────────────────────────────────────────────
@@ -326,6 +330,7 @@ public partial class AppShellView : UserControl
         }
 
         _tabInkStates.Remove(vm);
+        _tabScrollOffsets.Remove(vm);
         _tabs.RemoveAt(index);
         vm.Dispose();
 
@@ -340,9 +345,11 @@ public partial class AppShellView : UserControl
         if (_primaryView != null && _activeTabIndex >= 0 && _activeTabIndex < _tabs.Count)
         {
             var activeVm = _tabs[_activeTabIndex];
-            DataContext = activeVm;
             _primaryView.DataContext = activeVm;
             _primaryView.RestoreInkState(_tabInkStates.TryGetValue(activeVm, out var inkState) ? inkState : null);
+            var restoreOffset = _tabScrollOffsets.TryGetValue(activeVm, out var scrollOffset) ? scrollOffset : null;
+            _appVM.AppendSyncDebugLog($"[Tab] After close, activating tab {_activeTabIndex} \"{activeVm.Header}\" — restoring scroll Y={restoreOffset?.ToString("F1") ?? "null"}");
+            _primaryView.RestoreScrollOffset(restoreOffset);
         }
 
         RefreshTabButtons();
@@ -352,99 +359,133 @@ public partial class AppShellView : UserControl
 
     private async Task RestoreTabsAndAuthAsync()
     {
-        if (_tabs.Count == 0)
-            return;
+        // Load persisted debug mode state early so the overlay is visible during restore.
+        await _appVM.LoadDebugModeFromStorageAsync();
 
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
-        // Suppress persistence-to-queue for the entire startup sequence.
         _isRestoringTabs = true;
-        foreach (var vm in _tabs) vm.SetReadingProgressSyncSuppressed(true);
+        _appVM.SuppressReadingProgressSync = true;
         try
         {
-            var ownerVm = _tabs[Math.Clamp(_activeTabIndex, 0, _tabs.Count - 1)];
+            // 1. Restore tabs from local storage immediately — no auth or network needed.
+            _appVM.AppendSyncDebugLog("[Tabs] Loading persisted tab references...");
+            var (persistedTabs, persistedActiveIndex) = await _appVM.LoadPersistedOpenTabReferencesAsync();
+            if (persistedTabs.Count > 0)
+            {
+                _appVM.AppendSyncDebugLog($"[Tabs] Found {persistedTabs.Count} persisted tab(s), active index={persistedActiveIndex}");
 
-            UpdateStartupOverlay("Loading...", "Checking saved sign-in...", 0);
+                foreach (var vm in _tabs)
+                {
+                    if (_tabHeaderHandlers.TryGetValue(vm, out var handler))
+                        vm.PropertyChanged -= handler;
+
+                    vm.Dispose();
+                }
+
+                _tabHeaderHandlers.Clear();
+                _tabs.Clear();
+                _tabInkStates.Clear();
+                _activeTabIndex = -1;
+
+                foreach (var state in persistedTabs.OrderBy(t => t.TabIndex))
+                {
+                    var vm = new ScriptureViewModel(_appVM);
+                    ApplyPersistedTabReference(vm, state);
+                    AddTabInternal(vm, makeActive: false);
+                    _appVM.AppendSyncDebugLog($"[Tabs] Restored tab: \"{vm.Header}\" (book={state.BookCode}, ch={state.Chapter}, v={state.Verse})");
+                }
+
+                if (_tabs.Count > 0)
+                    SelectTab(Math.Clamp(persistedActiveIndex, 0, _tabs.Count - 1));
+
+                // Load Bible content for each restored tab. Active tab is awaited so
+                // content is visible as soon as the overlay hides; background tabs
+                // load concurrently without blocking.
+                var activeIdx = Math.Clamp(persistedActiveIndex, 0, _tabs.Count - 1);
+                var orderedStates = persistedTabs.OrderBy(t => t.TabIndex).ToList();
+                _appVM.AppendSyncDebugLog($"[Tabs] Loading content for {_tabs.Count} tab(s), active={activeIdx}...");
+                var contentTasks = _tabs
+                    .Select(vm =>
+                    {
+                        var code    = vm.SelectedLookupBook?.Code ?? "JHN";
+                        var chapter = Math.Max(1, vm.SelectedLookupChapter);
+                        var verse   = Math.Max(1, vm.SelectedLookupVerse);
+                        return vm.TryLoadBookFromApiAsync(code, chapter, verse);
+                    })
+                    .ToList();
+                await contentTasks[activeIdx]; // active tab ready before overlay hides
+                _appVM.AppendSyncDebugLog("[Tabs] Active tab content loaded");
+
+                // Navigate to the persisted verse so the user lands where they left off.
+                // Use the original persisted state values (not the VM, which may have been
+                // reset by TryLoadBookFromApiAsync).
+                var activeState = orderedStates[activeIdx];
+                var ch = Math.Max(1, activeState.Chapter);
+                var vs = Math.Max(1, activeState.Verse);
+                if (_primaryView != null)
+                {
+                    _appVM.AppendSyncDebugLog($"[Tabs] Navigating active tab to {ch}:{vs}");
+                    await _primaryView.NavigateToVerseAsync(ch, vs);
+                }
+
+                _ = Task.WhenAll(contentTasks); // background tabs continue
+            }
+            else
+            {
+                _appVM.AppendSyncDebugLog("[Tabs] No persisted tabs found, creating default (Genesis 1:1)");
+                var defaultVm = new ScriptureViewModel(_appVM);
+                AddTabInternal(defaultVm, makeActive: true);
+                await defaultVm.TryLoadBookFromApiAsync("GEN", 1, 1);
+            }
+
+            // Tabs are visible — dismiss the overlay so the user sees the app immediately.
+            _isRestoringTabs = false;
+            if (overlay != null) overlay.IsVisible = false;
+
+            // 2. Auth + Drive pull happen silently in the background.
 
             // Smooth UX on reopen: this uses cached OAuth token when available.
-            await ownerVm.TryAutoAuthenticateOnStartupAsync();
+            await _appVM.TryAutoAuthenticateOnStartupAsync();
 
             // If silent auth failed but there was a previous session, offer to re-sign-in.
-            if (!ownerVm.IsAuthenticated && await ownerVm.HasPreviousAuthenticationAsync())
+            if (!_appVM.IsAuthenticated && await _appVM.HasPreviousAuthenticationAsync())
             {
+                // Re-surface the overlay only for the interactive re-sign-in prompt.
+                if (overlay != null) overlay.IsVisible = true;
                 var shouldSignIn = await ShowStartupReSignInPromptAsync(
                     "Your previous sign-in has expired.");
                 if (shouldSignIn)
-                    await ownerVm.AuthenticateAsync();
+                    await _appVM.AuthenticateAsync();
             }
 
-            if (ownerVm.IsAuthenticated)
+            if (_appVM.IsAuthenticated)
             {
-                UpdateStartupOverlay("Loading...", "Syncing with Google Drive...", 0);
-
-                var pullResult = await ownerVm.PullFromDriveAsync();
+                var pullResult = await _appVM.PullFromDriveAsync();
                 if (pullResult.BibleReadingProgress != null
                     && _bibleReadingView?.DataContext is BibleReadingViewModel brVm)
                 {
                     brVm.ApplyRemoteSnapshot(pullResult.BibleReadingProgress);
                 }
             }
-
-            UpdateStartupOverlay("Loading...", "Restoring your open tabs...", 100);
-
-            var (persistedTabs, persistedActiveIndex) = await ownerVm.LoadPersistedOpenTabReferencesAsync();
-            if (persistedTabs.Count == 0)
-                return;
-
-            foreach (var vm in _tabs)
-            {
-                if (_tabHeaderHandlers.TryGetValue(vm, out var handler))
-                    vm.PropertyChanged -= handler;
-
-                vm.Dispose();
-            }
-
-            _tabHeaderHandlers.Clear();
-            _tabs.Clear();
-            _tabInkStates.Clear();
-            _activeTabIndex = -1;
-
-            foreach (var state in persistedTabs.OrderBy(t => t.TabIndex))
-            {
-                var vm = new MainViewModel();
-                vm.SetReadingProgressSyncSuppressed(true);
-                ApplyPersistedTabReference(vm, state);
-                AddTabInternal(vm, makeActive: false);
-            }
-
-            if (_tabs.Count > 0)
-                SelectTab(Math.Clamp(persistedActiveIndex, 0, _tabs.Count - 1));
-
-            // No PersistOpenTabReferencesAsync() here — local storage is already
-            // correct after the Drive pull + tab restore. Calling it would enqueue
-            // preferences identical to what's on Drive, causing a spurious upload
-            // on the next app launch.
         }
         finally
         {
             // Always re-enable normal persistence tracking and hide the overlay,
             // even if we returned early or an exception occurred.
             _isRestoringTabs = false;
-            foreach (var vm in _tabs) vm.SetReadingProgressSyncSuppressed(false);
+            _appVM.SuppressReadingProgressSync = false;
             if (overlay != null)
                 overlay.IsVisible = false;
         }
     }
 
-    private static void ApplyPersistedTabReference(MainViewModel vm, OpenTabReferenceState state)
+    private static void ApplyPersistedTabReference(ScriptureViewModel vm, OpenTabReferenceState state)
     {
         var book = vm.LookupBooks.FirstOrDefault(b =>
             string.Equals(b.Code, state.BookCode, StringComparison.OrdinalIgnoreCase));
 
-        if (book != null)
-            vm.SelectedLookupBook = book;
-
-        vm.UpdateLookupFromReaderProgress(Math.Max(1, state.Chapter), Math.Max(1, state.Verse));
+        vm.RestoreLookupPosition(book, Math.Max(1, state.Chapter), Math.Max(1, state.Verse));
 
         if (!string.IsNullOrWhiteSpace(state.Header))
             vm.Header = state.Header;
@@ -474,8 +515,8 @@ public partial class AppShellView : UserControl
         if (tabStateJson == _lastPersistedTabStateJson && activeIndex == _lastPersistedActiveIndex)
             return;
 
-        var ownerVm = _tabs[Math.Clamp(activeIndex, 0, _tabs.Count - 1)];
-        await ownerVm.PersistOpenTabReferencesAsync(refs, activeIndex);
+        _appVM.AppendSyncDebugLog($"[Tabs] Persisting {refs.Count} tab(s), active={activeIndex}: {string.Join(", ", refs.Select(r => $"\"{r.Header}\" ({r.BookCode} {r.Chapter}:{r.Verse})"))}");
+        await _appVM.PersistOpenTabReferencesAsync(refs, activeIndex);
 
         _lastPersistedTabStateJson = tabStateJson;
         _lastPersistedActiveIndex = activeIndex;
@@ -498,18 +539,27 @@ public partial class AppShellView : UserControl
 
     // ── Shutdown ──────────────────────────────────────────────────────────────
 
-    public bool HasAuthenticatedTabs() => _tabs.Any(vm => vm.IsAuthenticated);
+    public bool HasAuthenticatedTabs() => _appVM.IsAuthenticated;
+
+    public Task ForcePersistTabsAsync() => PersistOpenTabReferencesAsync();
 
     public async Task ShutdownAsync()
     {
-        var ownerVm = _tabs.FirstOrDefault(vm => vm.IsAuthenticated);
-        if (ownerVm != null)
-            await ownerVm.ForceSyncAsync().ConfigureAwait(false);
+        // Always persist tab state locally before exit.
+        await PersistOpenTabReferencesAsync().ConfigureAwait(false);
+
+        if (_appVM.IsAuthenticated)
+            await _appVM.ForceSyncAsync().ConfigureAwait(false);
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress -= OnSyncProgress;
+
+        if (_authStateHandler != null)
+            _appVM.PropertyChanged -= _authStateHandler;
+
+        _appVM.Dispose();
         _persistTabsCts?.Cancel();
         _persistTabsCts?.Dispose();
         base.OnDetachedFromVisualTree(e);
@@ -594,18 +644,22 @@ public partial class AppShellView : UserControl
 
     // ── Debug view handlers ───────────────────────────────────────────────────
 
-    private void SetDebugSurface(bool showPointer, bool showDrawing, bool showSync, bool showThemeResources = false)
+    private void SetDebugSurface(bool showPointer, bool showDrawing, bool showSync, bool showThemeResources = false, bool showLocalStorage = false, bool showDebugLogs = false)
     {
         if (_primaryView is null || _debugPointerView is null || _debugDrawingView is null || _syncDebugView is null)
             return;
 
-        bool showOverlay = showPointer || showDrawing || showSync || showThemeResources;
+        bool showOverlay = showPointer || showDrawing || showSync || showThemeResources || showLocalStorage || showDebugLogs;
         _primaryView.IsVisible = !showOverlay;
         _debugPointerView.IsVisible = showPointer;
         _debugDrawingView.IsVisible = showDrawing;
         _syncDebugView.IsVisible = showSync;
         if (_themeResourcesDebugView != null)
             _themeResourcesDebugView.IsVisible = showThemeResources;
+        if (_localStorageDebugView != null)
+            _localStorageDebugView.IsVisible = showLocalStorage;
+        if (_debugLogsView != null)
+            _debugLogsView.IsVisible = showDebugLogs;
     }
 
     private async void OnDebugTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -622,12 +676,18 @@ public partial class AppShellView : UserControl
                 break;
             case 3:
                 SetDebugSurface(showPointer: false, showDrawing: false, showSync: true);
-                if (DataContext is MainViewModel vm)
-                    await vm.RefreshSyncDebugDataAsync();
+                await _appVM.RefreshSyncDebugDataAsync();
                 break;
             case 4:
                 SetDebugSurface(showPointer: false, showDrawing: false, showSync: false, showThemeResources: true);
                 _themeResourcesDebugView?.Refresh();
+                break;
+            case 5:
+                SetDebugSurface(showPointer: false, showDrawing: false, showSync: false, showLocalStorage: true);
+                _ = _localStorageDebugView?.RefreshAsync();
+                break;
+            case 6:
+                SetDebugSurface(showPointer: false, showDrawing: false, showSync: false, showDebugLogs: true);
                 break;
             default:
                 SetDebugSurface(showPointer: false, showDrawing: false, showSync: false);

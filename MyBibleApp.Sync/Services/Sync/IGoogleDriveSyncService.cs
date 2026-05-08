@@ -84,16 +84,11 @@ public sealed class PullResult
 {
     public bool IsSuccess { get; set; }
     public bool HadChanges { get; set; }
-    public ReadingProgressSnapshot? ReadingProgress { get; set; }
-    public PreferencesSnapshot? Preferences { get; set; }
     public BibleReadingProgressSnapshot? BibleReadingProgress { get; set; }
     public string? ErrorMessage { get; set; }
 
-    public static PullResult Success(bool hadChanges,
-        ReadingProgressSnapshot? rp = null,
-        PreferencesSnapshot? prefs = null,
-        BibleReadingProgressSnapshot? bibleReading = null)
-        => new() { IsSuccess = true, HadChanges = hadChanges, ReadingProgress = rp, Preferences = prefs, BibleReadingProgress = bibleReading };
+    public static PullResult Success(bool hadChanges, BibleReadingProgressSnapshot? bibleReading = null)
+        => new() { IsSuccess = true, HadChanges = hadChanges, BibleReadingProgress = bibleReading };
 
     public static PullResult NoChanges()
         => new() { IsSuccess = true, HadChanges = false };
