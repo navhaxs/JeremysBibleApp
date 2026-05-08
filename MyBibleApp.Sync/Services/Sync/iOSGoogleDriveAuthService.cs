@@ -70,6 +70,8 @@ public class iOSGoogleDriveAuthService : IGoogleDriveAuthService
 
     public void CancelAuthentication() { }
 
+    public void ReopenBrowser() { }
+
     public async Task<bool> RefreshTokenAsync()
     {
         // Implement token refresh logic here

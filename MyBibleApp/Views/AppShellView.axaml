@@ -163,6 +163,11 @@
                    TextAlignment="Center"
                    MaxWidth="300"
                    Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+        <Button x:Name="ReopenBrowserButton"
+                Content="Open browser again"
+                HorizontalAlignment="Center"
+                Padding="24,8"
+                Click="OnReopenBrowserButtonClick" />
         <Button x:Name="CancelSignInButton"
                 Content="Cancel"
                 HorizontalAlignment="Center"

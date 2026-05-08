@@ -73,6 +73,12 @@ public interface IGoogleDriveAuthService
     void CancelAuthentication();
 
     /// <summary>
+    /// Re-opens the browser to the pending OAuth URL when an interactive auth is in progress.
+    /// No-op if no auth is in progress or the platform does not support it.
+    /// </summary>
+    void ReopenBrowser();
+
+    /// <summary>
     /// Revokes the current authentication
     /// </summary>
     Task<bool> RevokeAsync();

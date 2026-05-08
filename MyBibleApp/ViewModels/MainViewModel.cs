@@ -499,6 +499,11 @@ public class MainViewModel : ViewModelBase
         _syncCoordinator?.CancelAuthentication();
     }
 
+    public void ReopenAuthBrowser()
+    {
+        _syncCoordinator?.ReopenBrowser();
+    }
+
     public async Task<bool> HasPreviousAuthenticationAsync()
     {
         if (_localStorageProvider == null) return false;

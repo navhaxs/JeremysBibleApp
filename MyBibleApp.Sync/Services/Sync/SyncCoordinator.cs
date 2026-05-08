@@ -95,6 +95,11 @@ public interface ISyncCoordinator : IDisposable
     void CancelAuthentication();
 
     /// <summary>
+    /// Re-opens the browser to the pending OAuth URL when an interactive auth is in progress.
+    /// </summary>
+    void ReopenBrowser();
+
+    /// <summary>
     /// Event for sync progress updates
     /// </summary>
     event EventHandler<SyncProgressEventArgs>? SyncProgress;
@@ -363,6 +368,8 @@ public class SyncCoordinator : ISyncCoordinator
     }
 
     public void CancelAuthentication() => _authService.CancelAuthentication();
+
+    public void ReopenBrowser() => _authService.ReopenBrowser();
 
     public async Task<PullResult> PullFromDriveAsync()
     {

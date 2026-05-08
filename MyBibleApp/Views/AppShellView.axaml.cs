@@ -246,6 +246,11 @@ public partial class AppShellView : UserControl
         _trackedAuthVm?.CancelAuthentication();
     }
 
+    private void OnReopenBrowserButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _trackedAuthVm?.ReopenAuthBrowser();
+    }
+
     // ── Startup re-sign-in prompt ─────────────────────────────────────────────
 
     private void OnStartupSignInAgainButtonClick(object? sender, RoutedEventArgs e)
