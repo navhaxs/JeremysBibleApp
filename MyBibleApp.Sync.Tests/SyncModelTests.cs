@@ -230,7 +230,7 @@ public sealed class SyncModelTests
 
         Assert.False(string.IsNullOrWhiteSpace(item.Id));
         Assert.Equal(string.Empty, item.OperationType);
-        Assert.Equal(string.Empty, item.Data);
+        Assert.Equal(System.Text.Json.JsonValueKind.Undefined, item.Data.ValueKind);
         Assert.Equal(0, item.RetryCount);
         Assert.False(item.IsSynced);
     }

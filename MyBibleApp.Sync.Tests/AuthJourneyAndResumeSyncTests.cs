@@ -94,7 +94,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
 
         // Remote sync is deferred until a later force sync or reconnect.
         Assert.Equal(1, await _queueManager.GetPendingCountAsync());
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
 
         // ── Act 3: Sign out ────────────────────────────────────────────
         coordinator.SignOut();
@@ -162,7 +162,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
 
         // Both were queued for later remote sync.
         Assert.Equal(2, await _queueManager.GetPendingCountAsync());
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
         await _syncService.DidNotReceive().SyncAnnotationAsync(Arg.Any<AnnotationBundle>());
     }
 
@@ -180,10 +180,10 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
             .Returns(AuthenticationResult.Success("token", "user@bible.app"));
         _authService.IsAuthenticated.Returns(true);
 
-        _syncService.SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>())
+        _syncService.SaveUserDataAsync(Arg.Any<UserDataSnapshot>())
             .Returns(SyncResult.Success(1));
-        _syncService.SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>())
-            .Returns(SyncResult.Success(1));
+        _syncService.GetFileModifiedTimesAsync()
+            .Returns(new System.Collections.Generic.Dictionary<string, DateTime?>());
 
         using var coordinator = CreateCoordinator();
         await coordinator.AuthenticateAsync();
@@ -197,11 +197,10 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         Assert.True(r2.IsSuccess); // queued locally
 
         // Drive was NOT called
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
-        await _syncService.DidNotReceive().SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
 
-        // Queue has 2 items, local storage has the data
-        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
+        // Queue has 1 item (compacted), local storage has the data
+        Assert.Equal(1, await _queueManager.GetPendingCountAsync());
         Assert.NotNull(await _localStorage.GetAsync("CurrentReadingProgress"));
         Assert.NotNull(await _localStorage.GetAsync("UserPreferences"));
 
@@ -215,9 +214,8 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         coordinator.ForceSync();
         await Task.Delay(1000);
 
-        // Now the Drive service should have been called for both items
-        await _syncService.Received().SyncReadingProgressAsync("GEN", 1, 1);
-        await _syncService.Received().SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>());
+        // Now the Drive service should have been called
+        await _syncService.Received().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -250,8 +248,8 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         // Further syncs still succeed locally and remain queued for later.
         var result = await coordinator.SyncReadingProgressAsync("PSA", 23, 2);
         Assert.True(result.IsSuccess);
-        Assert.Equal(4, await _queueManager.GetPendingCountAsync());
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -285,8 +283,10 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         _networkMonitor.IsConnected.Returns(true);
         _authService.IsAuthenticated.Returns(true);
 
-        _syncService.SyncReadingProgressAsync("MAT", 5, 3)
+        _syncService.SaveUserDataAsync(Arg.Any<UserDataSnapshot>())
             .Returns(SyncResult.Success(1));
+        _syncService.GetFileModifiedTimesAsync()
+            .Returns(new System.Collections.Generic.Dictionary<string, DateTime?>());
         _syncService.SyncAnnotationAsync(Arg.Any<AnnotationBundle>())
             .Returns(SyncResult.Success(1));
 
@@ -297,7 +297,7 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         session2.ForceSync();
         await Task.Delay(1000);
 
-        await _syncService.Received().SyncReadingProgressAsync("MAT", 5, 3);
+        await _syncService.Received().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
         await _syncService.Received().SyncAnnotationAsync(
             Arg.Is<AnnotationBundle>(a => a.BookCode == "MAT" && a.Chapter == 5));
     }
@@ -312,9 +312,6 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         _authService.AuthenticateAsync()
             .Returns(AuthenticationResult.Success("token", "user@bible.app"));
         _authService.IsAuthenticated.Returns(true);
-
-        _syncService.SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>())
-            .Returns(SyncResult.Success(1));
 
         using var coordinator = CreateCoordinator();
         await coordinator.AuthenticateAsync();
@@ -347,11 +344,6 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         _authService.AuthenticateAsync()
             .Returns(AuthenticationResult.Success("token", "user@bible.app"));
         _authService.IsAuthenticated.Returns(true);
-
-        _syncService.SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>())
-            .Returns(SyncResult.Success(1));
-        _syncService.SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>())
-            .Returns(SyncResult.Success(1));
 
         using var coordinator = CreateCoordinator();
         await coordinator.AuthenticateAsync();
@@ -442,12 +434,11 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         var r3 = await coordinator.SyncPreferencesAsync(new PreferencesSnapshot());
         Assert.True(r3.IsSuccess);
 
-        Assert.Equal(3, await _queueManager.GetPendingCountAsync());
+        Assert.Equal(2, await _queueManager.GetPendingCountAsync());
 
         // Drive was never called
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
         await _syncService.DidNotReceive().SyncAnnotationAsync(Arg.Any<AnnotationBundle>());
-        await _syncService.DidNotReceive().SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>());
     }
 }
 

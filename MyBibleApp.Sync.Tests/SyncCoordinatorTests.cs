@@ -77,8 +77,8 @@ public sealed class SyncCoordinatorTests : IDisposable
         var result = await _coordinator.SyncReadingProgressAsync("JHN", 3, 16);
 
         Assert.True(result.IsSuccess);
-        await _queueManager.Received(1).QueueOperationAsync("ReadingProgress", Arg.Any<ReadingProgressSnapshot>());
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
@@ -94,8 +94,8 @@ public sealed class SyncCoordinatorTests : IDisposable
         var result = await offlineCoordinator.SyncReadingProgressAsync("JHN", 3, 16);
 
         Assert.True(result.IsSuccess);
-        await _queueManager.Received(1).QueueOperationAsync("ReadingProgress", Arg.Any<ReadingProgressSnapshot>());
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
@@ -107,16 +107,14 @@ public sealed class SyncCoordinatorTests : IDisposable
 
         Assert.True(result.IsSuccess);
         await _localStorage.Received(1).SaveObjectAsync("CurrentReadingProgress", Arg.Any<ReadingProgressSnapshot>());
-        await _queueManager.Received(1).QueueOperationAsync("ReadingProgress", Arg.Any<ReadingProgressSnapshot>());
-        await _syncService.DidNotReceive().SyncReadingProgressAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>());
+        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
     public async Task SyncReadingProgress_SavesLocally()
     {
         _authService.IsAuthenticated.Returns(true);
-        _syncService.SyncReadingProgressAsync("JHN", 3, 16)
-            .Returns(SyncResult.Success(1));
 
         await _coordinator.SyncReadingProgressAsync("JHN", 3, 16);
 
@@ -177,8 +175,8 @@ public sealed class SyncCoordinatorTests : IDisposable
 
         Assert.True(result.IsSuccess);
         await _localStorage.Received(1).SaveObjectAsync("UserPreferences", prefs);
-        await _queueManager.Received(1).QueueOperationAsync("Preferences", prefs);
-        await _syncService.DidNotReceive().SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>());
+        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
+        await _syncService.DidNotReceive().SaveUserDataAsync(Arg.Any<UserDataSnapshot>());
     }
 
     [Fact]
@@ -192,7 +190,7 @@ public sealed class SyncCoordinatorTests : IDisposable
         var result = await offlineCoordinator.SyncPreferencesAsync(prefs);
 
         Assert.True(result.IsSuccess);
-        await _queueManager.Received(1).QueueOperationAsync("Preferences", prefs);
+        await _queueManager.Received(1).QueueOperationAsync("UserData", Arg.Any<UserDataSnapshot>());
         await _localStorage.Received(1).SaveObjectAsync("UserPreferences", prefs);
     }
 
@@ -247,7 +245,6 @@ public sealed class SyncCoordinatorTests : IDisposable
     {
         _authService.IsAuthenticated.Returns(true);
         var prefs = new PreferencesSnapshot { Theme = "Light" };
-        _syncService.SyncPreferencesAsync(prefs).Returns(SyncResult.Success(1));
 
         SyncProgressEventArgs? received = null;
         _coordinator.SyncProgress += (_, e) => received = e;
@@ -270,11 +267,12 @@ public sealed class SyncCoordinatorTests : IDisposable
             {
                 Id = "item1",
                 OperationType = "Preferences",
-                Data = System.Text.Json.JsonSerializer.Serialize(new PreferencesSnapshot { Theme = "Dark" })
+                Data = System.Text.Json.JsonSerializer.SerializeToElement(new PreferencesSnapshot { Theme = "Dark" })
             }
         };
         _queueManager.GetPendingOperationsAsync().Returns(items);
-        _syncService.SyncPreferencesAsync(Arg.Any<PreferencesSnapshot>())
+        _syncService.GetFileModifiedTimesAsync().Returns(new System.Collections.Generic.Dictionary<string, DateTime?>());
+        _syncService.SaveUserDataAsync(Arg.Any<UserDataSnapshot>())
             .Returns(SyncResult.Success(1));
 
         _coordinator.ForceSync();

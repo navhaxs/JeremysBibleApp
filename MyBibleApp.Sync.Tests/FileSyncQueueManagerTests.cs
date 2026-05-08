@@ -115,15 +115,15 @@ public sealed class FileSyncQueueManagerTests : IDisposable
         await _queue.QueueOperationAsync("ReadingProgress", new { BookCode = "JHN", Chapter = 3, Verse = 16 });
 
         var pending = await _queue.GetPendingOperationsAsync();
-        Assert.Contains("JHN", pending[0].Data);
-        Assert.Contains("16", pending[0].Data);
+        Assert.Contains("JHN", pending[0].Data.GetRawText());
+        Assert.Contains("16", pending[0].Data.GetRawText());
     }
 
     [Fact]
     public async Task QueueItem_HasUniqueId()
     {
-        await _queue.QueueOperationAsync("ReadingProgress", new { BookCode = "GEN" });
-        await _queue.QueueOperationAsync("ReadingProgress", new { BookCode = "EXO" });
+        await _queue.QueueOperationAsync("Annotation", new { BookCode = "GEN" });
+        await _queue.QueueOperationAsync("Annotation", new { BookCode = "EXO" });
 
         var pending = await _queue.GetPendingOperationsAsync();
         Assert.NotEqual(pending[0].Id, pending[1].Id);
@@ -148,7 +148,7 @@ public sealed class FileSyncQueueManagerTests : IDisposable
 
         await Task.WhenAll(
             Enumerable.Range(0, 25).Select(index =>
-                (index % 2 == 0 ? first : second).QueueOperationAsync("ReadingProgress", new { Index = index })));
+                (index % 2 == 0 ? first : second).QueueOperationAsync("Annotation", new { Index = index })));
 
         var pending = await first.GetPendingOperationsAsync();
         Assert.Equal(25, pending.Count);
@@ -164,8 +164,8 @@ public sealed class FileSyncQueueManagerTests : IDisposable
 
         Assert.Single(pending);
         Assert.Equal("Preferences", pending[0].OperationType);
-        Assert.Contains("Dark", pending[0].Data);
-        Assert.DoesNotContain("Light", pending[0].Data);
+        Assert.Contains("Dark", pending[0].Data.GetRawText());
+        Assert.DoesNotContain("Light", pending[0].Data.GetRawText());
     }
 
     [Fact]

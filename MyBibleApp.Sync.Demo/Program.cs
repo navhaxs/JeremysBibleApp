@@ -281,7 +281,7 @@ internal static class Program
             {
                 Console.WriteLine($"    [{item.Id[..8]}] {item.OperationType,-20} queued {item.QueuedAt:HH:mm:ss}  synced={item.IsSynced}");
                 Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.WriteLine($"             {Truncate(item.Data, 80)}");
+                Console.WriteLine($"             {Truncate(item.Data.ToString(), 80)}");
                 Console.ResetColor();
             }
         }
@@ -331,13 +331,13 @@ internal static class Program
         Console.WriteLine("  ── Remote Data (Google Drive appDataFolder) ────");
         Console.ResetColor();
 
-        Console.Write("    Reading progress… ");
-        var progress = await _syncService.GetAllReadingProgressAsync();
-        Console.WriteLine($"{progress.Count} entries");
-        foreach (var p in progress.Take(5))
-            Console.WriteLine($"      {p.BookCode} {p.Chapter}:{p.Verse}  ({p.ProgressTimestamp:O})");
-        if (progress.Count > 5)
-            Console.WriteLine($"      … and {progress.Count - 5} more");
+        Console.Write("    User data… ");
+        var userData = await _syncService.GetUserDataAsync();
+        var remoteProgress = userData?.ReadingProgress;
+        if (remoteProgress != null)
+            Console.WriteLine($"found  ({remoteProgress.BookCode} {remoteProgress.Chapter}:{remoteProgress.Verse}  {remoteProgress.ProgressTimestamp:O})");
+        else
+            Console.WriteLine("(none)");
 
         Console.Write("    Annotations… ");
         var annotations = await _syncService.GetAllAnnotationsAsync();
@@ -348,7 +348,7 @@ internal static class Program
             Console.WriteLine($"      … and {annotations.Count - 5} more");
 
         Console.Write("    Preferences… ");
-        var remotePrefs = await _syncService.GetPreferencesAsync();
+        var remotePrefs = userData?.Preferences;
         if (remotePrefs != null)
         {
             Console.WriteLine("found");
