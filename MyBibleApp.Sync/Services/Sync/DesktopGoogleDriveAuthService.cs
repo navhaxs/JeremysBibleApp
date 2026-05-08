@@ -24,8 +24,15 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
     private string? _currentUserEmail;
     private string? _currentAccessToken;
     private CancellationTokenSource? _interactiveCts;
+    private CapturingLocalServerCodeReceiver? _activeCodeReceiver;
 
-    public bool IsAuthenticated => _credential?.Token is { IsStale: false };
+    /// <summary>
+    /// True if we have a credential that can produce a valid access token — either the current
+    /// token is still fresh, or we hold a refresh token that allows silent renewal.
+    /// The DriveService returned by <see cref="GetDriveService"/> auto-refreshes stale tokens.
+    /// </summary>
+    public bool IsAuthenticated => _credential?.Token != null &&
+        (!_credential.Token.IsStale || !string.IsNullOrEmpty(_credential.Token.RefreshToken));
 
     public string? CurrentAccessToken => _currentAccessToken;
 
@@ -66,6 +73,8 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
         _interactiveCts?.Cancel();
     }
 
+    public void ReopenBrowser() => _activeCodeReceiver?.ReopenBrowser();
+
     private async Task<AuthenticationResult> AuthenticateInternalAsync(bool silentOnly)
     {
         try
@@ -104,7 +113,7 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
                     new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow.Initializer
                     {
                         ClientSecrets = clientSecrets,
-                        Scopes        = new[] { DriveService.Scope.DriveAppdata },
+                        Scopes        = new[] { DriveService.Scope.DriveAppdata, "openid", "email" },
                         DataStore     = new FileDataStore(TokenStorePath, true)
                     });
 
@@ -143,6 +152,9 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
             }
 
             // Interactive path (full browser flow).
+            // Uses a manually constructed flow so we can add prompt=consent, which ensures
+            // Google always returns a refresh token — even for users who previously granted
+            // access.  GoogleAuthorizationCodeFlow automatically adds access_type=offline.
             _interactiveCts?.Cancel();
             _interactiveCts?.Dispose();
             _interactiveCts = new CancellationTokenSource();
@@ -151,13 +163,28 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
             await using var interactiveStream = new MemoryStream(Encoding.UTF8.GetBytes(credentialsJson));
             clientSecrets = GoogleClientSecrets.FromStream(interactiveStream).Secrets;
 
-            _credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-                clientSecrets,
-                new[] { DriveService.Scope.DriveAppdata },
-                "user",
-                interactiveCt,
-                new FileDataStore(TokenStorePath, true)
-            ).ConfigureAwait(false);
+            var interactiveFlow = new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow(
+                new Google.Apis.Auth.OAuth2.Flows.GoogleAuthorizationCodeFlow.Initializer
+                {
+                    ClientSecrets = clientSecrets,
+                    Scopes        = new[] { DriveService.Scope.DriveAppdata, "openid", "email" },
+                    DataStore     = new FileDataStore(TokenStorePath, true),
+                    // prompt=consent guarantees a fresh refresh token on every interactive sign-in
+                    UserDefinedQueryParams = new[]
+                    {
+                        new System.Collections.Generic.KeyValuePair<string, string>("prompt", "consent")
+                    }
+                });
+
+            _activeCodeReceiver = new CapturingLocalServerCodeReceiver();
+            var installedApp = new AuthorizationCodeInstalledApp(
+                interactiveFlow,
+                _activeCodeReceiver);
+
+            _credential = await installedApp.AuthorizeAsync("user", interactiveCt)
+                .ConfigureAwait(false);
+
+            _activeCodeReceiver = null;
 
             if (_credential.Token.IsStale)
             {
@@ -295,11 +322,13 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
     }
 
     /// <summary>
-    /// Gets a Drive service client authenticated with the current credentials
+    /// Gets a Drive service client authenticated with the current credentials.
+    /// <see cref="UserCredential"/> automatically refreshes stale access tokens before each
+    /// request, so this is safe to call even when the cached access token has expired.
     /// </summary>
     public DriveService? GetDriveService()
     {
-        if (_credential == null || !IsAuthenticated)
+        if (_credential == null)
             return null;
 
         return new DriveService(new BaseClientService.Initializer()
@@ -307,6 +336,35 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
             HttpClientInitializer = _credential,
             ApplicationName = ApplicationName
         });
+    }
+
+    /// <summary>
+    /// Wraps <see cref="LocalServerCodeReceiver"/> to capture the OAuth URL so it can be
+    /// reopened in the browser if the user accidentally closes the tab.
+    /// </summary>
+    private sealed class CapturingLocalServerCodeReceiver : ICodeReceiver
+    {
+        private readonly LocalServerCodeReceiver _inner = new();
+        private string? _capturedUrl;
+
+        public string RedirectUri => _inner.RedirectUri;
+
+        public async Task<Google.Apis.Auth.OAuth2.Responses.AuthorizationCodeResponseUrl> ReceiveCodeAsync(
+            Google.Apis.Auth.OAuth2.Requests.AuthorizationCodeRequestUrl url,
+            CancellationToken taskCancellationToken)
+        {
+            _capturedUrl = url.Build().AbsoluteUri;
+            return await _inner.ReceiveCodeAsync(url, taskCancellationToken).ConfigureAwait(false);
+        }
+
+        public void ReopenBrowser()
+        {
+            if (_capturedUrl == null) return;
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_capturedUrl)
+            {
+                UseShellExecute = true
+            });
+        }
     }
 }
 
