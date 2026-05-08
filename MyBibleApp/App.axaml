@@ -11,8 +11,20 @@
     </Application.DataTemplates>
 
     <Application.Styles>
-        <FluentTheme />
+        <SimpleTheme />
         <materialIcons:MaterialIconStyles />
-        <StyleInclude Source="avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml" />
+        <StyleInclude Source="avares://Avalonia.Controls.ColorPicker/Themes/Simple/Simple.xaml" />
+
+        <!-- Scrollbar thumb fill — ThemeControlMidHighBrush may be absent in this build;
+             pin thumb to a guaranteed visible brush from the Simple theme palette. -->
+        <Style Selector="ScrollBar /template/ Thumb">
+            <Setter Property="Background" Value="{DynamicResource ThemeControlHighBrush}" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Thumb:pointerover">
+            <Setter Property="Background" Value="{DynamicResource ThemeControlVeryHighBrush}" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Thumb:pressed">
+            <Setter Property="Background" Value="{DynamicResource ThemeBorderHighBrush}" />
+        </Style>
     </Application.Styles>
 </Application>

@@ -40,6 +40,7 @@
       <TabStripItem Content="Debug Pointer" />
       <TabStripItem Content="Debug Drawing" />
       <TabStripItem Content="Sync Debug" />
+      <TabStripItem Content="Theme Resources" />
     </TabStrip>
 
     <!-- Split-capable content area -->
@@ -63,9 +64,10 @@
       <views:MainView Grid.Column="2" x:Name="SecondaryView" IsVisible="False" />
 
       <!-- Debug overlays span both panes -->
-      <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugView"        IsVisible="False" />
-      <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugDrawingView" IsVisible="False" />
-      <views:SyncDebugView     Grid.Column="0" Grid.ColumnSpan="3" x:Name="SyncDebugView"    IsVisible="False" />
+      <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugView"             IsVisible="False" />
+      <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugDrawingView"      IsVisible="False" />
+      <views:SyncDebugView     Grid.Column="0" Grid.ColumnSpan="3" x:Name="SyncDebugView"         IsVisible="False" />
+      <views:ThemeResourcesDebugView Grid.Column="0" Grid.ColumnSpan="3" x:Name="ThemeResourcesDebugView" IsVisible="False" />
 
       <!-- Bible Reading overlay — full-shell, toggled via header button -->
       <views:BibleReadingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="BibleReadingView" IsVisible="False" ZIndex="25"

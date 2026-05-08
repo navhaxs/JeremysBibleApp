@@ -118,12 +118,34 @@
       <Setter Property="CornerRadius" Value="16" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="BorderThickness" Value="0" />
+      <Style.Resources>
+        <SolidColorBrush x:Key="ButtonBackground"             Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBackgroundPointerOver"  Color="Transparent" />
+        <SolidColorBrush x:Key="ButtonBackgroundPressed"      Color="Transparent" />
+      </Style.Resources>
+    </Style>
+
+    <!-- Hover: show an outline ring without touching the fill -->
+    <Style Selector="Button.color-swatch:pointerover">
+      <Setter Property="BorderThickness" Value="2.5" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+    </Style>
+
+    <!-- Pressed: slightly thicker accent ring -->
+    <Style Selector="Button.color-swatch:pressed">
+      <Setter Property="BorderThickness" Value="2.5" />
+      <Setter Property="BorderBrush" Value="{DynamicResource SystemAccentColor}" />
     </Style>
 
     <!-- Selected (active) swatch: white ring -->
     <Style Selector="Button.color-swatch.selected">
       <Setter Property="BorderThickness" Value="2.5" />
       <Setter Property="BorderBrush" Value="White" />
+    </Style>
+
+    <!-- Floating toolbar: tooltips should not capture pointer events -->
+    <Style Selector="#FloatingToolbar Button ToolTip, #FloatingToolbar ToggleButton ToolTip">
+      <Setter Property="IsHitTestVisible" Value="False" />
     </Style>
   </UserControl.Styles>
 
@@ -297,6 +319,7 @@
                  SelectionMode="Single"
                  SelectionChanged="OnParagraphListSelectionChanged"
                  ItemsSource="{Binding Paragraphs}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ScrollViewer.VerticalScrollBarVisibility="Hidden">
         <ListBox.ItemTemplate>
             <DataTemplate x:DataType="model:BibleParagraph">
@@ -408,77 +431,115 @@
       </Grid>
     </Grid>
 
-    <!-- ── Annotation toolbar (visible only while annotation mode is on) ───── -->
-    <Border x:Name="AnnotationToolbar"
-            IsVisible="False"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Bottom"
-            Margin="0,0,0,20"
-            ZIndex="30"
-            CornerRadius="28"
-            BorderThickness="1"
-            BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
-            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
-            Padding="10,6">
-      <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+    <!-- ── Floating toolbars: chapter nav pill + annotation pill, side by side ── -->
+    <StackPanel x:Name="FloatingToolbar"
+                Orientation="Horizontal"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,20"
+                ZIndex="30"
+                Spacing="8">
 
-        <!-- Pen draw mode -->
-        <ToggleButton x:Name="PenModeButton"
-                      Classes="tool-btn"
-                      IsChecked="True"
-                      ToolTip.Tip="Draw"
-                      IsCheckedChanged="OnPenModeIsCheckedChanged">
-          <material:MaterialIcon Kind="Pencil" Width="20" Height="20" />
-        </ToggleButton>
+      <!-- Chapter navigation pill (always visible) -->
+      <Border CornerRadius="28"
+              BorderThickness="1"
+              BorderBrush="{DynamicResource ThemeBorderMidBrush}"
+              Background="{DynamicResource ThemeBackgroundBrush}"
+              Padding="4,4">
+        <StackPanel Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
+          <Button x:Name="PrevChapterButton"
+                  Classes="tool-btn"
+                  IsEnabled="{Binding CanGoToPreviousChapter}"
+                  ToolTip.Tip="Previous chapter"
+                  Click="OnPrevChapterClick">
+            <material:MaterialIcon Kind="ChevronLeft" Width="22" Height="22" />
+          </Button>
+          <TextBlock Text="{Binding Header}"
+                     FontSize="15"
+                     FontWeight="SemiBold"
+                     Width="160"
+                     TextAlignment="Center"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center"
+                     Margin="8,0" />
+          <Button x:Name="NextChapterButton"
+                  Classes="tool-btn"
+                  IsEnabled="{Binding CanGoToNextChapter}"
+                  ToolTip.Tip="Next chapter"
+                  Click="OnNextChapterClick">
+            <material:MaterialIcon Kind="ChevronRight" Width="22" Height="22" />
+          </Button>
+        </StackPanel>
+      </Border>
 
-        <!-- Highlighter mode -->
-        <ToggleButton x:Name="HighlighterModeButton"
-                      Classes="tool-btn"
-                      ToolTip.Tip="Highlight"
-                      IsCheckedChanged="OnHighlighterModeIsCheckedChanged">
-          <material:MaterialIcon Kind="Marker" Width="20" Height="20" />
-        </ToggleButton>
+      <!-- Annotation tools pill (visible only while annotation mode is on) -->
+      <Border x:Name="AnnotationSection"
+              CornerRadius="28"
+              BorderThickness="1"
+              BorderBrush="{DynamicResource ThemeBorderMidBrush}"
+              Background="{DynamicResource ThemeBackgroundBrush}"
+              Padding="4,4"
+              IsVisible="False">
+        <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
 
-        <!-- Eraser mode -->
-        <ToggleButton x:Name="EraserModeButton"
-                      Classes="tool-btn"
-                      ToolTip.Tip="Erase"
-                      IsCheckedChanged="OnEraserModeIsCheckedChanged">
-          <material:MaterialIcon Kind="Eraser" Width="20" Height="20" />
-        </ToggleButton>
+          <!-- Pen draw mode -->
+          <ToggleButton x:Name="PenModeButton"
+                        Classes="tool-btn"
+                        IsChecked="True"
+                        ToolTip.Tip="Draw"
+                        IsCheckedChanged="OnPenModeIsCheckedChanged">
+            <material:MaterialIcon Kind="Pencil" Width="20" Height="20" />
+          </ToggleButton>
 
-        <!-- Undo last stroke -->
-        <Button x:Name="UndoButton"
-                Classes="tool-btn"
-                ToolTip.Tip="Undo"
-                Click="OnUndoButtonClick">
-          <material:MaterialIcon Kind="Undo" Width="20" Height="20" />
-        </Button>
+          <!-- Highlighter mode -->
+          <ToggleButton x:Name="HighlighterModeButton"
+                        Classes="tool-btn"
+                        ToolTip.Tip="Highlight"
+                        IsCheckedChanged="OnHighlighterModeIsCheckedChanged">
+            <material:MaterialIcon Kind="Marker" Width="20" Height="20" />
+          </ToggleButton>
 
-        <!-- Divider -->
-        <Rectangle Width="1" Height="28" VerticalAlignment="Center"
-                   Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
-                   Opacity="0.5" Margin="4,0" />
+          <!-- Eraser mode -->
+          <ToggleButton x:Name="EraserModeButton"
+                        Classes="tool-btn"
+                        ToolTip.Tip="Erase"
+                        IsCheckedChanged="OnEraserModeIsCheckedChanged">
+            <material:MaterialIcon Kind="Eraser" Width="20" Height="20" />
+          </ToggleButton>
 
-        <!-- Preset colour swatches -->
-        <Button x:Name="ColorAmber" Classes="color-swatch" Background="#D4FFC107"
-                ToolTip.Tip="Amber" Click="OnColorSwatchClick" />
-        <Button x:Name="ColorRed"   Classes="color-swatch" Background="#D4F44336"
-                ToolTip.Tip="Red"   Click="OnColorSwatchClick" />
-        <Button x:Name="ColorBlue"  Classes="color-swatch" Background="#D42196F3"
-                ToolTip.Tip="Blue"  Click="OnColorSwatchClick" />
-        <Button x:Name="ColorDark"  Classes="color-swatch" Background="#D437474F"
-                ToolTip.Tip="Dark"  Click="OnColorSwatchClick" />
+          <!-- Undo last stroke -->
+          <Button x:Name="UndoButton"
+                  Classes="tool-btn"
+                  ToolTip.Tip="Undo"
+                  Click="OnUndoButtonClick">
+            <material:MaterialIcon Kind="Undo" Width="20" Height="20" />
+          </Button>
 
-        <!-- Custom colour picker -->
-        <Button x:Name="CustomColorButton"
-                Classes="tool-btn"
-                ToolTip.Tip="Custom colour">
-          <material:MaterialIcon Kind="Palette" Width="20" Height="20" />
-        </Button>
+          <!-- Preset colour swatches -->
+          <Button x:Name="ColorAmber" Classes="color-swatch" Tag="#D4FFC107" ToolTip.Tip="Amber" Click="OnColorSwatchClick">
+            <Ellipse Width="22" Height="22" Fill="#D4FFC107" />
+          </Button>
+          <Button x:Name="ColorRed"   Classes="color-swatch" Tag="#D4F44336" ToolTip.Tip="Red"   Click="OnColorSwatchClick">
+            <Ellipse Width="22" Height="22" Fill="#D4F44336" />
+          </Button>
+          <Button x:Name="ColorBlue"  Classes="color-swatch" Tag="#D42196F3" ToolTip.Tip="Blue"  Click="OnColorSwatchClick">
+            <Ellipse Width="22" Height="22" Fill="#D42196F3" />
+          </Button>
+          <Button x:Name="ColorDark"  Classes="color-swatch" Tag="#D437474F" ToolTip.Tip="Dark"  Click="OnColorSwatchClick">
+            <Ellipse Width="22" Height="22" Fill="#D437474F" />
+          </Button>
 
-      </StackPanel>
-    </Border>
+          <!-- Custom colour picker -->
+          <Button x:Name="CustomColorButton"
+                  Classes="tool-btn"
+                  ToolTip.Tip="Custom colour">
+            <material:MaterialIcon Kind="Palette" Width="20" Height="20" />
+          </Button>
+
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
 
   </Panel>
 </UserControl>

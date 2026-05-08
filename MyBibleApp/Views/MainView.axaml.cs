@@ -54,7 +54,7 @@ public partial class MainView : UserControl
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
     // ── Annotation toolbar controls ──────────────────────────────────────────
-    private Border? _annotationToolbar;
+    private Border? _annotationSection;
     private ToggleButton? _penModeButton;
     private ToggleButton? _highlighterModeButton;
     private ToggleButton? _eraserModeButton;
@@ -70,6 +70,7 @@ public partial class MainView : UserControl
 
     private bool _isMouseDragging;
     private Point _lastMousePosition;
+    private bool _suppressReaderProgressSync;
 
     public MainView()
     {
@@ -117,7 +118,7 @@ public partial class MainView : UserControl
         _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
 
         // ── Annotation toolbar controls ──────────────────────────────────────
-        _annotationToolbar = this.FindControl<Border>("AnnotationToolbar");
+        _annotationSection  = this.FindControl<Border>("AnnotationSection");
         _penModeButton        = this.FindControl<ToggleButton>("PenModeButton");
         _highlighterModeButton = this.FindControl<ToggleButton>("HighlighterModeButton");
         _eraserModeButton     = this.FindControl<ToggleButton>("EraserModeButton");
@@ -297,9 +298,9 @@ public partial class MainView : UserControl
         if (_paragraphList == null) return;
         bool isAnnotating = _annotationToggle?.IsChecked == true;
 
-        // Show / hide the floating toolbar.
-        if (_annotationToolbar != null)
-            _annotationToolbar.IsVisible = isAnnotating;
+        // Show / hide the annotation section of the floating toolbar.
+        if (_annotationSection != null)
+            _annotationSection.IsVisible = isAnnotating;
 
         var scp = _paragraphList.GetVisualDescendants()
             .OfType<ScrollContentPresenter>().FirstOrDefault();
@@ -424,9 +425,10 @@ public partial class MainView : UserControl
     private void OnColorSwatchClick(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button button) return;
-        if (button.Background is not ISolidColorBrush brush) return;
+        if (button.Tag is not string colorHex) return;
+        var color = Color.Parse(colorHex);
 
-        ApplyColor(brush.Color);
+        ApplyColor(color);
         SetActiveColorSwatch(button);
 
         // Reset the custom-colour button back to its default appearance.
@@ -434,7 +436,7 @@ public partial class MainView : UserControl
             _customColorButton.ClearValue(Button.BackgroundProperty);
 
         // Sync ColorView so it reflects the chosen preset.
-        if (_colorPickerView != null) _colorPickerView.Color = brush.Color;
+        if (_colorPickerView != null) _colorPickerView.Color = color;
 
         // Switch out of eraser mode when a colour is chosen; preserve pen/highlighter mode.
         if (_eraserModeButton?.IsChecked == true)
@@ -506,6 +508,8 @@ public partial class MainView : UserControl
                 Canvas.SetTop(_readerProgressThumb, fraction * maxTop);
             }
         }
+
+        if (_suppressReaderProgressSync) return;
 
         if (DataContext is MainViewModel vm)
         {
@@ -665,7 +669,11 @@ public partial class MainView : UserControl
             vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
 
             if (requestedCode.Equals(vm.BookCode, StringComparison.OrdinalIgnoreCase))
-                await ScrollToReferenceAsync(requestedChapter, requestedVerse);
+            {
+                _suppressReaderProgressSync = true;
+                try { await ScrollToReferenceAsync(requestedChapter, requestedVerse); }
+                finally { _suppressReaderProgressSync = false; }
+            }
 
             if (_headerLookupButton?.Flyout is Flyout flyout)
                 flyout.Hide();
@@ -846,6 +854,28 @@ public partial class MainView : UserControl
 
 
     // ── Settings flyout handlers ─────────────────────────────────────────────
+
+    // ── Chapter navigation toolbar ────────────────────────────────────────────
+
+    private async void OnPrevChapterClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        vm.GoToPreviousChapter();
+        vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
+        _suppressReaderProgressSync = true;
+        try { await ScrollToReferenceAsync(vm.SelectedLookupChapter, 1); }
+        finally { _suppressReaderProgressSync = false; }
+    }
+
+    private async void OnNextChapterClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm) return;
+        vm.GoToNextChapter();
+        vm.Header = $"{vm.BookTitle} {vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}";
+        _suppressReaderProgressSync = true;
+        try { await ScrollToReferenceAsync(vm.SelectedLookupChapter, 1); }
+        finally { _suppressReaderProgressSync = false; }
+    }
 
     private void OnDarkModeToggleChanged(object? sender, RoutedEventArgs e)
     {

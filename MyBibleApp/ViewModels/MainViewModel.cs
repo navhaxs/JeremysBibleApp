@@ -120,6 +120,23 @@ public class MainViewModel : ViewModelBase
 
     public string BookCode => _bookCode;
 
+    public bool CanGoToPreviousChapter => _selectedLookupChapter > 1;
+
+    public bool CanGoToNextChapter =>
+        _lookupChapters.Count > 0 && _selectedLookupChapter < _lookupChapters[^1];
+
+    public void GoToPreviousChapter()
+    {
+        if (CanGoToPreviousChapter)
+            SelectedLookupChapter--;
+    }
+
+    public void GoToNextChapter()
+    {
+        if (CanGoToNextChapter)
+            SelectedLookupChapter++;
+    }
+
     public string Status
     {
         get => _status;
@@ -147,7 +164,11 @@ public class MainViewModel : ViewModelBase
     public IReadOnlyList<int> LookupChapters
     {
         get => _lookupChapters;
-        private set => this.RaiseAndSetIfChanged(ref _lookupChapters, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _lookupChapters, value);
+            this.RaisePropertyChanged(nameof(CanGoToNextChapter));
+        }
     }
 
     public IReadOnlyList<int> LookupVerses
@@ -195,6 +216,8 @@ public class MainViewModel : ViewModelBase
                 return;
 
             this.RaiseAndSetIfChanged(ref _selectedLookupChapter, value);
+            this.RaisePropertyChanged(nameof(CanGoToPreviousChapter));
+            this.RaisePropertyChanged(nameof(CanGoToNextChapter));
             DebounceReadingProgressSync();
 
             if (_preserveVerseOnChapterRefresh)

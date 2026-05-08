@@ -31,6 +31,7 @@ public partial class AppShellView : UserControl
     private DebugPointerView? _debugPointerView;
     private DebugDrawingView? _debugDrawingView;
     private SyncDebugView?    _syncDebugView;
+    private ThemeResourcesDebugView? _themeResourcesDebugView;
     private BibleReadingView? _bibleReadingView;
     private readonly List<MainViewModel> _tabs = [];
     private readonly Dictionary<MainViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
@@ -67,6 +68,7 @@ public partial class AppShellView : UserControl
         _debugPointerView = this.FindControl<DebugPointerView>("DebugView");
         _debugDrawingView = this.FindControl<DebugDrawingView>("DebugDrawingView");
         _syncDebugView    = this.FindControl<SyncDebugView>("SyncDebugView");
+        _themeResourcesDebugView = this.FindControl<ThemeResourcesDebugView>("ThemeResourcesDebugView");
         _bibleReadingView = this.FindControl<BibleReadingView>("BibleReadingView");
 
         if (_bibleReadingView != null)
@@ -592,15 +594,18 @@ public partial class AppShellView : UserControl
 
     // ── Debug view handlers ───────────────────────────────────────────────────
 
-    private void SetDebugSurface(bool showPointer, bool showDrawing, bool showSync)
+    private void SetDebugSurface(bool showPointer, bool showDrawing, bool showSync, bool showThemeResources = false)
     {
         if (_primaryView is null || _debugPointerView is null || _debugDrawingView is null || _syncDebugView is null)
             return;
 
-        _primaryView.IsVisible = !(showPointer || showDrawing || showSync);
+        bool showOverlay = showPointer || showDrawing || showSync || showThemeResources;
+        _primaryView.IsVisible = !showOverlay;
         _debugPointerView.IsVisible = showPointer;
         _debugDrawingView.IsVisible = showDrawing;
         _syncDebugView.IsVisible = showSync;
+        if (_themeResourcesDebugView != null)
+            _themeResourcesDebugView.IsVisible = showThemeResources;
     }
 
     private async void OnDebugTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -619,6 +624,10 @@ public partial class AppShellView : UserControl
                 SetDebugSurface(showPointer: false, showDrawing: false, showSync: true);
                 if (DataContext is MainViewModel vm)
                     await vm.RefreshSyncDebugDataAsync();
+                break;
+            case 4:
+                SetDebugSurface(showPointer: false, showDrawing: false, showSync: false, showThemeResources: true);
+                _themeResourcesDebugView?.Refresh();
                 break;
             default:
                 SetDebugSurface(showPointer: false, showDrawing: false, showSync: false);
