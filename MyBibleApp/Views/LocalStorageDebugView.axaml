@@ -1,0 +1,33 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+             x:Class="MyBibleApp.Views.LocalStorageDebugView">
+  <Grid RowDefinitions="Auto,Auto,*" RowSpacing="8" Margin="16">
+    <TextBlock Grid.Row="0" Text="Debug: Local Storage" FontSize="18" FontWeight="Bold" />
+
+    <WrapPanel Grid.Row="1" Orientation="Horizontal">
+      <Button Content="Refresh" MinWidth="100" Margin="0,0,8,4" Click="OnRefreshClick" />
+      <Button Content="Save Tabs Now" MinWidth="120" Margin="0,0,8,4" Click="OnSaveTabsNowClick" />
+      <Button Content="Copy" MinWidth="80" Margin="0,0,8,4" Click="OnCopyClick" />
+    </WrapPanel>
+
+    <Border Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource ThemeBorderMidBrush}" Padding="8">
+      <Grid RowDefinitions="Auto,*" RowSpacing="6">
+        <TextBlock Grid.Row="0" x:Name="StoragePathText" FontFamily="monospace" FontSize="11"
+                   Foreground="{DynamicResource ThemeBorderHighBrush}" TextWrapping="Wrap" />
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+          <TextBox x:Name="ContentTextBox"
+                   IsReadOnly="True"
+                   TextWrapping="NoWrap"
+                   AcceptsReturn="True"
+                   BorderThickness="0"
+                   Background="Transparent"
+                   FontFamily="monospace"
+                   FontSize="12" />
+        </ScrollViewer>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>
