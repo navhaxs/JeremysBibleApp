@@ -55,9 +55,11 @@ public partial class MainView : UserControl
     // Velocity-based chapter marker reveal
     private double _lastScrollOffset;
     private DateTime _lastScrollTime;
+    private int _fastScrollCount;
     private bool _chapterMarkersShownByScroll;
     private CancellationTokenSource? _scrollStopCts;
-    private const double ScrollVelocityThreshold = 800; // pixels per second
+    private const double ScrollVelocityThreshold = 3000; // pixels per second
+    private const int FastScrollCountThreshold = 3;      // consecutive fast events required
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
@@ -274,11 +276,16 @@ public partial class MainView : UserControl
 
             if (velocity >= ScrollVelocityThreshold)
             {
-                if (!_chapterMarkersShownByScroll)
+                _fastScrollCount++;
+                if (!_chapterMarkersShownByScroll && _fastScrollCount >= FastScrollCountThreshold)
                 {
                     _chapterMarkersShownByScroll = true;
                     BuildChapterMarkers();
                 }
+            }
+            else
+            {
+                _fastScrollCount = 0;
             }
         }
 
@@ -294,6 +301,7 @@ public partial class MainView : UserControl
             if (t.IsCanceled) return;
             Dispatcher.UIThread.Post(() =>
             {
+                _fastScrollCount = 0;
                 if (_chapterMarkersShownByScroll)
                 {
                     _chapterMarkersShownByScroll = false;
