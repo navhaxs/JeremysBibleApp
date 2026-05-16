@@ -4,6 +4,8 @@
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+        <SignAssembly>true</SignAssembly>
+        <AssemblyOriginatorKeyFile>..\MyBibleApp.Desktop\TwoHandsLifted.snk</AssemblyOriginatorKeyFile>
     </PropertyGroup>
 
     <ItemGroup>
@@ -22,5 +24,11 @@
 
     <ItemGroup>
         <ProjectReference Include="..\MyBibleApp.Sync\MyBibleApp.Sync.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Include="..\MyBibleApp.Desktop\TwoHandsLifted.snk">
+        <Link>TwoHandsLifted.snk</Link>
+      </None>
     </ItemGroup>
 </Project>

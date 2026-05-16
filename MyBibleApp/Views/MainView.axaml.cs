@@ -29,7 +29,7 @@ public partial class MainView : UserControl
     private readonly SelectableTextBlock _footnoteTextBlock;
     private ListBox? _paragraphList;
     private ToggleButton? _annotationToggle;
-    private ToggleSwitch? _darkModeToggle;
+    private StackPanel? _themeSwatchPanel;
     private ToggleButton? _splitViewToggle;
     private Button? _headerLookupButton;
     private bool _suppressSplitEvent;
@@ -132,7 +132,7 @@ public partial class MainView : UserControl
     {
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
         _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
-        _darkModeToggle   = this.FindControl<ToggleSwitch>("DarkModeToggle");
+        _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
@@ -179,9 +179,8 @@ public partial class MainView : UserControl
         // Set initial active colour swatch (amber).
         SetActiveColorSwatch(_colorAmber);
 
-        // Initialise the dark-mode toggle to reflect the current theme.
-        if (_darkModeToggle != null)
-            _darkModeToggle.IsChecked = Application.Current?.ActualThemeVariant == ThemeVariant.Dark;
+        // Build theme swatch buttons.
+        BuildThemeSwatches();
 
         if (DataContext is MyBibleApp.ViewModels.ScriptureViewModel vm)
         {
@@ -1211,11 +1210,77 @@ public partial class MainView : UserControl
         finally { _suppressReaderProgressSync = false; }
     }
 
-    private void OnDarkModeToggleChanged(object? sender, RoutedEventArgs e)
+    // ── Theme swatches ──────────────────────────────────────────────────────
+
+    private void BuildThemeSwatches()
     {
-        if (sender is not ToggleSwitch toggle || Application.Current == null) return;
-        Application.Current.RequestedThemeVariant =
-            toggle.IsChecked == true ? ThemeVariant.Dark : ThemeVariant.Light;
+        if (_themeSwatchPanel == null) return;
+        _themeSwatchPanel.Children.Clear();
+
+        var currentId = (DataContext as ScriptureViewModel)?.AppVM.SelectedThemeId
+                        ?? Models.AppTheme.LightWhite.Id;
+
+        foreach (var theme in Models.AppTheme.All)
+        {
+            var btn = new Button
+            {
+                Width = 32,
+                Height = 32,
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(0),
+                Tag = theme.Id,
+                Background = new SolidColorBrush(theme.SwatchColor),
+                BorderThickness = new Thickness(theme.SwatchColor == Colors.White ? 1 : 2),
+                BorderBrush = theme.Id == currentId
+                    ? new SolidColorBrush(Color.Parse("#0078D7"))
+                    : new SolidColorBrush(Color.Parse(
+                        theme.SwatchColor == Colors.White ? "#CCCCCC" : "#00000000")),
+            };
+            Avalonia.Controls.ToolTip.SetTip(btn, theme.Label);
+
+            btn.Click += OnThemeSwatchClick;
+            _themeSwatchPanel.Children.Add(btn);
+        }
+    }
+
+    private void OnThemeSwatchClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string themeId) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        vm.AppVM.SelectedThemeId = themeId;
+        var theme = Models.AppTheme.GetById(themeId);
+        ApplyTheme(theme);
+
+        // Update swatch borders to highlight the active one.
+        if (_themeSwatchPanel == null) return;
+        foreach (var child in _themeSwatchPanel.Children)
+        {
+            if (child is not Button b) continue;
+            var isActive = (b.Tag as string) == themeId;
+            var t = Models.AppTheme.GetById(b.Tag as string);
+            b.BorderBrush = new SolidColorBrush(isActive
+                ? Color.Parse("#0078D7")
+                : Color.Parse(t.SwatchColor == Colors.White ? "#CCCCCC" : "#00000000"));
+        }
+    }
+
+    /// <summary>Apply the given theme: set variant + resource overrides.</summary>
+    public void ApplyTheme(Models.AppTheme theme)
+    {
+        if (Application.Current == null) return;
+        Application.Current.RequestedThemeVariant = theme.Variant;
+
+        // Apply or clear background/foreground overrides on the application resources.
+        if (theme.BackgroundOverride is { } bg)
+            Application.Current.Resources["ThemeBackgroundBrush"] = new SolidColorBrush(bg);
+        else
+            Application.Current.Resources.Remove("ThemeBackgroundBrush");
+
+        if (theme.ForegroundOverride is { } fg)
+            Application.Current.Resources["ThemeForegroundBrush"] = new SolidColorBrush(fg);
+        else
+            Application.Current.Resources.Remove("ThemeForegroundBrush");
     }
 
     private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)

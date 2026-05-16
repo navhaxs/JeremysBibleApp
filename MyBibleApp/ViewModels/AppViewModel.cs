@@ -15,6 +15,7 @@ public class AppViewModel : ViewModelBase, IDisposable
 {
     private const string LocalTabStateKey = "LocalTabState";
     private const string DebugModeKey = "IsDebugMode";
+    private const string ThemeKey = "SelectedThemeId";
     private const int DebugOverlayMaxLines = 12;
 
     private readonly ISyncCoordinator? _syncCoordinator;
@@ -95,6 +96,47 @@ public class AppViewModel : ViewModelBase, IDisposable
             if (string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
                 await Dispatcher.UIThread.InvokeAsync(() => _isDebugMode = true);
             this.RaisePropertyChanged(nameof(IsDebugMode));
+        }
+        catch { /* best-effort */ }
+    }
+
+    // ── Theme ────────────────────────────────────────────────────────────────
+
+    private string _selectedThemeId = Models.AppTheme.LightWhite.Id;
+
+    public string SelectedThemeId
+    {
+        get => _selectedThemeId;
+        set
+        {
+            if (_selectedThemeId == value) return;
+            this.RaiseAndSetIfChanged(ref _selectedThemeId, value);
+            _ = PersistThemeAsync(value);
+        }
+    }
+
+    private async Task PersistThemeAsync(string themeId)
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            await _localStorageProvider.SaveAsync(ThemeKey, themeId).ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
+    }
+
+    public async Task LoadThemeFromStorageAsync()
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            var stored = await _localStorageProvider.GetAsync(ThemeKey).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(stored))
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    _selectedThemeId = stored;
+                    this.RaisePropertyChanged(nameof(SelectedThemeId));
+                });
         }
         catch { /* best-effort */ }
     }

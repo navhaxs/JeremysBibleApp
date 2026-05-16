@@ -442,6 +442,11 @@ public partial class AppShellView : UserControl
         // Load persisted debug mode state early so the overlay is visible during restore.
         await _appVM.LoadDebugModeFromStorageAsync();
 
+        // Load persisted theme and apply it.
+        await _appVM.LoadThemeFromStorageAsync();
+        var theme = Models.AppTheme.GetById(_appVM.SelectedThemeId);
+        _primaryView?.ApplyTheme(theme);
+
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
         _isRestoringTabs = true;

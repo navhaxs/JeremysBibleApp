@@ -79,22 +79,14 @@ public partial class BibleReadingView : UserControl
         var goToButton = new Button
         {
             Content = $"Go to {bookName} {cell.Number}",
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(12, 8),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0)
+            Classes = { "flyout-item" }
         };
 
         var markReadLabel = cell.IsRead ? "Mark as unread" : "Mark as read";
         var markReadButton = new Button
         {
             Content = markReadLabel,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            Padding = new Thickness(12, 8),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0)
+            Classes = { "flyout-item" }
         };
 
         var panel = new StackPanel { MinWidth = 160 };
