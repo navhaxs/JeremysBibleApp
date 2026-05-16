@@ -52,11 +52,12 @@ public partial class MainView : UserControl
     private bool _waitingForLayoutToAttachScrollViewer;
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
     private ScriptureViewModel? _subscribedVm;
-    // Sustained-scroll chapter marker reveal
-    private DateTime _scrollStartTime;
-    private bool _isScrolling;
+    // Velocity-based chapter marker reveal
+    private double _lastScrollOffset;
+    private DateTime _lastScrollTime;
     private bool _chapterMarkersShownByScroll;
     private CancellationTokenSource? _scrollStopCts;
+    private const double ScrollVelocityThreshold = 800; // pixels per second
     // Saved scroll recognizers swapped out during annotation mode
     private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
@@ -262,20 +263,27 @@ public partial class MainView : UserControl
         // Don't interfere while the user is dragging the scrollbar thumb.
         if (_isDraggingProgressBar) return;
 
-        // Track sustained scrolling to reveal chapter markers.
+        // Track scroll velocity to reveal chapter markers only during fast scrolling.
         var now = DateTime.UtcNow;
-        if (!_isScrolling)
+        var elapsed = (now - _lastScrollTime).TotalSeconds;
+        var currentOffset = _paragraphScrollViewer.Offset.Y;
+
+        if (elapsed > 0 && elapsed < 1)
         {
-            _isScrolling = true;
-            _scrollStartTime = now;
+            var velocity = Math.Abs(currentOffset - _lastScrollOffset) / elapsed;
+
+            if (velocity >= ScrollVelocityThreshold)
+            {
+                if (!_chapterMarkersShownByScroll)
+                {
+                    _chapterMarkersShownByScroll = true;
+                    BuildChapterMarkers();
+                }
+            }
         }
 
-        // Show markers after 2 seconds of continuous scrolling.
-        if (!_chapterMarkersShownByScroll && (now - _scrollStartTime).TotalSeconds >= 1)
-        {
-            _chapterMarkersShownByScroll = true;
-            BuildChapterMarkers();
-        }
+        _lastScrollOffset = currentOffset;
+        _lastScrollTime = now;
 
         // Reset the "scroll stopped" timer — hide markers after scrolling stops.
         _scrollStopCts?.Cancel();
@@ -286,7 +294,6 @@ public partial class MainView : UserControl
             if (t.IsCanceled) return;
             Dispatcher.UIThread.Post(() =>
             {
-                _isScrolling = false;
                 if (_chapterMarkersShownByScroll)
                 {
                     _chapterMarkersShownByScroll = false;
