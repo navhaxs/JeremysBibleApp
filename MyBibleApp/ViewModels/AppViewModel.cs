@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
@@ -32,6 +33,7 @@ public class AppViewModel : ViewModelBase, IDisposable
     private string _syncDebugLastUpdated = "Never";
     private IReadOnlyList<string> _syncDebugLogs = [];
     private IReadOnlyList<string> _debugLogOverlayLines = [];
+    private readonly ObservableCollection<string> _debugLogOverlayItems = [];
 
     public AppViewModel()
     {
@@ -149,6 +151,8 @@ public class AppViewModel : ViewModelBase, IDisposable
         get => _syncDebugLogs;
         private set => this.RaiseAndSetIfChanged(ref _syncDebugLogs, value);
     }
+
+    public ObservableCollection<string> DebugLogOverlayItems => _debugLogOverlayItems;
 
     public IReadOnlyList<string> DebugLogOverlayLines
     {
@@ -345,8 +349,6 @@ public class AppViewModel : ViewModelBase, IDisposable
 
             var state = new LocalTabStateData { Tabs = openTabs.ToList(), ActiveTabIndex = activeTabIndex };
             await _localStorageProvider.SaveObjectAsync(LocalTabStateKey, state).ConfigureAwait(false);
-
-            AppendSyncDebugLog($"Stored {openTabs.Count} tab reference(s) locally.");
         }
         catch (Exception ex)
         {
@@ -497,7 +499,8 @@ public class AppViewModel : ViewModelBase, IDisposable
     public void AppendSyncDebugLog(string message)
     {
         var logs = SyncDebugLogs.ToList();
-        logs.Add($"{DateTime.Now:HH:mm:ss} | {message}");
+        var line = $"{DateTime.Now:HH:mm:ss} | {message}";
+        logs.Add(line);
 
         const int maxLogEntries = 200;
         if (logs.Count > maxLogEntries)
@@ -507,6 +510,20 @@ public class AppViewModel : ViewModelBase, IDisposable
         DebugLogOverlayLines = logs.Count <= DebugOverlayMaxLines
             ? logs
             : logs.Skip(logs.Count - DebugOverlayMaxLines).ToList();
+
+        // Add to observable overlay and schedule auto-removal after 6s (animation is 5s)
+        Dispatcher.UIThread.Post(() =>
+        {
+            _debugLogOverlayItems.Add(line);
+            while (_debugLogOverlayItems.Count > DebugOverlayMaxLines)
+                _debugLogOverlayItems.RemoveAt(0);
+
+            var capturedLine = line;
+            DispatcherTimer.RunOnce(() =>
+            {
+                _debugLogOverlayItems.Remove(capturedLine);
+            }, TimeSpan.FromSeconds(6));
+        });
     }
 
     // ── Event Handlers ───────────────────────────────────────────────────────

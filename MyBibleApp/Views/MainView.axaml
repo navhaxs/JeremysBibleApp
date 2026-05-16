@@ -160,7 +160,7 @@
       <Border Grid.Row="0"
               Padding="12,12,12,10"
               BorderThickness="0,0,0,1"
-              BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}">
+              BorderBrush="{DynamicResource ThemeBorderMidBrush}">
         <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
 
         <!-- Main app menu button -->
@@ -232,8 +232,10 @@
 
         <Button Grid.Column="1"
                 x:Name="HeaderLookupButton"
+                MinWidth="230"
+                HorizontalContentAlignment="Left"
                 HorizontalAlignment="Left">
-          <TextBlock Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" TextAlignment="Left" />
           <Button.Flyout>
             <Flyout Placement="BottomEdgeAlignedLeft">
               <Border Padding="10" MaxWidth="500" MaxHeight="520">

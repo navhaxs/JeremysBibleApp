@@ -383,6 +383,36 @@ public partial class MainView : UserControl
         return offset;
     }
 
+    /// <summary>Suppresses scroll-driven side effects (header sync, chapter markers, reading progress).
+    /// Call before changing DataContext during tab switches to prevent stale scroll events.</summary>
+    public void SuppressScrollEvents()
+    {
+        _suppressScrollEventsForTabSwitch = true;
+        _suppressReaderProgressSync = true;
+    }
+
+    /// <summary>Navigates to a verse and then clears scroll suppression flags.
+    /// Used during tab switches when there is no saved scroll offset.</summary>
+    public async Task NavigateToVerseAndUnsuppressAsync(int chapter, int verse)
+    {
+        try
+        {
+            await ScrollToReferenceAsync(chapter, verse);
+        }
+        finally
+        {
+            // Clear suppression after one more layout pass so the offset is stable.
+            Dispatcher.UIThread.Post(() =>
+            {
+                _suppressScrollEventsForTabSwitch = false;
+                _suppressReaderProgressSync = false;
+                RefreshReaderProgress();
+                if (DataContext is ScriptureViewModel vm)
+                    vm.AppVM.AppendSyncDebugLog("[Scroll] Suppress flags cleared");
+            }, DispatcherPriority.Loaded);
+        }
+    }
+
     /// <summary>Restores a previously captured scroll offset when switching back to a tab.
     /// Scroll-driven events (header sync, chapter markers) are suppressed until restore completes.</summary>
     public void RestoreScrollOffset(double? offsetY)
@@ -456,6 +486,7 @@ public partial class MainView : UserControl
         {
             _suppressScrollEventsForTabSwitch = false;
             _suppressReaderProgressSync = false;
+            RefreshReaderProgress();
             if (DataContext is ScriptureViewModel vm)
                 vm.AppVM.AppendSyncDebugLog("[Scroll] Suppress flags cleared");
         }, DispatcherPriority.Loaded);
@@ -675,7 +706,8 @@ public partial class MainView : UserControl
         // Position the custom thumb using paragraph-index fraction (works with
         // virtualization), but detect true top/bottom via ScrollViewer offset
         // so the thumb reaches both extremes.
-        if (_readerProgressTrack != null && _readerProgressThumb != null && !_isDraggingProgressBar)
+        if (_readerProgressTrack != null && _readerProgressThumb != null && !_isDraggingProgressBar
+            && !_suppressScrollEventsForTabSwitch)
         {
             double fraction;
             var scrollableHeight = scrollViewer.Extent.Height - scrollViewer.Viewport.Height;
@@ -837,7 +869,7 @@ public partial class MainView : UserControl
             var label = new Border
             {
                 CornerRadius = new CornerRadius(4),
-                Background   = new SolidColorBrush(Color.FromArgb(0xCC, 0x40, 0x40, 0x40)),
+                Background   = new SolidColorBrush(Color.FromArgb(0xCC, 0xA0, 0xA0, 0xA0)),
                 Padding      = new Thickness(5, 2),
                 Child        = new TextBlock
                 {

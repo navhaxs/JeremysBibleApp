@@ -40,6 +40,7 @@ public partial class AppShellView : UserControl
     private readonly Dictionary<ScriptureViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
     private readonly Dictionary<ScriptureViewModel, InkOverlayCanvas.InkState?> _tabInkStates = [];
     private readonly Dictionary<ScriptureViewModel, double?> _tabScrollOffsets = [];
+    private readonly Dictionary<ScriptureViewModel, (int Chapter, int Verse)> _tabVersePositions = [];
     private CancellationTokenSource? _persistTabsCts;
     private string _lastPersistedTabStateJson = string.Empty;
     private int _lastPersistedActiveIndex = -1;
@@ -80,6 +81,7 @@ public partial class AppShellView : UserControl
         {
             _bibleReadingView.DataContext    = new BibleReadingViewModel();
             _bibleReadingView.CloseRequested += OnBibleReadingCloseRequested;
+            _bibleReadingView.ChapterNavigationRequested += OnBibleReadingChapterNavigationRequested;
         }
 
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress += OnSyncProgress;
@@ -140,25 +142,40 @@ public partial class AppShellView : UserControl
         if (index < 0 || index >= _tabs.Count || _primaryView == null)
             return;
 
-        // Save ink and scroll state for the tab we're leaving.
+        // Save ink and verse position for the tab we're leaving.
         if (_activeTabIndex >= 0 && _activeTabIndex < _tabs.Count)
         {
             var leavingVm = _tabs[_activeTabIndex];
             _tabInkStates[leavingVm] = _primaryView.CaptureInkState();
-            var capturedOffset = _primaryView.CaptureScrollOffset();
-            _tabScrollOffsets[leavingVm] = capturedOffset;
-            _appVM.AppendSyncDebugLog($"[Tab] Leaving tab {_activeTabIndex} \"{leavingVm.Header}\" — saved scroll Y={capturedOffset?.ToString("F1") ?? "null"}");
+
+            // Save the current chapter:verse (determined by header sync from visible paragraphs)
+            // rather than raw scroll Y, because virtualizing panels map the same Y to different
+            // items after an ItemsSource change.
+            _tabVersePositions[leavingVm] = (
+                Math.Max(1, leavingVm.SelectedLookupChapter),
+                Math.Max(1, leavingVm.SelectedLookupVerse));
+            _appVM.AppendSyncDebugLog($"[Tab] Leaving tab {_activeTabIndex} \"{leavingVm.Header}\" — saved position {leavingVm.SelectedLookupChapter}:{leavingVm.SelectedLookupVerse}");
         }
 
         _activeTabIndex = index;
         var vm = _tabs[index];
+
+        // Capture the target verse BEFORE setting DataContext — the MainView's scroll-driven
+        // header sync will overwrite the VM's chapter/verse with the outgoing tab's values.
+        var targetPos = _tabVersePositions.TryGetValue(vm, out var saved)
+            ? saved
+            : (Chapter: Math.Max(1, vm.SelectedLookupChapter), Verse: Math.Max(1, vm.SelectedLookupVerse));
+
+        // Suppress scroll-driven header sync BEFORE changing DataContext — otherwise
+        // the outgoing tab's scroll position gets written into the incoming VM.
+        _primaryView.SuppressScrollEvents();
+
         _primaryView.DataContext = vm;
 
-        // Restore ink and scroll state for the tab we're entering.
+        // Restore ink state and navigate to the saved verse position.
         _primaryView.RestoreInkState(_tabInkStates.TryGetValue(vm, out var inkState) ? inkState : null);
-        var restoreOffset = _tabScrollOffsets.TryGetValue(vm, out var scrollOffset) ? scrollOffset : null;
-        _appVM.AppendSyncDebugLog($"[Tab] Entering tab {index} \"{vm.Header}\" — restoring scroll Y={restoreOffset?.ToString("F1") ?? "null"}");
-        _primaryView.RestoreScrollOffset(restoreOffset);
+        _appVM.AppendSyncDebugLog($"[Tab] Entering tab {index} \"{vm.Header}\" — navigating to {targetPos.Chapter}:{targetPos.Verse}");
+        _ = _primaryView.NavigateToVerseAndUnsuppressAsync(targetPos.Chapter, targetPos.Verse);
 
         RefreshTabButtons();
         if (!_isRestoringTabs)
@@ -195,7 +212,9 @@ public partial class AppShellView : UserControl
             };
 
             button.Flyout = CreateTabFlyout(i);
-            button.Holding += OnTabButtonHolding;
+            button.SetValue(InputElement.IsHoldingEnabledProperty, true);
+            button.AddHandler(InputElement.HoldingEvent, OnTabButtonHolding);
+            button.AddHandler(PointerPressedEvent, OnTabButtonRightClick);
             ToolTip.SetTip(button, vm.Header);
 
             if (i == _activeTabIndex)
@@ -219,6 +238,35 @@ public partial class AppShellView : UserControl
     {
         if (sender is not Button { Tag: int index }) return;
         SelectTab(index);
+    }
+
+    private void OnTabButtonHolding(object? sender, HoldingRoutedEventArgs e)
+    {
+        if (e.HoldingState != HoldingState.Started) return;
+        if (sender is not Button button) return;
+
+        // Show the flyout
+        button.Flyout?.ShowAt(button);
+        e.Handled = true;
+
+        // Suppress the next Click so lifting the finger doesn't dismiss the flyout
+        // by navigating/re-rendering. We attach a one-shot handler.
+        void SuppressClick(object? s, RoutedEventArgs args)
+        {
+            args.Handled = true;
+            button.Click -= SuppressClick;
+        }
+        button.Click += SuppressClick;
+    }
+
+    private void OnTabButtonRightClick(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        if (e.GetCurrentPoint(button).Properties.IsRightButtonPressed)
+        {
+            button.Flyout?.ShowAt(button);
+            e.Handled = true;
+        }
     }
 
     private void OnAddTabButtonClick(object? sender, RoutedEventArgs e)
@@ -284,6 +332,12 @@ public partial class AppShellView : UserControl
 
     private Flyout CreateTabFlyout(int tabIndex)
     {
+        var duplicateButton = new Button
+        {
+            Content = "Duplicate tab",
+            MinWidth = 120
+        };
+
         var closeButton = new Button
         {
             Content = "Close tab",
@@ -291,10 +345,22 @@ public partial class AppShellView : UserControl
             IsEnabled = _tabs.Count > 1
         };
 
+        var panel = new StackPanel
+        {
+            Spacing = 4,
+            Children = { duplicateButton, closeButton }
+        };
+
         var flyout = new Flyout
         {
             Placement = PlacementMode.Left,
-            Content = closeButton
+            Content = panel
+        };
+
+        duplicateButton.Click += (_, _) =>
+        {
+            DuplicateTab(tabIndex);
+            flyout.Hide();
         };
 
         closeButton.Click += (_, _) =>
@@ -306,15 +372,25 @@ public partial class AppShellView : UserControl
         return flyout;
     }
 
-    private void OnTabButtonHolding(object? sender, HoldingRoutedEventArgs e)
+    private void DuplicateTab(int index)
     {
-        if (sender is not Button button)
+        if (index < 0 || index >= _tabs.Count)
             return;
 
-        if (button.Flyout is Flyout flyout)
-            flyout.ShowAt(button);
+        var source = _tabs[index];
+        var newVm = new ScriptureViewModel(_appVM);
 
-        e.Handled = true;
+        var state = new OpenTabReferenceState
+        {
+            TabIndex = _tabs.Count,
+            Header = source.Header,
+            BookCode = source.SelectedLookupBook?.Code ?? source.BookCode,
+            Chapter = Math.Max(1, source.SelectedLookupChapter),
+            Verse = Math.Max(1, source.SelectedLookupVerse)
+        };
+
+        ApplyPersistedTabReference(newVm, state);
+        AddTabInternal(newVm, makeActive: true);
     }
 
     private void CloseTab(int index)
@@ -331,6 +407,7 @@ public partial class AppShellView : UserControl
 
         _tabInkStates.Remove(vm);
         _tabScrollOffsets.Remove(vm);
+        _tabVersePositions.Remove(vm);
         _tabs.RemoveAt(index);
         vm.Dispose();
 
@@ -345,11 +422,14 @@ public partial class AppShellView : UserControl
         if (_primaryView != null && _activeTabIndex >= 0 && _activeTabIndex < _tabs.Count)
         {
             var activeVm = _tabs[_activeTabIndex];
+            _primaryView.SuppressScrollEvents();
             _primaryView.DataContext = activeVm;
             _primaryView.RestoreInkState(_tabInkStates.TryGetValue(activeVm, out var inkState) ? inkState : null);
-            var restoreOffset = _tabScrollOffsets.TryGetValue(activeVm, out var scrollOffset) ? scrollOffset : null;
-            _appVM.AppendSyncDebugLog($"[Tab] After close, activating tab {_activeTabIndex} \"{activeVm.Header}\" — restoring scroll Y={restoreOffset?.ToString("F1") ?? "null"}");
-            _primaryView.RestoreScrollOffset(restoreOffset);
+            var pos = _tabVersePositions.TryGetValue(activeVm, out var saved)
+                ? saved
+                : (Chapter: Math.Max(1, activeVm.SelectedLookupChapter), Verse: Math.Max(1, activeVm.SelectedLookupVerse));
+            _appVM.AppendSyncDebugLog($"[Tab] After close, activating tab {_activeTabIndex} \"{activeVm.Header}\" — navigating to {pos.Chapter}:{pos.Verse}");
+            _ = _primaryView.NavigateToVerseAndUnsuppressAsync(pos.Chapter, pos.Verse);
         }
 
         RefreshTabButtons();
@@ -570,6 +650,16 @@ public partial class AppShellView : UserControl
     private void OnBibleReadingRequested(object? sender, EventArgs e)
     {
         if (_bibleReadingView == null) return;
+
+        // Highlight the chapter currently viewed in the active tab
+        if (_bibleReadingView.DataContext is BibleReadingViewModel brVm
+            && _activeTabIndex >= 0 && _activeTabIndex < _tabs.Count)
+        {
+            var activeTab = _tabs[_activeTabIndex];
+            var bookCode = activeTab.SelectedLookupBook?.Code ?? activeTab.BookCode;
+            brVm.SetCurrentChapter(bookCode, activeTab.SelectedLookupChapter);
+        }
+
         _bibleReadingView.IsVisible = true;
     }
 
@@ -577,6 +667,20 @@ public partial class AppShellView : UserControl
     {
         if (_bibleReadingView == null) return;
         _bibleReadingView.IsVisible = false;
+    }
+
+    private async void OnBibleReadingChapterNavigationRequested(object? sender, ChapterNavigationEventArgs e)
+    {
+        // Close the Bible Reading overlay
+        if (_bibleReadingView != null)
+            _bibleReadingView.IsVisible = false;
+
+        // Navigate the active tab to the requested book and chapter
+        if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _primaryView == null) return;
+        var vm = _tabs[_activeTabIndex];
+        var result = await vm.TryLoadBookFromApiAsync(e.BookCode, e.Chapter, 1);
+        if (result.Success)
+            await _primaryView.NavigateToVerseAsync(e.Chapter, 1);
     }
 
     // ── Split management ──────────────────────────────────────────────────────

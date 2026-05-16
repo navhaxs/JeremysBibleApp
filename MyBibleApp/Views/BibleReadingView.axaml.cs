@@ -2,23 +2,36 @@ using System;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
+using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using MyBibleApp.Controls;
 using MyBibleApp.ViewModels;
 
 namespace MyBibleApp.Views;
+
+public class ChapterNavigationEventArgs : EventArgs
+{
+    public string BookCode { get; }
+    public int Chapter { get; }
+
+    public ChapterNavigationEventArgs(string bookCode, int chapter)
+    {
+        BookCode = bookCode;
+        Chapter = chapter;
+    }
+}
 
 public partial class BibleReadingView : UserControl
 {
     // Raised when the user taps the close button.
     public event EventHandler? CloseRequested;
 
-    // ── Free-pan state ────────────────────────────────────────────────────────
-    private ScrollViewer? _panScrollViewer;
-    private TextBlock?    _progressSummary;
-    private bool          _isPanning;
-    private Point         _panStartPointer;
-    private Vector        _panStartOffset;
+    // Raised when the user requests navigation to a specific chapter.
+    public event EventHandler<ChapterNavigationEventArgs>? ChapterNavigationRequested;
+
+    private TextBlock? _progressSummary;
 
     public BibleReadingView()
     {
@@ -28,9 +41,11 @@ public partial class BibleReadingView : UserControl
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
-        _panScrollViewer = this.FindControl<ScrollViewer>("PanScrollViewer");
         _progressSummary = this.FindControl<TextBlock>("ProgressSummary");
         UpdateProgressSummary();
+
+        // Listen for the bubbling routed event from any ChapterGridControl
+        AddHandler(ChapterGridControl.ChapterCellClickedEvent, OnChapterCellClicked);
     }
 
     // ── Progress label ────────────────────────────────────────────────────────
@@ -45,65 +60,76 @@ public partial class BibleReadingView : UserControl
         _progressSummary.Text = $"{readChaps} of {totalChaps} chapters read";
     }
 
-    // ── Chapter cell toggle ───────────────────────────────────────────────────
+    // ── Chapter cell click → show flyout ──────────────────────────────────────
 
-    private void OnChapterCellClick(object? sender, RoutedEventArgs e)
+    private void OnChapterCellClicked(object? sender, ChapterCellClickedEventArgs e)
     {
-        // IsRead is already updated by the TwoWay binding when IsChecked flips.
-        // Just persist the new state and refresh the summary label.
+        var cell = e.Cell;
+        var grid = e.SourceGrid;
+
+        // Find the book name for display
+        var bookName = cell.BookCode;
         if (DataContext is BibleReadingViewModel vm)
-            _ = vm.SaveAsync();
-        UpdateProgressSummary();
+        {
+            var book = vm.OtBooks.Concat(vm.NtBooks)
+                .FirstOrDefault(b => b.Code == cell.BookCode);
+            if (book != null) bookName = book.Name;
+        }
+
+        var goToButton = new Button
+        {
+            Content = $"Go to {bookName} {cell.Number}",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 8),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0)
+        };
+
+        var markReadLabel = cell.IsRead ? "Mark as unread" : "Mark as read";
+        var markReadButton = new Button
+        {
+            Content = markReadLabel,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(12, 8),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0)
+        };
+
+        var panel = new StackPanel { MinWidth = 160 };
+        panel.Children.Add(goToButton);
+        panel.Children.Add(markReadButton);
+
+        var flyout = new Flyout
+        {
+            Placement = PlacementMode.BottomEdgeAlignedLeft,
+            HorizontalOffset = e.CellRect.X,
+            VerticalOffset = e.CellRect.Bottom - grid.Bounds.Height,
+            Content = panel
+        };
+
+        goToButton.Click += (_, _) =>
+        {
+            flyout.Hide();
+            ChapterNavigationRequested?.Invoke(this,
+                new ChapterNavigationEventArgs(cell.BookCode, cell.Number));
+        };
+
+        markReadButton.Click += (_, _) =>
+        {
+            cell.IsRead = !cell.IsRead;
+            flyout.Hide();
+            if (DataContext is BibleReadingViewModel vmInner)
+                _ = vmInner.SaveAsync();
+            UpdateProgressSummary();
+        };
+
+        flyout.ShowAt(grid);
     }
 
     // ── Close ─────────────────────────────────────────────────────────────────
 
     private void OnCloseButtonClick(object? sender, RoutedEventArgs e) =>
         CloseRequested?.Invoke(this, EventArgs.Empty);
-
-    // ── Free-pan (drag-to-scroll) ─────────────────────────────────────────────
-
-    private void OnPanPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        // Only pan with left mouse button or a single touch; ignore when a
-        // chapter cell already handled the event (it calls e.Handled = true via
-        // the Click event which fires before PointerPressed bubbles here).
-        if (e.Handled) return;
-        var props = e.GetCurrentPoint(this).Properties;
-        if (!props.IsLeftButtonPressed) return;
-
-        _panScrollViewer = this.FindControl<ScrollViewer>("PanScrollViewer");
-        if (_panScrollViewer == null) return;
-
-        _isPanning       = true;
-        _panStartPointer = e.GetPosition(this);
-        _panStartOffset  = _panScrollViewer.Offset;
-        e.Pointer.Capture(_panScrollViewer);
-    }
-
-    private void OnPanPointerMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_isPanning || _panScrollViewer == null) return;
-
-        var current = e.GetPosition(this);
-        var delta   = _panStartPointer - current;
-        var newX    = Math.Clamp(_panStartOffset.X + delta.X, 0,
-            Math.Max(0, _panScrollViewer.Extent.Width  - _panScrollViewer.Viewport.Width));
-        var newY    = Math.Clamp(_panStartOffset.Y + delta.Y, 0,
-            Math.Max(0, _panScrollViewer.Extent.Height - _panScrollViewer.Viewport.Height));
-
-        _panScrollViewer.Offset = new Vector(newX, newY);
-    }
-
-    private void OnPanPointerReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (!_isPanning) return;
-        _isPanning = false;
-        e.Pointer.Capture(null);
-    }
-
-    private void OnPanPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
-    {
-        _isPanning = false;
-    }
 }

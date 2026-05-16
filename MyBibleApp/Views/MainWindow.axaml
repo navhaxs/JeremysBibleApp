@@ -17,8 +17,8 @@
                Background="#88000000">
             <Border HorizontalAlignment="Center"
                     VerticalAlignment="Center"
-                    Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
-                    BorderBrush="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                    Background="{DynamicResource ThemeBackgroundBrush}"
+                    BorderBrush="{DynamicResource ThemeAccentBrush}"
                     BorderThickness="1"
                     CornerRadius="8"
                     Padding="32,24"

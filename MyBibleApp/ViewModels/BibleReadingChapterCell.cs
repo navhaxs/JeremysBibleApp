@@ -5,11 +5,14 @@ namespace MyBibleApp.ViewModels;
 public class BibleReadingChapterCell : ViewModelBase
 {
     private bool _isRead;
+    private bool _isCurrentChapter;
 
+    public string BookCode { get; }
     public int Number { get; }
 
-    public BibleReadingChapterCell(int number, bool isRead = false)
+    public BibleReadingChapterCell(string bookCode, int number, bool isRead = false)
     {
+        BookCode = bookCode;
         Number = number;
         _isRead = isRead;
     }
@@ -18,5 +21,11 @@ public class BibleReadingChapterCell : ViewModelBase
     {
         get => _isRead;
         set => this.RaiseAndSetIfChanged(ref _isRead, value);
+    }
+
+    public bool IsCurrentChapter
+    {
+        get => _isCurrentChapter;
+        set => this.RaiseAndSetIfChanged(ref _isCurrentChapter, value);
     }
 }

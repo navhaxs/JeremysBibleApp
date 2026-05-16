@@ -14,7 +14,7 @@ public class BibleReadingBookEntry
         Code = code;
         Name = name;
         Chapters = Enumerable.Range(1, chapterCount)
-            .Select(i => new BibleReadingChapterCell(i))
+            .Select(i => new BibleReadingChapterCell(code, i))
             .ToList();
     }
 }

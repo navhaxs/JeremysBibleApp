@@ -22,6 +22,18 @@ public class BibleReadingViewModel : ViewModelBase
 
     public IReadOnlyList<BibleReadingBookEntry> OtBooks { get; }
     public IReadOnlyList<BibleReadingBookEntry> NtBooks { get; }
+    public IReadOnlyList<BibleReadingBookEntry> AllBooks => _allBooks;
+
+    /// <summary>Highlights the specified book/chapter as the currently viewed chapter.</summary>
+    public void SetCurrentChapter(string? bookCode, int chapter)
+    {
+        foreach (var book in _allBooks)
+        {
+            var isMatchingBook = string.Equals(book.Code, bookCode, StringComparison.OrdinalIgnoreCase);
+            foreach (var cell in book.Chapters)
+                cell.IsCurrentChapter = isMatchingBook && cell.Number == chapter;
+        }
+    }
 
     public BibleReadingViewModel()
     {

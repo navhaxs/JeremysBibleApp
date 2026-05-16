@@ -1,12 +1,16 @@
 using System;
+using System.Threading;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using MyBibleApp.ViewModels;
 
 namespace MyBibleApp.Views;
 
 public partial class DebugLogsView : UserControl
 {
+    private CancellationTokenSource? _scrollDebounceCts;
+
     public DebugLogsView()
     {
         InitializeComponent();
@@ -21,8 +25,23 @@ public partial class DebugLogsView : UserControl
         logsListBox.PropertyChanged += (_, args) =>
         {
             if (args.Property.Name == nameof(ListBox.ItemsSource))
-                ScrollToBottom();
+                RequestScrollToBottom();
         };
+    }
+
+    private void RequestScrollToBottom()
+    {
+        _scrollDebounceCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _scrollDebounceCts = cts;
+
+        DispatcherTimer.RunOnce(() =>
+        {
+            if (cts.IsCancellationRequested)
+                return;
+
+            ScrollToBottom();
+        }, TimeSpan.FromMilliseconds(100));
     }
 
     private void ScrollToBottom()
