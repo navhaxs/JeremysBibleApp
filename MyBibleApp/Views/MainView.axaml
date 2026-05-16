@@ -369,9 +369,8 @@
                         Height="32" />
                 <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
                       Margin="24,0,64,14"
-                      ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto">
+                      ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
                 <TextBlock Grid.Column="0"
-                           Grid.RowSpan="2"
                            IsVisible="{Binding HasChapterDropCap}"
                            Text="{Binding ChapterDropCapText}"
                            FontSize="44"
@@ -404,14 +403,15 @@
                                                      FontStyle="Italic"
                                                      LineHeight="24" />
 
-                <ItemsControl Grid.Column="1"
-                              Grid.Row="1"
+                <ItemsControl Grid.Column="2"
+                              Grid.Row="0"
                               IsVisible="{Binding HasFootnotes}"
                               ItemsSource="{Binding Footnotes}"
-                              HorizontalAlignment="Right">
+                              VerticalAlignment="Bottom"
+                              Margin="4,0,0,0">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                      <WrapPanel />
+                      <StackPanel Orientation="Horizontal" Spacing="2" />
                     </ItemsPanelTemplate>
                   </ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
