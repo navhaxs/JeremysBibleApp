@@ -332,6 +332,20 @@ public partial class AppShellView : UserControl
 
     private Flyout CreateTabFlyout(int tabIndex)
     {
+        var moveUpButton = new Button
+        {
+            Content = "Move tab up",
+            MinWidth = 120,
+            IsEnabled = tabIndex > 0
+        };
+
+        var moveDownButton = new Button
+        {
+            Content = "Move tab down",
+            MinWidth = 120,
+            IsEnabled = tabIndex < _tabs.Count - 1
+        };
+
         var duplicateButton = new Button
         {
             Content = "Duplicate tab",
@@ -348,13 +362,25 @@ public partial class AppShellView : UserControl
         var panel = new StackPanel
         {
             Spacing = 4,
-            Children = { duplicateButton, closeButton }
+            Children = { moveUpButton, moveDownButton, duplicateButton, closeButton }
         };
 
         var flyout = new Flyout
         {
             Placement = PlacementMode.Left,
             Content = panel
+        };
+
+        moveUpButton.Click += (_, _) =>
+        {
+            MoveTab(tabIndex, tabIndex - 1);
+            flyout.Hide();
+        };
+
+        moveDownButton.Click += (_, _) =>
+        {
+            MoveTab(tabIndex, tabIndex + 1);
+            flyout.Hide();
         };
 
         duplicateButton.Click += (_, _) =>
@@ -391,6 +417,45 @@ public partial class AppShellView : UserControl
 
         ApplyPersistedTabReference(newVm, state);
         AddTabInternal(newVm, makeActive: true);
+    }
+
+    private void MoveTab(int fromIndex, int toIndex)
+    {
+        if (fromIndex == toIndex)
+            return;
+        if (fromIndex < 0 || fromIndex >= _tabs.Count)
+            return;
+        if (toIndex < 0 || toIndex >= _tabs.Count)
+            return;
+
+        // Swap the two tab entries and all associated per-tab state.
+        (_tabs[fromIndex], _tabs[toIndex]) = (_tabs[toIndex], _tabs[fromIndex]);
+
+        // Swap ink states.
+        (_tabInkStates[_tabs[fromIndex]], _tabInkStates[_tabs[toIndex]])
+            = (_tabInkStates[_tabs[toIndex]], _tabInkStates[_tabs[fromIndex]]);
+
+        // Swap scroll offsets.
+        (_tabScrollOffsets[_tabs[fromIndex]], _tabScrollOffsets[_tabs[toIndex]])
+            = (_tabScrollOffsets[_tabs[toIndex]], _tabScrollOffsets[_tabs[fromIndex]]);
+
+        // Swap saved verse positions (only if both keys exist).
+        var fromHasPos = _tabVersePositions.TryGetValue(_tabs[fromIndex], out var fromPos);
+        var toHasPos   = _tabVersePositions.TryGetValue(_tabs[toIndex],   out var toPos);
+        if (fromHasPos) _tabVersePositions[_tabs[toIndex]]   = fromPos;
+        else            _tabVersePositions.Remove(_tabs[toIndex]);
+        if (toHasPos)   _tabVersePositions[_tabs[fromIndex]] = toPos;
+        else            _tabVersePositions.Remove(_tabs[fromIndex]);
+
+        // Keep the active index tracking the same VM.
+        if (_activeTabIndex == fromIndex)
+            _activeTabIndex = toIndex;
+        else if (_activeTabIndex == toIndex)
+            _activeTabIndex = fromIndex;
+
+        RefreshTabButtons();
+        if (!_isRestoringTabs)
+            RequestPersistOpenTabReferences();
     }
 
     private void CloseTab(int index)
