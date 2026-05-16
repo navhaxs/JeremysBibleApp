@@ -44,6 +44,14 @@ public partial class BibleReadingView : UserControl
         _progressSummary = this.FindControl<TextBlock>("ProgressSummary");
         UpdateProgressSummary();
 
+        // Refresh the summary when LastUpdated is set by the async load.
+        if (DataContext is BibleReadingViewModel vm)
+            vm.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(BibleReadingViewModel.LastUpdated))
+                    UpdateProgressSummary();
+            };
+
         // Listen for the bubbling routed event from any ChapterGridControl
         AddHandler(ChapterGridControl.ChapterCellClickedEvent, OnChapterCellClicked);
     }
@@ -57,7 +65,12 @@ public partial class BibleReadingView : UserControl
         var allBooks   = vm.OtBooks.Concat(vm.NtBooks).ToList();
         var totalChaps = allBooks.Sum(b => b.Chapters.Count);
         var readChaps  = allBooks.Sum(b => b.Chapters.Count(c => c.IsRead));
-        _progressSummary.Text = $"{readChaps} of {totalChaps} chapters read";
+
+        var summary = $"{readChaps} of {totalChaps} chapters read";
+        if (vm.LastUpdated.HasValue)
+            summary += $" · Updated {vm.LastUpdated.Value:MMM d, yyyy}";
+
+        _progressSummary.Text = summary;
     }
 
     // ── Chapter cell click → show flyout ──────────────────────────────────────

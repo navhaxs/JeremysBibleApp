@@ -267,6 +267,8 @@
 
         <Button Grid.Column="1"
                 x:Name="HeaderLookupButton"
+                BorderThickness="0"
+                Background="Transparent"
                 MinWidth="230"
                 HorizontalContentAlignment="Left"
                 HorizontalAlignment="Left">

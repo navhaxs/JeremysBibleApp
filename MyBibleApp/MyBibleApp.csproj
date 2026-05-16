@@ -4,8 +4,8 @@
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-        <SignAssembly>true</SignAssembly>
         <AssemblyOriginatorKeyFile>..\MyBibleApp.Desktop\TwoHandsLifted.snk</AssemblyOriginatorKeyFile>
+        <PublicSign>false</PublicSign>
     </PropertyGroup>
 
     <ItemGroup>

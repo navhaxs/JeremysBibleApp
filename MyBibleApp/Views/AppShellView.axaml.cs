@@ -689,16 +689,16 @@ public partial class AppShellView : UserControl
 
     // ── Shutdown ──────────────────────────────────────────────────────────────
 
-    public bool HasAuthenticatedTabs() => _appVM.IsAuthenticated;
+    public Task<bool> HasPendingLocalSyncChangesAsync() => _appVM.HasPendingLocalSyncChangesAsync();
 
     public Task ForcePersistTabsAsync() => PersistOpenTabReferencesAsync();
 
-    public async Task ShutdownAsync()
+    public async Task ShutdownAsync(bool hasPendingLocalSyncChanges)
     {
         // Always persist tab state locally before exit.
         await PersistOpenTabReferencesAsync().ConfigureAwait(false);
 
-        if (_appVM.IsAuthenticated)
+        if (_appVM.IsAuthenticated && hasPendingLocalSyncChanges)
             await _appVM.ForceSyncAsync().ConfigureAwait(false);
     }
 

@@ -33,9 +33,9 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
 
-        var hasAuthenticatedTabs = shell.HasAuthenticatedTabs();
+        var hasPendingLocalSyncChanges = await shell.HasPendingLocalSyncChangesAsync();
         var overlay = this.FindControl<Panel>("SyncOverlay");
-        if (overlay != null && hasAuthenticatedTabs)
+        if (overlay != null && hasPendingLocalSyncChanges)
         {
             overlay.IsVisible = true;
             UpdateSyncOverlay("Saving pending changes to Google Drive...", progress: 0);
@@ -43,7 +43,7 @@ public partial class MainWindow : Window
 
         try
         {
-            await shell.ShutdownAsync();
+            await shell.ShutdownAsync(hasPendingLocalSyncChanges);
         }
         catch
         {

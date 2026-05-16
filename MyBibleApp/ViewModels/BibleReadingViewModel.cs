@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia.Platform;
 using MyBibleApp.Services;
 using MyBibleApp.Services.Sync;
+using ReactiveUI;
 
 namespace MyBibleApp.ViewModels;
 
@@ -23,6 +24,14 @@ public class BibleReadingViewModel : ViewModelBase
     public IReadOnlyList<BibleReadingBookEntry> OtBooks { get; }
     public IReadOnlyList<BibleReadingBookEntry> NtBooks { get; }
     public IReadOnlyList<BibleReadingBookEntry> AllBooks => _allBooks;
+
+    private DateTime? _lastUpdated;
+    /// <summary>The local date/time when reading progress was last saved or loaded from storage.</summary>
+    public DateTime? LastUpdated
+    {
+        get => _lastUpdated;
+        private set => this.RaiseAndSetIfChanged(ref _lastUpdated, value);
+    }
 
     /// <summary>Highlights the specified book/chapter as the currently viewed chapter.</summary>
     public void SetCurrentChapter(string? bookCode, int chapter)
@@ -60,6 +69,7 @@ public class BibleReadingViewModel : ViewModelBase
         var data = BuildReadChaptersDict();
         await SaveReadStateAsync(data).ConfigureAwait(false);
         _ = PushToSyncAsync(data);
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => LastUpdated = DateTime.Now);
     }
 
     /// <summary>Apply a snapshot pulled from Google Drive (last-write-wins is handled by SyncCoordinator).</summary>

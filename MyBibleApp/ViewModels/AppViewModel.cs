@@ -346,6 +346,23 @@ public class AppViewModel : ViewModelBase, IDisposable
         await _syncCoordinator.ForceSyncAsync().ConfigureAwait(false);
     }
 
+    public async Task<bool> HasPendingLocalSyncChangesAsync()
+    {
+        if (!IsAuthenticated || _syncQueueManager == null)
+            return false;
+
+        try
+        {
+            var pendingCount = await _syncQueueManager.GetPendingCountAsync().ConfigureAwait(false);
+            return pendingCount > 0;
+        }
+        catch (Exception ex)
+        {
+            AppendSyncDebugLog($"Failed to determine pending sync queue count: {ex.Message}");
+            return false;
+        }
+    }
+
     public async Task<PullResult> PullFromDriveAsync()
     {
         if (_syncCoordinator == null || !IsAuthenticated)
