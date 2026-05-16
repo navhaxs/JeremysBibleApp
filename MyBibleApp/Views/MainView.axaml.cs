@@ -136,6 +136,14 @@ public partial class MainView : UserControl
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
+
+        // Provide paragraph-position callbacks so ink strokes can anchor to
+        // paragraphs and survive virtualizing-panel re-layout.
+        if (_inkOverlay != null)
+        {
+            _inkOverlay.FindParagraphAtContentY = FindParagraphAtContentY;
+            _inkOverlay.GetParagraphContentTop = GetParagraphContentTopByIndex;
+        }
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
         _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
@@ -406,6 +414,9 @@ public partial class MainView : UserControl
             {
                 _suppressScrollEventsForTabSwitch = false;
                 _suppressReaderProgressSync = false;
+                // Sync the ink overlay to the current scroll position.
+                if (_paragraphScrollViewer != null)
+                    _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
                 RefreshReaderProgress();
                 if (DataContext is ScriptureViewModel vm)
                     vm.AppVM.AppendSyncDebugLog("[Scroll] Suppress flags cleared");
@@ -486,6 +497,10 @@ public partial class MainView : UserControl
         {
             _suppressScrollEventsForTabSwitch = false;
             _suppressReaderProgressSync = false;
+            // Sync the ink overlay to the current scroll position (it was not updated
+            // while suppression was active, which causes drift over multiple tab switches).
+            if (_paragraphScrollViewer != null)
+                _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
             RefreshReaderProgress();
             if (DataContext is ScriptureViewModel vm)
                 vm.AppVM.AppendSyncDebugLog("[Scroll] Suppress flags cleared");
@@ -1099,6 +1114,76 @@ public partial class MainView : UserControl
         }
 
         return -1;
+    }
+
+    // ── Ink paragraph anchoring helpers ───────────────────────────────────────
+
+    /// <summary>
+    /// Given a content-space Y coordinate, finds the realized paragraph whose
+    /// bounds contain that Y and returns its index + content-space top.
+    /// </summary>
+    private (int Index, double ContentTop)? FindParagraphAtContentY(double contentY)
+    {
+        if (_paragraphList == null || _paragraphScrollViewer == null || _paragraphs.Count == 0)
+            return null;
+
+        var scrollY = _paragraphScrollViewer.Offset.Y;
+
+        // Walk realized ListBoxItems and find the one containing contentY.
+        (int Index, double ContentTop, double Height)? best = null;
+        double bestDist = double.MaxValue;
+
+        foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
+        {
+            if (item.DataContext is not BibleParagraph para) continue;
+            var top = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
+            if (top == null) continue;
+
+            var contentTop = scrollY + top.Value;
+            var height = item.Bounds.Height;
+
+            // Exact containment.
+            if (contentY >= contentTop && contentY <= contentTop + height)
+            {
+                var idx = FindParagraphIndex(para);
+                if (idx >= 0) return (idx, contentTop);
+            }
+
+            // Track closest for fallback.
+            var dist = Math.Min(Math.Abs(contentY - contentTop),
+                                Math.Abs(contentY - (contentTop + height)));
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                var idx = FindParagraphIndex(para);
+                if (idx >= 0) best = (idx, contentTop, height);
+            }
+        }
+
+        return best.HasValue ? (best.Value.Index, best.Value.ContentTop) : null;
+    }
+
+    /// <summary>
+    /// Given a paragraph index, returns its current content-space top if
+    /// the paragraph is currently realized in the visual tree.
+    /// </summary>
+    private double? GetParagraphContentTopByIndex(int paragraphIndex)
+    {
+        if (_paragraphList == null || _paragraphScrollViewer == null ||
+            paragraphIndex < 0 || paragraphIndex >= _paragraphs.Count)
+            return null;
+
+        var targetPara = _paragraphs[paragraphIndex];
+
+        foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
+        {
+            if (!ReferenceEquals(item.DataContext, targetPara)) continue;
+            var top = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
+            if (top == null) continue;
+            return _paragraphScrollViewer.Offset.Y + top.Value;
+        }
+
+        return null;
     }
 
 
