@@ -1413,7 +1413,26 @@ public partial class MainView : UserControl
 
     public void SetJournalLayout(JournalLayout? layout)
     {
-        // Stub — implemented in Task 10
+        if (_paragraphList == null) return;
+
+        if (layout == null)
+        {
+            // Restore defaults
+            _paragraphList.MaxWidth = double.PositiveInfinity;
+            _paragraphList.FontSize = 19;
+            _paragraphList.ClearValue(FontFamilyProperty);
+        }
+        else
+        {
+            if (layout.TextColumnWidthDip > 0)
+                _paragraphList.MaxWidth = layout.TextColumnWidthDip;
+
+            if (layout.FontSizeDip > 0)
+                _paragraphList.FontSize = layout.FontSizeDip;
+
+            if (!string.IsNullOrEmpty(layout.FontFamily))
+                _paragraphList.FontFamily = new Avalonia.Media.FontFamily(layout.FontFamily);
+        }
     }
 }
 
