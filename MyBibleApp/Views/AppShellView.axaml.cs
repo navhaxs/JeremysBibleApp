@@ -114,6 +114,7 @@ public partial class AppShellView : UserControl
         if (_secondaryView != null) _secondaryView.SplitToggled += OnSplitToggled;
         if (_primaryView != null) _primaryView.BibleReadingRequested += OnBibleReadingRequested;
         if (_primaryView != null) _primaryView.JournalFlyoutRequested += OnJournalFlyoutRequested;
+        if (_primaryView != null) _primaryView.JournalsRequested += (_, _) => OnJournalFlyoutRequested(null, EventArgs.Empty);  // route to same flyout
         if (_primaryView != null) _primaryView.StrokeCompleted += OnStrokeCompleted;
         if (_primaryView != null) _primaryView.StrokeUndone += OnStrokeUndone;
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
@@ -818,6 +819,10 @@ public partial class AppShellView : UserControl
         _journalFlyoutVm.SetActiveJournal(_tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null);
 
         await _journalFlyoutVm.RefreshAsync();
+
+        // Re-verify vm is still the active tab after async gap
+        if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
+
         _journalFlyoutView.IsVisible = true;
     }
 
@@ -833,7 +838,14 @@ public partial class AppShellView : UserControl
         var journal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(journalId);
         if (journal == null) return;
 
+        // Re-verify vm is still the active tab after async gap
+        if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
+
         var allStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId);
+
+        // Re-verify vm is still the active tab after async gap
+        if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
+
         var passageStrokes = allStrokes
             .Where(s => s.BookCode == vm.BookCode && s.ChapterNumber == vm.SelectedLookupChapter)
             .ToList();
