@@ -35,8 +35,6 @@ public partial class AppShellView : UserControl
     private LocalStorageDebugView? _localStorageDebugView;
     private DebugLogsView? _debugLogsView;
     private BibleReadingView? _bibleReadingView;
-    private JournalListView? _journalListView;
-    private JournalModeView? _journalModeView;
     private readonly AppViewModel _appVM = new();
     private readonly List<ScriptureViewModel> _tabs = [];
     private readonly Dictionary<ScriptureViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
@@ -83,8 +81,6 @@ public partial class AppShellView : UserControl
         _localStorageDebugView   = this.FindControl<LocalStorageDebugView>("LocalStorageDebugView");
         _debugLogsView           = this.FindControl<DebugLogsView>("DebugLogsView");
         _bibleReadingView = this.FindControl<BibleReadingView>("BibleReadingView");
-        _journalListView = this.FindControl<JournalListView>("JournalListView");
-        _journalModeView = this.FindControl<JournalModeView>("JournalModeView");
 
         if (_bibleReadingView != null)
         {
