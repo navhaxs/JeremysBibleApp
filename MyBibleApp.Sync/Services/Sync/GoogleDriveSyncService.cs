@@ -17,6 +17,7 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
     private const string AppDataFolderParent = "appDataFolder";
     private const string UserDataFileName = "user_data.json";
     private const string AnnotationsFileName = "annotations.json";
+    private const string JournalsFileName = "journals.json";
 
     private readonly IGoogleDriveAuthService _authService;
     private readonly string _deviceId;
@@ -184,8 +185,16 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
         if (DriveService == null)
             throw new InvalidOperationException("Drive service not available");
 
-        var fileId = await FindFileByNameAsync(fileName).ConfigureAwait(false);
         var content = JsonSerializer.Serialize(entity);
+        await UpsertRawContentAsync(content, fileName).ConfigureAwait(false);
+    }
+
+    private async Task UpsertRawContentAsync(string content, string fileName)
+    {
+        if (DriveService == null)
+            throw new InvalidOperationException("Drive service not available");
+
+        var fileId = await FindFileByNameAsync(fileName).ConfigureAwait(false);
 
         if (string.IsNullOrEmpty(fileId))
         {
@@ -254,6 +263,42 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
         catch
         {
             return [];
+        }
+    }
+
+    public async Task<string?> GetJournalDataAsync()
+    {
+        if (!_authService.IsAuthenticated)
+            return null;
+
+        try
+        {
+            var content = await GetFileContentAsync(JournalsFileName).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(content))
+                return null;
+
+            return content;
+        }
+        catch (Exception ex)
+        {
+            UpdateStatus(false, $"Journal sync error: {ex.Message}", 0);
+            return null;
+        }
+    }
+
+    public async Task<SyncResult> SaveJournalDataAsync(string jsonContent)
+    {
+        if (!_authService.IsAuthenticated)
+            return SyncResult.Failure("Not authenticated");
+
+        try
+        {
+            await UpsertRawContentAsync(jsonContent, JournalsFileName).ConfigureAwait(false);
+            return SyncResult.Success(1);
+        }
+        catch (Exception ex)
+        {
+            return SyncResult.Failure(ex.Message);
         }
     }
 

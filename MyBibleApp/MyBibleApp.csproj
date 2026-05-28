@@ -9,17 +9,18 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <AvaloniaResource Include="Assets\**"/>
+        <AvaloniaResource Include="Assets\**" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia"/>
+        <PackageReference Include="Avalonia" />
         <PackageReference Include="Avalonia.Controls.ColorPicker" />
-        <PackageReference Include="Avalonia.Themes.Simple"/>
-        <PackageReference Include="Avalonia.Fonts.Inter"/>
-        <PackageReference Include="Avalonia.Skia"/>
+        <PackageReference Include="Avalonia.Themes.Simple" />
+        <PackageReference Include="Avalonia.Fonts.Inter" />
+        <PackageReference Include="Avalonia.Skia" />
+        <PackageReference Include="AvaloniaUI.DiagnosticsSupport" />
         <PackageReference Include="Material.Icons.Avalonia" />
-        <PackageReference Include="ReactiveUI.Avalonia"/>
+        <PackageReference Include="ReactiveUI.Avalonia" />
     </ItemGroup>
 
     <ItemGroup>

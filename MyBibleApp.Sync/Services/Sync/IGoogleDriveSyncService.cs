@@ -161,5 +161,16 @@ public interface IGoogleDriveSyncService
     /// Key: "user_data.json".
     /// </summary>
     Task<Dictionary<string, DateTime?>> GetFileModifiedTimesAsync();
+
+    /// <summary>
+    /// Reads the journals.json file from Drive and returns the raw JSON content.
+    /// Returns null if the file does not exist or the user is not authenticated.
+    /// </summary>
+    Task<string?> GetJournalDataAsync();
+
+    /// <summary>
+    /// Writes the provided JSON content to journals.json in the Drive appDataFolder.
+    /// </summary>
+    Task<SyncResult> SaveJournalDataAsync(string jsonContent);
 }
 

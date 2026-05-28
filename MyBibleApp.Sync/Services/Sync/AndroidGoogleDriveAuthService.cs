@@ -363,7 +363,7 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
             ["client_id"]             = clientId,
             ["redirect_uri"]          = redirectUri,
             ["response_type"]         = "code",
-            ["scope"]                 = DriveService.Scope.DriveAppdata,
+            ["scope"]                 = $"{DriveService.Scope.DriveAppdata} openid email",
             ["code_challenge"]        = codeChallenge,
             ["code_challenge_method"] = "S256",
             ["access_type"]           = "offline",

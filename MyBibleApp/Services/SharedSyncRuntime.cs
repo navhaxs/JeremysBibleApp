@@ -17,7 +17,8 @@ internal sealed class SharedSyncRuntime
         ISyncQueueManager queueManager,
         INetworkStatusMonitor networkMonitor,
         ILocalStorageProvider localStorage,
-        ISyncCoordinator syncCoordinator)
+        ISyncCoordinator syncCoordinator,
+        IJournalStore journalStore)
     {
         GoogleDriveAuthService = authService;
         GoogleDriveSyncService = syncService;
@@ -25,6 +26,7 @@ internal sealed class SharedSyncRuntime
         NetworkStatusMonitor = networkMonitor;
         LocalStorageProvider = localStorage;
         SyncCoordinator = syncCoordinator;
+        JournalStore = journalStore;
     }
 
     public static SharedSyncRuntime Instance => SharedInstance.Value;
@@ -41,6 +43,8 @@ internal sealed class SharedSyncRuntime
 
     public ISyncCoordinator SyncCoordinator { get; }
 
+    public IJournalStore JournalStore { get; }
+
     private static SharedSyncRuntime Create()
     {
         IGoogleDriveAuthService authService = PlatformHelper.IsAndroid
@@ -54,8 +58,12 @@ internal sealed class SharedSyncRuntime
         var localStorage = new FileBasedLocalStorageProvider();
         var syncCoordinator = new SyncCoordinator(authService, syncService, queueManager, networkMonitor, localStorage);
 
+        var journalStore = new JournalStore();
+        var journalSyncProvider = new JournalSyncProviderAdapter(journalStore);
+        syncCoordinator.SetJournalSyncProvider(journalSyncProvider);
+
         syncCoordinator.StartAutoSync(TimeSpan.FromMinutes(AutoSyncIntervalMinutes));
 
-        return new SharedSyncRuntime(authService, syncService, queueManager, networkMonitor, localStorage, syncCoordinator);
+        return new SharedSyncRuntime(authService, syncService, queueManager, networkMonitor, localStorage, syncCoordinator, journalStore);
     }
 }

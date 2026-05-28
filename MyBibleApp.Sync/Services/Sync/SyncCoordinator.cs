@@ -100,6 +100,22 @@ public interface ISyncCoordinator : IDisposable
     void ReopenBrowser();
 
     /// <summary>
+    /// Synchronizes journal data (pull remote, merge, push local).
+    /// </summary>
+    Task<SyncResult> SyncJournalDataAsync();
+
+    /// <summary>
+    /// Enqueues a journal sync operation to be processed on the next sync cycle.
+    /// </summary>
+    Task EnqueueJournalSyncAsync();
+
+    /// <summary>
+    /// Sets the journal sync provider used for snapshot/merge operations.
+    /// Must be called before journal sync can operate.
+    /// </summary>
+    void SetJournalSyncProvider(IJournalSyncProvider provider);
+
+    /// <summary>
     /// Event for sync progress updates
     /// </summary>
     event EventHandler<SyncProgressEventArgs>? SyncProgress;
@@ -115,6 +131,9 @@ public class SyncCoordinator : ISyncCoordinator
     private readonly ISyncQueueManager _queueManager;
     private readonly INetworkStatusMonitor _networkMonitor;
     private readonly ILocalStorageProvider _localStorage;
+
+    private IJournalSyncProvider? _journalSyncProvider;
+    private const int MaxJournalRetries = 5;
 
     private CancellationTokenSource? _autoSyncCts;
     private bool _isOffline;
@@ -148,6 +167,48 @@ public class SyncCoordinator : ISyncCoordinator
         if (result.IsSuccess)
             await _localStorage.SaveAsync("LastAuthenticatedUser", result.UserEmail ?? "Unknown").ConfigureAwait(false);
         return result.IsSuccess;
+    }
+
+    public void SetJournalSyncProvider(IJournalSyncProvider provider)
+    {
+        _journalSyncProvider = provider;
+    }
+
+    public async Task<SyncResult> SyncJournalDataAsync()
+    {
+        if (_journalSyncProvider == null)
+            return SyncResult.Failure("Journal sync provider not configured.");
+
+        if (_isOffline || !_authService.IsAuthenticated)
+            return SyncResult.Failure("Cannot sync journals: not authenticated or offline.");
+
+        try
+        {
+            // Pull remote journal data from Google Drive
+            var remoteJson = await _syncService.GetJournalDataAsync().ConfigureAwait(false);
+
+            // Merge with local data if remote data exists
+            if (!string.IsNullOrEmpty(remoteJson))
+            {
+                await _journalSyncProvider.MergeRemoteJsonAsync(remoteJson).ConfigureAwait(false);
+            }
+
+            // Push local snapshot to Google Drive
+            var localJson = await _journalSyncProvider.GetSnapshotJsonAsync().ConfigureAwait(false);
+            var pushResult = await _syncService.SaveJournalDataAsync(localJson).ConfigureAwait(false);
+
+            return pushResult;
+        }
+        catch (Exception ex)
+        {
+            RaiseSyncProgress(false, $"Journal sync error: {ex.Message}", 0);
+            return SyncResult.Failure($"Journal sync failed: {ex.Message}");
+        }
+    }
+
+    public async Task EnqueueJournalSyncAsync()
+    {
+        await _queueManager.QueueOperationAsync("Journal", new { Timestamp = DateTime.UtcNow }).ConfigureAwait(false);
     }
 
     public async Task<bool> AuthenticateAsync(string? code = null)
@@ -368,6 +429,30 @@ public class SyncCoordinator : ISyncCoordinator
                 await SaveCachedModifiedTimeAsync("user_data.json", remoteTime.Value).ConfigureAwait(false);
             }
 
+            // ── Sync journal data if provider is configured ──
+            if (_journalSyncProvider != null)
+            {
+                var journalRemoteTime = remoteTimes.GetValueOrDefault("journals.json");
+                var journalCachedTime = await GetCachedModifiedTimeAsync("journals.json").ConfigureAwait(false);
+
+                if (journalRemoteTime.HasValue && journalRemoteTime != journalCachedTime)
+                {
+                    RaiseSyncProgress(true, "Syncing journal data...", 60);
+
+                    var remoteJournalJson = await _syncService.GetJournalDataAsync().ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(remoteJournalJson))
+                    {
+                        await _journalSyncProvider.MergeRemoteJsonAsync(remoteJournalJson).ConfigureAwait(false);
+                    }
+
+                    // Push merged local snapshot back
+                    var localJournalJson = await _journalSyncProvider.GetSnapshotJsonAsync().ConfigureAwait(false);
+                    await _syncService.SaveJournalDataAsync(localJournalJson).ConfigureAwait(false);
+
+                    await SaveCachedModifiedTimeAsync("journals.json", journalRemoteTime.Value).ConfigureAwait(false);
+                }
+            }
+
             // ── Push any locally-pending changes (silently — PullFromDriveAsync owns progress) ──
             var pendingOps = await _queueManager.GetPendingOperationsAsync().ConfigureAwait(false);
             if (pendingOps.Count > 0)
@@ -468,11 +553,63 @@ public class SyncCoordinator : ISyncCoordinator
                 item.Data.Deserialize<AnnotationBundle>(JsonHelper.Options) ?? new AnnotationBundle()
             ).ConfigureAwait(false),
 
+            "Journal" => await ProcessJournalOperationWithRetryAsync(item).ConfigureAwait(false),
+
             // Legacy queue items — no longer synced to the cloud; discard silently.
             "UserData" or "ReadingProgress" or "Preferences" => SyncResult.Success(0),
 
             _ => SyncResult.Failure($"Unknown operation type: {item.OperationType}")
         };
+    }
+
+    private async Task<SyncResult> ProcessJournalOperationWithRetryAsync(SyncQueueItem item)
+    {
+        var retryCount = item.RetryCount;
+
+        while (retryCount < MaxJournalRetries)
+        {
+            try
+            {
+                var result = await SyncJournalDataAsync().ConfigureAwait(false);
+                if (result.IsSuccess)
+                    return result;
+
+                // If the failure is not a network issue, don't retry
+                if (!IsNetworkFailure(result.ErrorMessage))
+                    return result;
+            }
+            catch (Exception ex)
+            {
+                if (!IsNetworkFailure(ex.Message))
+                    return SyncResult.Failure($"Journal sync failed: {ex.Message}");
+            }
+
+            retryCount++;
+            item.RetryCount = retryCount;
+
+            if (retryCount < MaxJournalRetries)
+            {
+                // Exponential backoff: 1s, 2s, 4s, 8s
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, retryCount - 1));
+                await Task.Delay(delay).ConfigureAwait(false);
+            }
+        }
+
+        // Max retries exceeded — mark as failed
+        RaiseSyncProgress(false, "Journal sync failed after 5 retries.", 0);
+        return SyncResult.Failure("Journal sync failed after maximum retries.");
+    }
+
+    private static bool IsNetworkFailure(string? errorMessage)
+    {
+        if (string.IsNullOrEmpty(errorMessage))
+            return false;
+
+        return errorMessage.Contains("network", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("connection", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+            || errorMessage.Contains("not authenticated or offline", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnNetworkConnectivityChanged(bool isConnected)
@@ -528,6 +665,7 @@ public class SyncCoordinator : ISyncCoordinator
             "ReadingProgress" => "reading progress",
             "Annotation" => "annotation",
             "Preferences" => "preferences",
+            "Journal" => "journal data",
             _ => operationType
         };
     }
