@@ -1,14 +1,26 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
+using MyBibleApp.Models;
 using SkiaSharp;
 
 namespace MyBibleApp.Controls;
+
+public sealed class InkStrokeEventArgs : EventArgs
+{
+    public required IReadOnlyList<Point> Points { get; init; }
+    public required Color Color { get; init; }
+    public required double StrokeWidth { get; init; }
+    public required bool IsHighlight { get; init; }
+    public required int AnchorParagraphIndex { get; init; }
+    public required double AnchorContentTop { get; init; }
+}
 
 /// <summary>
 /// A single full-viewport ink canvas placed as a sibling of the ListBox.
@@ -105,6 +117,11 @@ public class InkOverlayCanvas : Control
     /// </summary>
     public Func<int, double?>? GetParagraphContentTop { get; set; }
 
+    // ── Events ────────────────────────────────────────────────────────────────
+
+    public event EventHandler<InkStrokeEventArgs>? StrokeCompleted;
+    public event EventHandler? StrokeUndone;
+
     // ── Public API called by MainView ─────────────────────────────────────────
 
     /// <summary>Call when the ListBox ScrollViewer offset changes.</summary>
@@ -167,6 +184,15 @@ public class InkOverlayCanvas : Control
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     _activeStrokeColor, _activeStrokeWidth, _activeIsHighlight, null,
                     _activeAnchorIndex, _activeAnchorContentTop));
+                StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
+                {
+                    Points = [],
+                    Color = _activeStrokeColor,
+                    StrokeWidth = _activeStrokeWidth,
+                    IsHighlight = _activeIsHighlight,
+                    AnchorParagraphIndex = _activeAnchorIndex,
+                    AnchorContentTop = _activeAnchorContentTop
+                });
             }
             else
             {
@@ -181,6 +207,15 @@ public class InkOverlayCanvas : Control
                     pts,
                     _activeAnchorIndex,
                     _activeAnchorContentTop));
+                StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
+                {
+                    Points = pts,
+                    Color = _activeStrokeColor,
+                    StrokeWidth = _activeStrokeWidth,
+                    IsHighlight = _activeIsHighlight,
+                    AnchorParagraphIndex = _activeAnchorIndex,
+                    AnchorContentTop = _activeAnchorContentTop
+                });
             }
         }
         _activeStroke = null;
@@ -226,12 +261,48 @@ public class InkOverlayCanvas : Control
         InvalidateVisual();
     }
 
+    /// <summary>Load strokes from a persisted journal, replacing any existing strokes.</summary>
+    public void LoadJournalStrokes(IReadOnlyList<JournalInkStroke> strokes)
+    {
+        _cachedStrokes.Clear();
+        foreach (var stroke in strokes)
+        {
+            var pts = stroke.Points.Select(p => new Point(p.X, p.Y)).ToList();
+            var color = Color.Parse(stroke.Color.Length > 0 ? stroke.Color : "#FF000000");
+
+            if (pts.Count == 0)
+                continue;
+
+            if (pts.Count == 1)
+            {
+                var p = pts[0];
+                _cachedStrokes.Add(new StrokeCache(
+                    null, p,
+                    new Rect(p.X - 2, p.Y - 2, 4, 4),
+                    color, stroke.StrokeWidth, stroke.IsHighlight, null,
+                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop));
+            }
+            else
+            {
+                _cachedStrokes.Add(new StrokeCache(
+                    BuildGeometry(pts),
+                    default,
+                    ComputeBounds(pts),
+                    color, stroke.StrokeWidth, stroke.IsHighlight,
+                    pts,
+                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop));
+            }
+        }
+        InvalidateVisual();
+    }
+
     /// <summary>Remove the most recently completed stroke.</summary>
     public void UndoStroke()
     {
         if (_cachedStrokes.Count == 0) return;
         _cachedStrokes.RemoveAt(_cachedStrokes.Count - 1);
         InvalidateVisual();
+        StrokeUndone?.Invoke(this, EventArgs.Empty);
     }
 
     // ── Pointer events (fired when MainView gives us pointer capture) ─────────
