@@ -855,6 +855,7 @@ public partial class AppShellView : UserControl
         var vm = _tabs[_activeTabIndex];
 
         _tabActiveJournalIds[vm] = null;
+        _tabEphemeralStrokes[vm].Clear();
         _tabStrokeHistory[vm].Clear();
         _primaryView?.LoadJournalStrokes([]);
         _primaryView?.SetActiveJournalName(null);
