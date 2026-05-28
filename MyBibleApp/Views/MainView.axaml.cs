@@ -41,6 +41,16 @@ public partial class MainView : UserControl
     // Raised when the user taps the My Bible Reading button.
     public event EventHandler? BibleReadingRequested;
 
+    // Raised when the user taps the Journals button.
+    public event EventHandler? JournalsRequested;
+
+    // Raised when the user taps the Journal flyout button.
+    public event EventHandler? JournalFlyoutRequested;
+
+    // Surfaces ink events from the overlay canvas.
+    public event EventHandler<InkStrokeEventArgs>? StrokeCompleted;
+    public event EventHandler? StrokeUndone;
+
     private InkOverlayCanvas? _inkOverlay;
     private Border? _readerProgressTrack;
     private Border? _readerProgressThumb;
@@ -74,6 +84,9 @@ public partial class MainView : UserControl
     private Button? _colorDark;
     private Button? _customColorButton;
     private Button? _undoButton;
+    private Button? _journalButton;
+    private Border? _journalUnsavedBadge;
+    private TextBlock? _activeJournalLabel;
     private ColorView? _colorPickerView;
     private Button? _activeColorSwatch;
     private bool _suppressToolbarUpdates;
@@ -143,7 +156,16 @@ public partial class MainView : UserControl
         {
             _inkOverlay.FindParagraphAtContentY = FindParagraphAtContentY;
             _inkOverlay.GetParagraphContentTop = GetParagraphContentTopByIndex;
+            _inkOverlay.StrokeCompleted += (_, e) => StrokeCompleted?.Invoke(this, e);
+            _inkOverlay.StrokeUndone += (_, _) => StrokeUndone?.Invoke(this, EventArgs.Empty);
         }
+
+        _journalButton = this.FindControl<Button>("JournalButton");
+        _journalUnsavedBadge = this.FindControl<Border>("JournalUnsavedBadge");
+        _activeJournalLabel = this.FindControl<TextBlock>("ActiveJournalLabel");
+
+        if (_journalButton != null)
+            _journalButton.Click += (_, _) => JournalFlyoutRequested?.Invoke(this, EventArgs.Empty);
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
         _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
@@ -366,6 +388,9 @@ public partial class MainView : UserControl
 
     private void OnBibleReadingButtonClick(object? sender, RoutedEventArgs e) =>
         BibleReadingRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnJournalsButtonClick(object? sender, RoutedEventArgs e) =>
+        JournalsRequested?.Invoke(this, EventArgs.Empty);
 
     // ── Split-view toggle ────────────────────────────────────────────────────
 
@@ -1367,6 +1392,29 @@ public partial class MainView : UserControl
         e.Pointer.Capture(null);
         e.Handled = true;
     }
-}    // ...existing code...
+
+    // ── Journal integration ───────────────────────────────────────────────────
+
+    public void SetActiveJournalName(string? name)
+    {
+        if (_activeJournalLabel == null) return;
+        _activeJournalLabel.Text = name;
+        _activeJournalLabel.IsVisible = name != null;
+    }
+
+    public void SetUnsavedBadgeVisible(bool visible)
+    {
+        if (_journalUnsavedBadge != null)
+            _journalUnsavedBadge.IsVisible = visible;
+    }
+
+    public void LoadJournalStrokes(IReadOnlyList<JournalInkStroke> strokes) =>
+        _inkOverlay?.LoadJournalStrokes(strokes);
+
+    public void SetJournalLayout(JournalLayout? layout)
+    {
+        // Stub — implemented in Task 10
+    }
+}
 
 

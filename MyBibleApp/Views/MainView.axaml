@@ -196,7 +196,7 @@
               Padding="12,12,12,10"
               BorderThickness="0,0,0,1"
               BorderBrush="{DynamicResource ThemeBorderMidBrush}">
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
 
         <!-- Main app menu button -->
         <Button Grid.Column="0" Classes="tool-btn" VerticalAlignment="Center">
@@ -335,12 +335,27 @@
                       Classes="tool-btn">
           <material:MaterialIcon Kind="Pen" Width="20" Height="20" />
         </ToggleButton>
-        <Button Grid.Column="4"
+        <TextBlock x:Name="ActiveJournalLabel"
+                   Grid.Column="4"
+                   VerticalAlignment="Center"
+                   FontSize="12"
+                   Opacity="0.7"
+                   IsVisible="False"
+                   TextTrimming="CharacterEllipsis"
+                   MaxWidth="120" />
+        <Button Grid.Column="5"
                 x:Name="BibleReadingButton"
                 Classes="tool-btn"
                 ToolTip.Tip="My Bible Reading"
                 Click="OnBibleReadingButtonClick">
           <material:MaterialIcon Kind="BookOpenPageVariant" Width="20" Height="20" />
+        </Button>
+        <Button Grid.Column="6"
+                x:Name="JournalsButton"
+                Classes="tool-btn"
+                ToolTip.Tip="Journals"
+                Click="OnJournalsButtonClick">
+          <material:MaterialIcon Kind="NotebookEdit" Width="20" Height="20" />
         </Button>
         </Grid>
       </Border>
@@ -554,6 +569,23 @@
                   ToolTip.Tip="Undo"
                   Click="OnUndoButtonClick">
             <material:MaterialIcon Kind="Undo" Width="20" Height="20" />
+          </Button>
+
+          <!-- Journal flyout button -->
+          <Button x:Name="JournalButton"
+                  Classes="tool-btn"
+                  ToolTip.Tip="Journal">
+            <Panel>
+              <material:MaterialIcon Kind="BookOpenPageVariant" Width="20" Height="20" />
+              <Border x:Name="JournalUnsavedBadge"
+                      IsVisible="False"
+                      Width="8" Height="8"
+                      CornerRadius="4"
+                      Background="{DynamicResource SystemAccentColor}"
+                      HorizontalAlignment="Right"
+                      VerticalAlignment="Top"
+                      Margin="0,0,-2,-2" />
+            </Panel>
           </Button>
 
           <!-- Preset colour swatches -->
