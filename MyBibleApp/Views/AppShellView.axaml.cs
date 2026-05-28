@@ -595,6 +595,9 @@ public partial class AppShellView : UserControl
                     var vm = new ScriptureViewModel(_appVM);
                     ApplyPersistedTabReference(vm, state);
                     AddTabInternal(vm, makeActive: false);
+                    // Restore journal ID (strokes load later when tab is selected via SelectTab)
+                    if (!string.IsNullOrEmpty(state.ActiveJournalId))
+                        _tabActiveJournalIds[vm] = state.ActiveJournalId;
                     _appVM.AppendSyncDebugLog($"[Tabs] Restored tab: \"{vm.Header}\" (book={state.BookCode}, ch={state.Chapter}, v={state.Verse})");
                 }
 
@@ -708,7 +711,8 @@ public partial class AppShellView : UserControl
                 Header = vm.Header,
                 BookCode = vm.SelectedLookupBook?.Code ?? vm.BookCode,
                 Chapter = Math.Max(1, vm.SelectedLookupChapter),
-                Verse = Math.Max(1, vm.SelectedLookupVerse)
+                Verse = Math.Max(1, vm.SelectedLookupVerse),
+                ActiveJournalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null
             });
         }
 
@@ -855,6 +859,7 @@ public partial class AppShellView : UserControl
         _primaryView?.SetJournalLayout(journal.Layout);
 
         if (_journalFlyoutView != null) _journalFlyoutView.IsVisible = false;
+        RequestPersistOpenTabReferences();
     }
 
     private void OnJournalDeactivated(object? sender, EventArgs e)
@@ -870,6 +875,7 @@ public partial class AppShellView : UserControl
         _primaryView?.SetUnsavedBadgeVisible(false);
         _primaryView?.SetJournalLayout(null);
         if (_journalFlyoutView != null) _journalFlyoutView.IsVisible = false;
+        RequestPersistOpenTabReferences();
     }
 
     private async void OnSaveAsJournalRequested(object? sender, EventArgs e)
@@ -915,6 +921,7 @@ public partial class AppShellView : UserControl
         _primaryView?.SetUnsavedBadgeVisible(false);
         _primaryView?.SetJournalLayout(journal.Layout);
         if (_journalFlyoutView != null) _journalFlyoutView.IsVisible = false;
+        RequestPersistOpenTabReferences();
 
         await SharedSyncRuntime.Instance.SyncCoordinator.EnqueueJournalSyncAsync();
     }

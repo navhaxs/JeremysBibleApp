@@ -14,5 +14,7 @@ public sealed class OpenTabReferenceState
     public int Chapter { get; init; } = 1;
 
     public int Verse { get; init; } = 1;
+
+    public string? ActiveJournalId { get; init; }
 }
 
