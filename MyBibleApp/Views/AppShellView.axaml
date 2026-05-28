@@ -78,6 +78,15 @@
       <views:BibleReadingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="BibleReadingView" IsVisible="False" ZIndex="25"
                                Background="{DynamicResource ThemeBackgroundBrush}" />
 
+      <!-- Journal flyout — floating panel anchored to the right, below the toolbar -->
+      <views:JournalFlyoutView x:Name="JournalFlyoutView"
+                               Grid.Column="0" Grid.ColumnSpan="3"
+                               IsVisible="False"
+                               HorizontalAlignment="Right"
+                               VerticalAlignment="Top"
+                               Margin="0,56,16,0"
+                               ZIndex="100" />
+
       <!-- Debug log overlay — bottom-left, visible only in debug mode -->
       <Border Grid.Column="0" Grid.ColumnSpan="3"
               IsVisible="{Binding IsDebugMode}"
