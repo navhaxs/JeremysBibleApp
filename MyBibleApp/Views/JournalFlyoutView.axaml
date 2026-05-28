@@ -1,0 +1,93 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:MyBibleApp.ViewModels"
+             xmlns:material="using:Material.Icons.Avalonia"
+             mc:Ignorable="d" d:DesignWidth="260" d:DesignHeight="400"
+             x:Class="MyBibleApp.Views.JournalFlyoutView"
+             x:DataType="vm:JournalFlyoutViewModel"
+             Width="260">
+
+  <UserControl.Styles>
+    <Style Selector="Button.flyout-item">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="CornerRadius" Value="4" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.flyout-item:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SystemControlHighlightListLowBrush}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border CornerRadius="12"
+          Background="{DynamicResource ThemeBackgroundBrush}"
+          BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+          BorderThickness="1"
+          BoxShadow="0 4 16 0 #44000000"
+          Padding="8">
+    <StackPanel Spacing="4">
+
+      <!-- New journal button -->
+      <Button x:Name="CreateButton"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Left"
+              Classes="flyout-item"
+              Padding="8,6">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <material:MaterialIcon Kind="Plus" Width="16" Height="16" />
+          <TextBlock Text="New Journal" />
+        </StackPanel>
+      </Button>
+
+      <Separator Margin="0,4" />
+
+      <!-- Journal list -->
+      <ScrollViewer MaxHeight="300">
+        <ItemsControl x:Name="JournalItems"
+                      ItemsSource="{Binding Journals}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Grid ColumnDefinitions="*,Auto" Margin="0,1">
+                <Button Grid.Column="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Classes="flyout-item"
+                        Tag="{Binding Id}"
+                        x:Name="ActivateButton"
+                        Padding="8,6">
+                  <TextBlock Text="{Binding Name}"
+                             TextTrimming="CharacterEllipsis" />
+                </Button>
+                <Button Grid.Column="1"
+                        Classes="flyout-item"
+                        Tag="{Binding Id}"
+                        x:Name="DeleteButton"
+                        Padding="4">
+                  <material:MaterialIcon Kind="TrashCanOutline" Width="14" Height="14" />
+                </Button>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+
+      <!-- Save as journal -->
+      <Separator Margin="0,4"
+                 IsVisible="{Binding HasEphemeralStrokes}" />
+      <Button x:Name="SaveAsButton"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Left"
+              Classes="flyout-item"
+              IsVisible="{Binding HasEphemeralStrokes}"
+              Padding="8,6">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <material:MaterialIcon Kind="ContentSave" Width="16" Height="16" />
+          <TextBlock Text="Save as Journal…" />
+        </StackPanel>
+      </Button>
+
+    </StackPanel>
+  </Border>
+</UserControl>
