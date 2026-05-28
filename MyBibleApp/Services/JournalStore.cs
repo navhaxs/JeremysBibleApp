@@ -316,6 +316,7 @@ public sealed class JournalStore : IJournalStore
                 return Result.Failure($"Journal '{journalId}' not found.");
 
             entry.InkStrokes.Add(stroke);
+            entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
             return Result.Success();
         }
@@ -342,7 +343,10 @@ public sealed class JournalStore : IJournalStore
 
             var removed = entry.InkStrokes.RemoveAll(s => s.Id == strokeId);
             if (removed > 0)
+            {
+                entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
                 await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+            }
             return Result.Success();
         }
         catch (Exception ex)
