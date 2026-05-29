@@ -148,4 +148,92 @@ public class JournalStoreChapterTests : IDisposable
 
         Assert.Empty(rom8);
     }
+
+    [Fact]
+    public async Task SaveInkStrokesAsync_ReplacesOnlyTargetChapterBucket()
+    {
+        var result = await _store.CreateJournalAsync(new JournalCreateRequest
+        {
+            Name = "SaveTest",
+            TranslationId = "", TranslationVersionDate = "", ContentHash = "",
+            BookCode = "GEN", StartChapter = 1, StartVerse = 1, EndChapter = 1, EndVerse = 31,
+            Layout = new JournalLayout { TextColumnWidthDip = 600, LeftMarginDip = 80, RightMarginDip = 115 }
+        });
+        var journalId = result.Value!.Id;
+
+        await _store.AppendInkStrokeAsync(journalId, new JournalInkStroke
+            { Id = "gen-old", BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 });
+        await _store.AppendInkStrokeAsync(journalId, new JournalInkStroke
+            { Id = "rom-keep", BookCode = "ROM", ChapterNumber = 8, Color = "#FF000000", StrokeWidth = 2.5 });
+
+        await _store.SaveInkStrokesAsync(journalId, "GEN", 1,
+        [
+            new JournalInkStroke { Id = "gen-new", BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 }
+        ]);
+
+        var gen1 = await _store.GetInkStrokesAsync(journalId, "GEN", 1);
+        var rom8 = await _store.GetInkStrokesAsync(journalId, "ROM", 8);
+
+        Assert.Single(gen1);
+        Assert.Equal("gen-new", gen1[0].Id);
+        Assert.Single(rom8);
+        Assert.Equal("rom-keep", rom8[0].Id);
+    }
+
+    [Fact]
+    public async Task SaveAllInkStrokesAsync_GroupsStrokesIntoChapterBuckets()
+    {
+        var result = await _store.CreateJournalAsync(new JournalCreateRequest
+        {
+            Name = "BulkSave",
+            TranslationId = "", TranslationVersionDate = "", ContentHash = "",
+            BookCode = "GEN", StartChapter = 1, StartVerse = 1, EndChapter = 1, EndVerse = 31,
+            Layout = new JournalLayout { TextColumnWidthDip = 600, LeftMarginDip = 80, RightMarginDip = 115 }
+        });
+        var journalId = result.Value!.Id;
+
+        var strokes = new System.Collections.Generic.List<JournalInkStroke>
+        {
+            new() { Id = "a", BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 },
+            new() { Id = "b", BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 },
+            new() { Id = "c", BookCode = "ROM", ChapterNumber = 8, Color = "#FF000000", StrokeWidth = 2.5 },
+        };
+
+        await _store.SaveAllInkStrokesAsync(journalId, strokes);
+
+        var gen1 = await _store.GetInkStrokesAsync(journalId, "GEN", 1);
+        var rom8 = await _store.GetInkStrokesAsync(journalId, "ROM", 8);
+
+        Assert.Equal(2, gen1.Count);
+        Assert.Single(rom8);
+        Assert.Equal("c", rom8[0].Id);
+    }
+
+    [Fact]
+    public async Task SaveInkStrokesAsync_CanSaveTwoChapters_BothPersist()
+    {
+        var result = await _store.CreateJournalAsync(new JournalCreateRequest
+        {
+            Name = "RetryFlush",
+            TranslationId = "", TranslationVersionDate = "", ContentHash = "",
+            BookCode = "GEN", StartChapter = 1, StartVerse = 1, EndChapter = 1, EndVerse = 31,
+            Layout = new JournalLayout { TextColumnWidthDip = 600, LeftMarginDip = 80, RightMarginDip = 115 }
+        });
+        var journalId = result.Value!.Id;
+
+        await _store.SaveInkStrokesAsync(journalId, "GEN", 1,
+        [
+            new JournalInkStroke { Id = "g1", BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 }
+        ]);
+        await _store.SaveInkStrokesAsync(journalId, "ROM", 8,
+        [
+            new JournalInkStroke { Id = "r1", BookCode = "ROM", ChapterNumber = 8, Color = "#FF000000", StrokeWidth = 2.5 }
+        ]);
+
+        var freshStore = new JournalStore(_tempDir);
+        var gen1 = await freshStore.GetInkStrokesAsync(journalId, "GEN", 1);
+        var rom8 = await freshStore.GetInkStrokesAsync(journalId, "ROM", 8);
+        Assert.Single(gen1);
+        Assert.Single(rom8);
+    }
 }

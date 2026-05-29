@@ -228,14 +228,88 @@ public sealed class JournalStore : IJournalStore
     }
 
     /// <inheritdoc />
-    /// TODO: replaced in Task 6 — stub to satisfy interface until then
-    public Task<Result> SaveInkStrokesAsync(string journalId, string bookCode, int chapter, IReadOnlyList<JournalInkStroke> strokes)
-        => Task.FromResult(Result.Failure("Not yet implemented"));
+    public async Task<Result> SaveInkStrokesAsync(string journalId, string bookCode, int chapter, IReadOnlyList<JournalInkStroke> strokes)
+    {
+        await _semaphore.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var (entries, tombstones) = await LoadEntriesAsync().ConfigureAwait(false);
+            var entry = entries.FirstOrDefault(e => e.Metadata.Id == journalId);
+            if (entry == null)
+                return Result.Failure("Journal not found.");
+
+            var chapterKey = ChapterKey(bookCode, chapter);
+            entry.InkStrokesByChapter[chapterKey] = strokes.ToList();
+            entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
+
+            try
+            {
+                // Apply any pending retries for other (journal, chapter) combos before saving
+                foreach (var (retryKey, retryStrokes) in _pendingRetry.ToList())
+                {
+                    if (retryKey.JournalId == journalId && retryKey.ChapterKey == chapterKey)
+                        continue; // current save supersedes this
+                    var pendingEntry = entries.FirstOrDefault(e => e.Metadata.Id == retryKey.JournalId);
+                    if (pendingEntry != null)
+                        pendingEntry.InkStrokesByChapter[retryKey.ChapterKey] = retryStrokes.ToList();
+                }
+
+                await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+
+                // Clear all pending retries whose entries exist
+                _pendingRetry.Remove((journalId, chapterKey));
+                foreach (var key in _pendingRetry.Keys.ToList())
+                {
+                    if (entries.Any(e => e.Metadata.Id == key.JournalId))
+                        _pendingRetry.Remove(key);
+                }
+
+                return Result.Success();
+            }
+            catch (Exception ex)
+            {
+                _pendingRetry[(journalId, chapterKey)] = strokes;
+                return Result.Failure($"Failed to save ink strokes: {ex.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure($"Failed to save ink strokes: {ex.Message}");
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
 
     /// <inheritdoc />
-    /// TODO: replaced in Task 6 — stub to satisfy interface until then
-    public Task<Result> SaveAllInkStrokesAsync(string journalId, IReadOnlyList<JournalInkStroke> strokes)
-        => Task.FromResult(Result.Failure("Not yet implemented"));
+    public async Task<Result> SaveAllInkStrokesAsync(string journalId, IReadOnlyList<JournalInkStroke> strokes)
+    {
+        await _semaphore.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var (entries, tombstones) = await LoadEntriesAsync().ConfigureAwait(false);
+            var entry = entries.FirstOrDefault(e => e.Metadata.Id == journalId);
+            if (entry == null)
+                return Result.Failure("Journal not found.");
+
+            entry.InkStrokesByChapter.Clear();
+            foreach (var group in strokes.GroupBy(s => ChapterKey(s.BookCode, s.ChapterNumber)))
+                entry.InkStrokesByChapter[group.Key] = group.ToList();
+
+            entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
+            await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+            return Result.Success();
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure($"Failed to save all ink strokes: {ex.Message}");
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
 
     /// <inheritdoc />
     public async Task<Result> AppendInkStrokeAsync(string journalId, JournalInkStroke stroke)
