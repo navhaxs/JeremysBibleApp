@@ -511,23 +511,7 @@ public class SyncCoordinator : ISyncCoordinator
                 if (_isOffline || !_authService.IsAuthenticated)
                     continue;
 
-                // Sync all pending queue items
-                var pendingOps = await _queueManager.GetPendingOperationsAsync().ConfigureAwait(false);
-                foreach (var op in pendingOps)
-                {
-                    try
-                    {
-                        var result = await ProcessQueuedOperationAsync(op).ConfigureAwait(false);
-                        if (result.IsSuccess)
-                        {
-                            await _queueManager.MarkAsSyncedAsync(op.Id).ConfigureAwait(false);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Error processing queued operation: {ex.Message}");
-                    }
-                }
+                await PullFromDriveAsync().ConfigureAwait(false);
             }
             catch (TaskCanceledException)
             {
