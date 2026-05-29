@@ -49,7 +49,7 @@
                       ItemsSource="{Binding Journals}">
           <ItemsControl.ItemTemplate>
             <DataTemplate>
-              <Grid ColumnDefinitions="*,Auto" Margin="0,1">
+              <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,1">
                 <Button Grid.Column="0"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Left"
@@ -63,6 +63,14 @@
                 <Button Grid.Column="1"
                         Classes="flyout-item"
                         Tag="{Binding Id}"
+                        x:Name="RenameButton"
+                        Padding="4"
+                        ToolTip.Tip="Rename">
+                  <material:MaterialIcon Kind="PencilOutline" Width="14" Height="14" />
+                </Button>
+                <Button Grid.Column="2"
+                        Classes="flyout-item"
+                        Tag="{Binding Id}"
                         x:Name="DeleteButton"
                         Padding="4">
                   <material:MaterialIcon Kind="TrashCanOutline" Width="14" Height="14" />
@@ -72,6 +80,23 @@
           </ItemsControl.ItemTemplate>
         </ItemsControl>
       </ScrollViewer>
+
+      <!-- Inline rename bar (shown when a rename is pending) -->
+      <Separator x:Name="RenameSeparator" Margin="0,4" IsVisible="False" />
+      <Grid x:Name="RenameBar" IsVisible="False" ColumnDefinitions="*,Auto" Margin="0,2">
+        <TextBox x:Name="RenameTextBox"
+                 PlaceholderText="New name…"
+                 Padding="6,4"
+                 FontSize="13" />
+        <Button x:Name="RenameConfirmButton"
+                Grid.Column="1"
+                Classes="flyout-item"
+                Padding="4"
+                Margin="4,0,0,0"
+                ToolTip.Tip="Confirm rename">
+          <material:MaterialIcon Kind="Check" Width="16" Height="16" />
+        </Button>
+      </Grid>
 
       <!-- Save as journal -->
       <Separator Margin="0,4"

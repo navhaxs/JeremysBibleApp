@@ -14,12 +14,19 @@ namespace MyBibleApp.Controls;
 
 public sealed class InkStrokeEventArgs : EventArgs
 {
+    public required string StrokeId { get; init; }
     public required IReadOnlyList<Point> Points { get; init; }
     public required Color Color { get; init; }
     public required double StrokeWidth { get; init; }
     public required bool IsHighlight { get; init; }
     public required int AnchorParagraphIndex { get; init; }
     public required double AnchorContentTop { get; init; }
+}
+
+/// <summary>Carries IDs of strokes removed by undo or the eraser tool.</summary>
+public sealed class InkStrokeRemovedEventArgs(IReadOnlyList<string> strokeIds) : EventArgs
+{
+    public IReadOnlyList<string> StrokeIds { get; } = strokeIds;
 }
 
 /// <summary>
@@ -85,9 +92,11 @@ public class InkOverlayCanvas : Control
         bool IsHighlight,           // true → drawn with multiply blend
         IReadOnlyList<Point>? Points, // raw points for eraser hit-testing (null for dots)
         int AnchorParagraphIndex = -1,   // index into the paragraph list at draw time
-        double AnchorContentTop = 0);    // content-space Y of that paragraph's top at draw time
+        double AnchorContentTop = 0,     // content-space Y of that paragraph's top at draw time
+        string StrokeId = "");           // stable ID linking cache entry to journal store
 
     private readonly List<StrokeCache> _cachedStrokes = new();
+    private readonly Stack<StrokeCache> _redoStack = new();
 
     // Active stroke raw points (content-space) and its cached geometry.
     private List<Point>? _activeStroke;
@@ -120,7 +129,8 @@ public class InkOverlayCanvas : Control
     // ── Events ────────────────────────────────────────────────────────────────
 
     public event EventHandler<InkStrokeEventArgs>? StrokeCompleted;
-    public event EventHandler? StrokeUndone;
+    /// <summary>Fired when one or more strokes are removed (undo or eraser).</summary>
+    public event EventHandler<InkStrokeRemovedEventArgs>? StrokeRemoved;
 
     // ── Public API called by MainView ─────────────────────────────────────────
 
@@ -176,6 +186,8 @@ public class InkOverlayCanvas : Control
         if (IsEraserMode) return;
         if (_activeStroke != null && _activeStroke.Count > 0)
         {
+            _redoStack.Clear();
+            var id = Guid.NewGuid().ToString();
             if (_activeStroke.Count == 1)
             {
                 var p = _activeStroke[0];
@@ -183,9 +195,10 @@ public class InkOverlayCanvas : Control
                     null, p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     _activeStrokeColor, _activeStrokeWidth, _activeIsHighlight, null,
-                    _activeAnchorIndex, _activeAnchorContentTop));
+                    _activeAnchorIndex, _activeAnchorContentTop, id));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
+                    StrokeId = id,
                     Points = [],
                     Color = _activeStrokeColor,
                     StrokeWidth = _activeStrokeWidth,
@@ -206,9 +219,11 @@ public class InkOverlayCanvas : Control
                     _activeIsHighlight,
                     pts,
                     _activeAnchorIndex,
-                    _activeAnchorContentTop));
+                    _activeAnchorContentTop,
+                    id));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
+                    StrokeId = id,
                     Points = pts,
                     Color = _activeStrokeColor,
                     StrokeWidth = _activeStrokeWidth,
@@ -243,6 +258,7 @@ public class InkOverlayCanvas : Control
     public void RestoreState(InkState? state)
     {
         _cachedStrokes.Clear();
+        _redoStack.Clear();
         if (state != null)
             _cachedStrokes.AddRange(state.Strokes);
         _activeStroke = null;
@@ -255,6 +271,7 @@ public class InkOverlayCanvas : Control
     public void ClearStrokes()
     {
         _cachedStrokes.Clear();
+        _redoStack.Clear();
         _activeStroke = null;
         _activeGeo = null;
         _activeStrokeDirty = false;
@@ -265,6 +282,7 @@ public class InkOverlayCanvas : Control
     public void LoadJournalStrokes(IReadOnlyList<JournalInkStroke> strokes)
     {
         _cachedStrokes.Clear();
+        _redoStack.Clear();
         foreach (var stroke in strokes)
         {
             var pts = stroke.Points.Select(p => new Point(p.X, p.Y)).ToList();
@@ -280,7 +298,7 @@ public class InkOverlayCanvas : Control
                     null, p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     color, stroke.StrokeWidth, stroke.IsHighlight, null,
-                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop));
+                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
             }
             else
             {
@@ -290,19 +308,45 @@ public class InkOverlayCanvas : Control
                     ComputeBounds(pts),
                     color, stroke.StrokeWidth, stroke.IsHighlight,
                     pts,
-                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop));
+                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
             }
         }
         InvalidateVisual();
     }
 
-    /// <summary>Remove the most recently completed stroke.</summary>
+    /// <summary>Remove the most recently completed stroke, pushing it onto the redo stack.</summary>
     public void UndoStroke()
     {
         if (_cachedStrokes.Count == 0) return;
+        var removed = _cachedStrokes[_cachedStrokes.Count - 1];
         _cachedStrokes.RemoveAt(_cachedStrokes.Count - 1);
+        _redoStack.Push(removed);
         InvalidateVisual();
-        StrokeUndone?.Invoke(this, EventArgs.Empty);
+        if (!string.IsNullOrEmpty(removed.StrokeId))
+            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs([removed.StrokeId]));
+    }
+
+    /// <summary>Re-apply the most recently undone stroke.</summary>
+    public void RedoStroke()
+    {
+        if (_redoStack.Count == 0) return;
+        var stroke = _redoStack.Pop();
+        _cachedStrokes.Add(stroke);
+        InvalidateVisual();
+        if (!string.IsNullOrEmpty(stroke.StrokeId))
+        {
+            var pts = stroke.Points ?? (IReadOnlyList<Point>)[];
+            StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
+            {
+                StrokeId = stroke.StrokeId,
+                Points = pts,
+                Color = stroke.Color,
+                StrokeWidth = stroke.StrokeWidth,
+                IsHighlight = stroke.IsHighlight,
+                AnchorParagraphIndex = stroke.AnchorParagraphIndex,
+                AnchorContentTop = stroke.AnchorContentTop
+            });
+        }
     }
 
     // ── Pointer events (fired when MainView gives us pointer capture) ─────────
@@ -347,7 +391,7 @@ public class InkOverlayCanvas : Control
     {
         const double radius   = 14.0;
         const double radiusSq = radius * radius;
-        bool changed = false;
+        List<string>? removedIds = null;
 
         for (int i = _cachedStrokes.Count - 1; i >= 0; i--)
         {
@@ -370,8 +414,9 @@ public class InkOverlayCanvas : Control
                 var dy = s.DotCenter.Y - adjustedPoint.Y;
                 if (dx * dx + dy * dy <= radiusSq)
                 {
+                    if (!string.IsNullOrEmpty(s.StrokeId))
+                        (removedIds ??= []).Add(s.StrokeId);
                     _cachedStrokes.RemoveAt(i);
-                    changed = true;
                 }
                 continue;
             }
@@ -387,12 +432,18 @@ public class InkOverlayCanvas : Control
             }
             if (hit)
             {
+                if (!string.IsNullOrEmpty(s.StrokeId))
+                    (removedIds ??= []).Add(s.StrokeId);
                 _cachedStrokes.RemoveAt(i);
-                changed = true;
             }
         }
 
-        if (changed) InvalidateVisual();
+        if (removedIds != null)
+        {
+            _redoStack.Clear();
+            InvalidateVisual();
+            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(removedIds));
+        }
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
@@ -569,10 +620,8 @@ public class InkOverlayCanvas : Control
 
         private static void DrawStroke(SKCanvas canvas, SKPaint paint, StrokeCache stroke)
         {
-            // Force full opacity: multiply blend works correctly with opaque colours.
-            // Semi-transparent stroke colours are made fully opaque here so the
-            // multiply effect uses the full ink colour (yellow × text = readable text).
-            paint.Color       = new SKColor(stroke.Color.R, stroke.Color.G, stroke.Color.B, 255);
+            // 50% opacity layer: alpha=128 keeps highlight visible while letting text show through.
+            paint.Color       = new SKColor(stroke.Color.R, stroke.Color.G, stroke.Color.B, 128);
             paint.StrokeWidth = (float)stroke.StrokeWidth;
 
             var pts = stroke.Points;

@@ -43,9 +43,9 @@ public partial class AppShellView : UserControl
     private readonly Dictionary<ScriptureViewModel, (int Chapter, int Verse)> _tabVersePositions = [];
     private readonly Dictionary<ScriptureViewModel, string?> _tabActiveJournalIds = [];
     private readonly Dictionary<ScriptureViewModel, List<JournalInkStroke>> _tabEphemeralStrokes = [];
-    private readonly Dictionary<ScriptureViewModel, Stack<string>> _tabStrokeHistory = [];
     private JournalFlyoutView? _journalFlyoutView;
     private JournalFlyoutViewModel? _journalFlyoutVm;
+    private Border? _journalFlyoutDismissOverlay;
     private CancellationTokenSource? _persistTabsCts;
     private string _lastPersistedTabStateJson = string.Empty;
     private int _lastPersistedActiveIndex = -1;
@@ -96,6 +96,9 @@ public partial class AppShellView : UserControl
             _journalFlyoutView.DataContext = _journalFlyoutVm;
             _journalFlyoutView.SaveAsRequested += OnSaveAsJournalRequested;
         }
+        _journalFlyoutDismissOverlay = this.FindControl<Border>("JournalFlyoutDismissOverlay");
+        if (_journalFlyoutDismissOverlay != null)
+            _journalFlyoutDismissOverlay.PointerPressed += (_, _) => CloseJournalFlyout();
         _journalFlyoutVm.JournalActivated += OnJournalActivated;
         _journalFlyoutVm.JournalDeactivated += OnJournalDeactivated;
 
@@ -113,10 +116,9 @@ public partial class AppShellView : UserControl
         if (_primaryView != null) _primaryView.SplitToggled += OnSplitToggled;
         if (_secondaryView != null) _secondaryView.SplitToggled += OnSplitToggled;
         if (_primaryView != null) _primaryView.BibleReadingRequested += OnBibleReadingRequested;
-        if (_primaryView != null) _primaryView.JournalFlyoutRequested += OnJournalFlyoutRequested;
-        if (_primaryView != null) _primaryView.JournalsRequested += (_, _) => OnJournalFlyoutRequested(null, EventArgs.Empty);  // route to same flyout
+        if (_primaryView != null) _primaryView.JournalsRequested += (_, _) => OnJournalFlyoutRequested(null, EventArgs.Empty);
         if (_primaryView != null) _primaryView.StrokeCompleted += OnStrokeCompleted;
-        if (_primaryView != null) _primaryView.StrokeUndone += OnStrokeUndone;
+        if (_primaryView != null) _primaryView.StrokeRemoved += OnStrokeRemoved;
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
         this.SizeChanged += OnShellSizeChanged;
 
@@ -130,7 +132,6 @@ public partial class AppShellView : UserControl
         _tabScrollOffsets[vm] = null;
         _tabActiveJournalIds[vm] = null;
         _tabEphemeralStrokes[vm] = [];
-        _tabStrokeHistory[vm] = new Stack<string>();
 
         PropertyChangedEventHandler handler = (_, args) =>
         {
@@ -207,12 +208,19 @@ public partial class AppShellView : UserControl
             if (journal != null)
             {
                 var allStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId);
+                // vm.BookCode is set by ApplyLoadedBook (after API content loads).
+                // On app relaunch SelectTab fires before content loads, so BookCode is still "".
+                // Fall back to SelectedLookupBook.Code, which is set by RestoreLookupPosition.
+                var bookCode = !string.IsNullOrEmpty(vm.BookCode)
+                    ? vm.BookCode
+                    : vm.SelectedLookupBook?.Code ?? string.Empty;
                 var passageStrokes = allStrokes
-                    .Where(s => s.BookCode == vm.BookCode && s.ChapterNumber == vm.SelectedLookupChapter)
+                    .Where(s => s.BookCode == bookCode && s.ChapterNumber == vm.SelectedLookupChapter)
                     .ToList();
                 _primaryView.LoadJournalStrokes(passageStrokes);
                 _primaryView.SetActiveJournalName(journal.Name);
                 _primaryView.SetUnsavedBadgeVisible(false);
+                _primaryView.SetJournalLayout(journal.Layout);
             }
         }
         else
@@ -524,7 +532,6 @@ public partial class AppShellView : UserControl
         _tabVersePositions.Remove(vm);
         _tabActiveJournalIds.Remove(vm);
         _tabEphemeralStrokes.Remove(vm);
-        _tabStrokeHistory.Remove(vm);
         _tabs.RemoveAt(index);
         vm.Dispose();
 
@@ -632,6 +639,29 @@ public partial class AppShellView : UserControl
                 {
                     _appVM.AppendSyncDebugLog($"[Tabs] Navigating active tab to {ch}:{vs}");
                     await _primaryView.NavigateToVerseAsync(ch, vs);
+                }
+
+                // Reload journal strokes after content is loaded and navigation is complete.
+                // SelectTab fires before content loads so scroll offset and BookCode may not
+                // be ready; this second load runs when everything is stable and matches the
+                // flyout-selection path exactly.
+                var activeVm = _tabs[activeIdx];
+                var activeJournalId = _tabActiveJournalIds.TryGetValue(activeVm, out var ajid) ? ajid : null;
+                if (activeJournalId != null && _primaryView != null)
+                {
+                    var activeJournal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(activeJournalId);
+                    if (activeJournal != null)
+                    {
+                        var allStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(activeJournalId);
+                        var passageStrokes = allStrokes
+                            .Where(s => s.BookCode == activeVm.BookCode && s.ChapterNumber == activeVm.SelectedLookupChapter)
+                            .ToList();
+                        _primaryView.LoadJournalStrokes(passageStrokes);
+                        _primaryView.SetActiveJournalName(activeJournal.Name);
+                        _primaryView.SetUnsavedBadgeVisible(false);
+                        _primaryView.SetJournalLayout(activeJournal.Layout);
+                        _appVM.AppendSyncDebugLog($"[Tabs] Reloaded journal strokes: {passageStrokes.Count} strokes for \"{activeJournal.Name}\"");
+                    }
                 }
 
                 _ = Task.WhenAll(contentTasks); // background tabs continue
@@ -814,6 +844,13 @@ public partial class AppShellView : UserControl
     private async void OnJournalFlyoutRequested(object? sender, EventArgs e)
     {
         if (_journalFlyoutView == null || _journalFlyoutVm == null) return;
+
+        if (_journalFlyoutView.IsVisible)
+        {
+            CloseJournalFlyout();
+            return;
+        }
+
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
         var vm = _tabs[_activeTabIndex];
 
@@ -828,6 +865,15 @@ public partial class AppShellView : UserControl
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
 
         _journalFlyoutView.IsVisible = true;
+        if (_journalFlyoutDismissOverlay != null) _journalFlyoutDismissOverlay.IsVisible = true;
+        _primaryView?.SetJournalFlyoutOpen(true);
+    }
+
+    private void CloseJournalFlyout()
+    {
+        if (_journalFlyoutView != null) _journalFlyoutView.IsVisible = false;
+        if (_journalFlyoutDismissOverlay != null) _journalFlyoutDismissOverlay.IsVisible = false;
+        _primaryView?.SetJournalFlyoutOpen(false);
     }
 
     private async void OnJournalActivated(object? sender, string journalId)
@@ -837,7 +883,6 @@ public partial class AppShellView : UserControl
 
         _tabActiveJournalIds[vm] = journalId;
         _tabEphemeralStrokes[vm].Clear();
-        _tabStrokeHistory[vm].Clear();
 
         var journal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(journalId);
         if (journal == null) return;
@@ -858,7 +903,7 @@ public partial class AppShellView : UserControl
         _primaryView?.SetUnsavedBadgeVisible(false);
         _primaryView?.SetJournalLayout(journal.Layout);
 
-        if (_journalFlyoutView != null) _journalFlyoutView.IsVisible = false;
+        CloseJournalFlyout();
         RequestPersistOpenTabReferences();
     }
 
@@ -869,12 +914,11 @@ public partial class AppShellView : UserControl
 
         _tabActiveJournalIds[vm] = null;
         _tabEphemeralStrokes[vm].Clear();
-        _tabStrokeHistory[vm].Clear();
         _primaryView?.LoadJournalStrokes([]);
         _primaryView?.SetActiveJournalName(null);
         _primaryView?.SetUnsavedBadgeVisible(false);
         _primaryView?.SetJournalLayout(null);
-        if (_journalFlyoutView != null) _journalFlyoutView.IsVisible = false;
+        CloseJournalFlyout();
         RequestPersistOpenTabReferences();
     }
 
@@ -915,7 +959,6 @@ public partial class AppShellView : UserControl
 
         _tabActiveJournalIds[vm] = journal.Id;
         _tabEphemeralStrokes[vm].Clear();
-        _tabStrokeHistory[vm].Clear();
 
         _primaryView?.SetActiveJournalName(journal.Name);
         _primaryView?.SetUnsavedBadgeVisible(false);
@@ -933,7 +976,7 @@ public partial class AppShellView : UserControl
 
         var stroke = new JournalInkStroke
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = e.StrokeId,
             Points = e.Points.Select(p => new StrokePoint(p.X, p.Y)).ToList(),
             Color = $"#{e.Color.A:X2}{e.Color.R:X2}{e.Color.G:X2}{e.Color.B:X2}",
             StrokeWidth = e.StrokeWidth,
@@ -949,33 +992,36 @@ public partial class AppShellView : UserControl
         {
             await SharedSyncRuntime.Instance.JournalStore.AppendInkStrokeAsync(journalId, stroke);
             await SharedSyncRuntime.Instance.SyncCoordinator.EnqueueJournalSyncAsync();
-            _tabStrokeHistory[vm].Push(stroke.Id);
         }
         else
         {
             _tabEphemeralStrokes[vm].Add(stroke);
-            _tabStrokeHistory[vm].Push(stroke.Id);
             _primaryView?.SetUnsavedBadgeVisible(true);
         }
     }
 
-    private async void OnStrokeUndone(object? sender, EventArgs e)
+    private async void OnStrokeRemoved(object? sender, InkStrokeRemovedEventArgs e)
     {
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
         var vm = _tabs[_activeTabIndex];
 
-        if (!_tabStrokeHistory[vm].TryPop(out var strokeId)) return;
-
         var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
+        foreach (var strokeId in e.StrokeIds)
+        {
+            if (journalId != null)
+            {
+                await SharedSyncRuntime.Instance.JournalStore.RemoveInkStrokeAsync(journalId, strokeId);
+            }
+            else
+            {
+                _tabEphemeralStrokes[vm].RemoveAll(s => s.Id == strokeId);
+            }
+        }
+
         if (journalId != null)
-        {
-            await SharedSyncRuntime.Instance.JournalStore.RemoveInkStrokeAsync(journalId, strokeId);
-        }
+            await SharedSyncRuntime.Instance.SyncCoordinator.EnqueueJournalSyncAsync();
         else
-        {
-            _tabEphemeralStrokes[vm].RemoveAll(s => s.Id == strokeId);
             _primaryView?.SetUnsavedBadgeVisible(_tabEphemeralStrokes[vm].Count > 0);
-        }
     }
 
     // ── Split management ──────────────────────────────────────────────────────

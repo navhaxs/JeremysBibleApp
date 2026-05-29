@@ -44,14 +44,12 @@ public partial class MainView : UserControl
     // Raised when the user taps the Journals button.
     public event EventHandler? JournalsRequested;
 
-    // Raised when the user taps the Journal flyout button.
-    public event EventHandler? JournalFlyoutRequested;
-
     // Surfaces ink events from the overlay canvas.
     public event EventHandler<InkStrokeEventArgs>? StrokeCompleted;
-    public event EventHandler? StrokeUndone;
+    public event EventHandler<InkStrokeRemovedEventArgs>? StrokeRemoved;
 
     private InkOverlayCanvas? _inkOverlay;
+    private Grid? _inkAreaGrid;
     private Border? _readerProgressTrack;
     private Border? _readerProgressThumb;
     private Canvas? _chapterMarkersCanvas;
@@ -84,7 +82,8 @@ public partial class MainView : UserControl
     private Button? _colorDark;
     private Button? _customColorButton;
     private Button? _undoButton;
-    private Button? _journalButton;
+    private Button? _redoButton;
+    private Button? _journalsHeaderButton;
     private Border? _journalUnsavedBadge;
     private TextBlock? _activeJournalLabel;
     private ColorView? _colorPickerView;
@@ -93,6 +92,8 @@ public partial class MainView : UserControl
 
     private bool _isMouseDragging;
     private Point _lastMousePosition;
+    private bool _isTouchPanning;
+    private Point _lastTouchPosition;
     private bool _suppressReaderProgressSync;
     private bool _suppressScrollEventsForTabSwitch;
     private double? _pendingScrollRestoreY;
@@ -149,6 +150,7 @@ public partial class MainView : UserControl
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
+        _inkAreaGrid    = this.FindControl<Grid>("InkAreaGrid");
 
         // Provide paragraph-position callbacks so ink strokes can anchor to
         // paragraphs and survive virtualizing-panel re-layout.
@@ -157,15 +159,13 @@ public partial class MainView : UserControl
             _inkOverlay.FindParagraphAtContentY = FindParagraphAtContentY;
             _inkOverlay.GetParagraphContentTop = GetParagraphContentTopByIndex;
             _inkOverlay.StrokeCompleted += (_, e) => StrokeCompleted?.Invoke(this, e);
-            _inkOverlay.StrokeUndone += (_, _) => StrokeUndone?.Invoke(this, EventArgs.Empty);
+            _inkOverlay.StrokeRemoved += (_, e) => StrokeRemoved?.Invoke(this, e);
         }
 
-        _journalButton = this.FindControl<Button>("JournalButton");
+        _journalsHeaderButton = this.FindControl<Button>("JournalsButton");
         _journalUnsavedBadge = this.FindControl<Border>("JournalUnsavedBadge");
         _activeJournalLabel = this.FindControl<TextBlock>("ActiveJournalLabel");
-
-        if (_journalButton != null)
-            _journalButton.Click += (_, _) => JournalFlyoutRequested?.Invoke(this, EventArgs.Empty);
+        _redoButton = this.FindControl<Button>("RedoButton");
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
         _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
@@ -219,8 +219,11 @@ public partial class MainView : UserControl
         RefreshReaderProgress();
 
         // ── Pen event routing → InkOverlay ──────────────────────────────────
-        _paragraphList.AddHandler(PointerPressedEvent, OnListBoxPenPressed,
-            handledEventsToo: true);
+        // Attach to the full content grid (not just the ListBox) so strokes can
+        // begin anywhere in the visible area, including the whitespace margins
+        // that appear outside the text column when a journal layout sets MaxWidth.
+        (_inkAreaGrid ?? (InputElement?)_paragraphList)?.AddHandler(
+            PointerPressedEvent, OnListBoxPenPressed, handledEventsToo: true);
         
         // ── Mouse drag scrolling ─────────────────────────────────────────────
         _paragraphList.AddHandler(PointerPressedEvent, OnListBoxMousePressed,
@@ -229,6 +232,14 @@ public partial class MainView : UserControl
             handledEventsToo: true);
         _paragraphList.AddHandler(PointerReleasedEvent, OnListBoxMouseReleased,
             handledEventsToo: true);
+
+        // ── Margin touch panning (journal mode: finger drag outside text column) ──
+        if (_inkAreaGrid != null)
+        {
+            _inkAreaGrid.AddHandler(PointerPressedEvent, OnMarginTouchPressed, handledEventsToo: false);
+            _inkAreaGrid.AddHandler(PointerMovedEvent, OnMarginTouchMoved, handledEventsToo: false);
+            _inkAreaGrid.AddHandler(PointerReleasedEvent, OnMarginTouchReleased, handledEventsToo: false);
+        }
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
         UpdateAnnotationState();
@@ -670,6 +681,11 @@ public partial class MainView : UserControl
     private void OnUndoButtonClick(object? sender, RoutedEventArgs e)
     {
         _inkOverlay?.UndoStroke();
+    }
+
+    private void OnRedoButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _inkOverlay?.RedoStroke();
     }
 
     // ── Toolbar: colour selection ─────────────────────────────────────────────
@@ -1393,6 +1409,48 @@ public partial class MainView : UserControl
         e.Handled = true;
     }
 
+    // ── Margin touch panning ─────────────────────────────────────────────────
+
+    private void OnMarginTouchPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.Pointer.Type != PointerType.Touch) return;
+        if (_inkAreaGrid == null || _paragraphList == null) return;
+
+        // Only activate when the touch lands outside the text column.
+        var pos = e.GetPosition(_inkAreaGrid);
+        if (_paragraphList.Bounds.Contains(pos)) return;
+
+        _isTouchPanning = true;
+        _lastTouchPosition = e.GetPosition(_inkAreaGrid);
+        e.Pointer.Capture(_inkAreaGrid);
+        e.Handled = true;
+    }
+
+    private void OnMarginTouchMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isTouchPanning || _paragraphScrollViewer == null) return;
+        if (e.Pointer.Type != PointerType.Touch) return;
+
+        var currentPos = e.GetPosition(_inkAreaGrid);
+        var deltaY = _lastTouchPosition.Y - currentPos.Y;
+
+        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+        var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + deltaY, 0, maxY);
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+
+        _lastTouchPosition = currentPos;
+        e.Handled = true;
+    }
+
+    private void OnMarginTouchReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isTouchPanning || e.Pointer.Type != PointerType.Touch) return;
+
+        _isTouchPanning = false;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
     // ── Journal integration ───────────────────────────────────────────────────
 
     public void SetActiveJournalName(string? name)
@@ -1400,6 +1458,15 @@ public partial class MainView : UserControl
         if (_activeJournalLabel == null) return;
         _activeJournalLabel.Text = name;
         _activeJournalLabel.IsVisible = name != null;
+    }
+
+    public void SetJournalFlyoutOpen(bool open)
+    {
+        if (_journalsHeaderButton == null) return;
+        if (open)
+            _journalsHeaderButton.Classes.Add("flyout-open");
+        else
+            _journalsHeaderButton.Classes.Remove("flyout-open");
     }
 
     public void SetUnsavedBadgeVisible(bool visible)

@@ -78,6 +78,13 @@
       <views:BibleReadingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="BibleReadingView" IsVisible="False" ZIndex="25"
                                Background="{DynamicResource ThemeBackgroundBrush}" />
 
+      <!-- Dismiss overlay: transparent layer that closes the journal flyout on tap-away -->
+      <Border x:Name="JournalFlyoutDismissOverlay"
+              Grid.Column="0" Grid.ColumnSpan="3"
+              IsVisible="False"
+              Background="Transparent"
+              ZIndex="99" />
+
       <!-- Journal flyout — floating panel anchored to the right, below the toolbar -->
       <views:JournalFlyoutView x:Name="JournalFlyoutView"
                                Grid.Column="0" Grid.ColumnSpan="3"
