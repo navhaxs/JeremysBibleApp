@@ -300,5 +300,26 @@ public sealed class SyncCoordinatorTests : IDisposable
         // double dispose should also be safe
         _coordinator.Dispose();
     }
+
+    // ── OnNetworkConnectivityChanged ─────────────────────────────────────
+
+    [Fact]
+    public async Task OnNetworkReconnect_WhenAuthenticated_CallsPullFromDrive()
+    {
+        _authService.IsAuthenticated.Returns(true);
+        _syncService.GetFileModifiedTimesAsync()
+            .Returns(new Dictionary<string, DateTime?>());
+        _queueManager.GetPendingOperationsAsync()
+            .Returns(new List<SyncQueueItem>());
+
+        // Simulate going offline then online
+        _networkMonitor.ConnectivityChanged += Raise.Event<NetworkStatusChangedEventHandler>(false);
+        _networkMonitor.ConnectivityChanged += Raise.Event<NetworkStatusChangedEventHandler>(true);
+
+        // Allow the Task.Delay(500) + async work to complete
+        await Task.Delay(1200);
+
+        await _syncService.Received().GetFileModifiedTimesAsync();
+    }
 }
 

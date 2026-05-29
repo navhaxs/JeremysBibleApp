@@ -602,16 +602,10 @@ public class SyncCoordinator : ISyncCoordinator
 
         if (isConnected && _authService.IsAuthenticated)
         {
-            // Trigger sync when connectivity is restored
             _ = Task.Run(async () =>
             {
-                await Task.Delay(500); // Brief delay for network stabilization
-                var pendingOps = await _queueManager.GetPendingOperationsAsync().ConfigureAwait(false);
-                if (pendingOps.Count > 0)
-                {
-                    RaiseSyncProgress(true, "Syncing queued operations...", 0);
-                    await _syncService.SyncAllAsync().ConfigureAwait(false);
-                }
+                await Task.Delay(500).ConfigureAwait(false); // Brief delay for network stabilization
+                await PullFromDriveAsync().ConfigureAwait(false);
             });
         }
     }

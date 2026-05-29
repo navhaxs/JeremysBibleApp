@@ -381,7 +381,9 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
             .Returns(AuthenticationResult.Success("token", "user@bible.app"));
         _authService.IsAuthenticated.Returns(true);
 
-        _syncService.SyncAllAsync().Returns(SyncResult.Success(1));
+        _syncService.GetFileModifiedTimesAsync().Returns(new Dictionary<string, DateTime?>());
+        _syncService.SaveUserDataAsync(Arg.Any<UserDataSnapshot>()).Returns(SyncResult.Success(1));
+        _syncService.SyncAnnotationAsync(Arg.Any<AnnotationBundle>()).Returns(SyncResult.Success(1));
 
         using var coordinator = CreateCoordinator();
         await coordinator.AuthenticateAsync();
@@ -397,8 +399,9 @@ public sealed class AuthJourneyAndResumeSyncTests : IDisposable
         // Wait for automatic drain (500ms stabilization delay + processing)
         await Task.Delay(1500);
 
-        // The coordinator calls SyncAllAsync on the service when connectivity restores
-        await _syncService.Received().SyncAllAsync();
+        // The coordinator calls PullFromDriveAsync on the service when connectivity restores,
+        // which starts with GetFileModifiedTimesAsync
+        await _syncService.Received().GetFileModifiedTimesAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
