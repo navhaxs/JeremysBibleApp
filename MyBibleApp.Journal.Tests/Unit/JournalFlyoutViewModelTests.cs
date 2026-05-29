@@ -113,10 +113,20 @@ file sealed class FakeJournalStore : IJournalStore
 
     public Task<Result> RenameJournalAsync(string journalId, string newName) => Task.FromResult(Result.Success());
     public Task<Result> UpdateJournalAsync(Models.Journal journal) => Task.FromResult(Result.Success());
-    public Task<Result> SaveInkStrokesAsync(string journalId, IReadOnlyList<JournalInkStroke> strokes) => Task.FromResult(Result.Success());
-    public Task<IReadOnlyList<JournalInkStroke>> GetInkStrokesAsync(string journalId) => Task.FromResult<IReadOnlyList<JournalInkStroke>>([]);
-    public Task<Result> AppendInkStrokeAsync(string journalId, JournalInkStroke stroke) => Task.FromResult(Result.Success());
-    public Task<Result> RemoveInkStrokeAsync(string journalId, string strokeId) => Task.FromResult(Result.Success());
+    public Task<Result> SaveInkStrokesAsync(string journalId, string bookCode, int chapter, IReadOnlyList<JournalInkStroke> strokes) =>
+        Task.FromResult(Result.Success());
+
+    public Task<Result> SaveAllInkStrokesAsync(string journalId, IReadOnlyList<JournalInkStroke> strokes) =>
+        Task.FromResult(Result.Success());
+
+    public Task<IReadOnlyList<JournalInkStroke>> GetInkStrokesAsync(string journalId, string bookCode, int chapter) =>
+        Task.FromResult<IReadOnlyList<JournalInkStroke>>([]);
+
+    public Task<Result> AppendInkStrokeAsync(string journalId, JournalInkStroke stroke) =>
+        Task.FromResult(Result.Success());
+
+    public Task<Result> RemoveInkStrokeAsync(string journalId, string strokeId, string bookCode, int chapter) =>
+        Task.FromResult(Result.Success());
     public Task<JournalDataSnapshot> GetSnapshotAsync() => Task.FromResult(new JournalDataSnapshot { Journals = [], DeletedJournals = [], LastModifiedUtc = DateTime.UtcNow });
     public Task MergeRemoteAsync(JournalDataSnapshot remote) => Task.CompletedTask;
 }

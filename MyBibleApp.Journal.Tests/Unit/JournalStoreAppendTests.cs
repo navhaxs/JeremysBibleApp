@@ -47,7 +47,7 @@ public class JournalStoreAppendTests : IDisposable
     }
 
     [Fact]
-    public async Task AppendInkStrokeAsync_AddsStrokeToJournal()
+    public async Task AppendInkStrokeAsync_AddsStrokeToCorrectChapter()
     {
         var journal = await CreateTestJournalAsync();
         var stroke = new JournalInkStroke
@@ -66,7 +66,7 @@ public class JournalStoreAppendTests : IDisposable
         var appendResult = await _store.AppendInkStrokeAsync(journal.Id, stroke);
 
         Assert.True(appendResult.IsSuccess);
-        var strokes = await _store.GetInkStrokesAsync(journal.Id);
+        var strokes = await _store.GetInkStrokesAsync(journal.Id, "GEN", 1);
         Assert.Single(strokes);
         Assert.Equal(stroke.Id, strokes[0].Id);
         Assert.Equal("GEN", strokes[0].BookCode);
@@ -74,37 +74,45 @@ public class JournalStoreAppendTests : IDisposable
     }
 
     [Fact]
-    public async Task AppendInkStrokeAsync_AccumulatesMultipleStrokes()
+    public async Task AppendInkStrokeAsync_DifferentChapters_StoredInSeparateBuckets()
     {
         var journal = await CreateTestJournalAsync();
         var id1 = Guid.NewGuid().ToString();
         var id2 = Guid.NewGuid().ToString();
 
-        await _store.AppendInkStrokeAsync(journal.Id, new JournalInkStroke { Id = id1, BookCode = "GEN", ChapterNumber = 1 });
-        await _store.AppendInkStrokeAsync(journal.Id, new JournalInkStroke { Id = id2, BookCode = "ROM", ChapterNumber = 8 });
+        await _store.AppendInkStrokeAsync(journal.Id, new JournalInkStroke
+            { Id = id1, BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 });
+        await _store.AppendInkStrokeAsync(journal.Id, new JournalInkStroke
+            { Id = id2, BookCode = "ROM", ChapterNumber = 8, Color = "#FF000000", StrokeWidth = 2.5 });
 
-        var strokes = await _store.GetInkStrokesAsync(journal.Id);
-        Assert.Equal(2, strokes.Count);
+        var gen1 = await _store.GetInkStrokesAsync(journal.Id, "GEN", 1);
+        var rom8 = await _store.GetInkStrokesAsync(journal.Id, "ROM", 8);
+        Assert.Single(gen1);
+        Assert.Equal(id1, gen1[0].Id);
+        Assert.Single(rom8);
+        Assert.Equal(id2, rom8[0].Id);
     }
 
     [Fact]
-    public async Task RemoveInkStrokeAsync_RemovesStrokeById()
+    public async Task RemoveInkStrokeAsync_RemovesStrokeFromCorrectChapter()
     {
         var journal = await CreateTestJournalAsync();
         var id = Guid.NewGuid().ToString();
-        await _store.AppendInkStrokeAsync(journal.Id, new JournalInkStroke { Id = id, BookCode = "GEN", ChapterNumber = 1 });
+        await _store.AppendInkStrokeAsync(journal.Id, new JournalInkStroke
+            { Id = id, BookCode = "GEN", ChapterNumber = 1, Color = "#FF000000", StrokeWidth = 2.5 });
 
-        var removeResult = await _store.RemoveInkStrokeAsync(journal.Id, id);
+        var removeResult = await _store.RemoveInkStrokeAsync(journal.Id, id, "GEN", 1);
 
         Assert.True(removeResult.IsSuccess);
-        var strokes = await _store.GetInkStrokesAsync(journal.Id);
+        var strokes = await _store.GetInkStrokesAsync(journal.Id, "GEN", 1);
         Assert.Empty(strokes);
     }
 
     [Fact]
     public async Task AppendInkStrokeAsync_ReturnsFailure_WhenJournalNotFound()
     {
-        var result = await _store.AppendInkStrokeAsync("nonexistent-id", new JournalInkStroke { Id = "s1" });
+        var result = await _store.AppendInkStrokeAsync("nonexistent-id", new JournalInkStroke
+            { Id = "s1", BookCode = "GEN", ChapterNumber = 1 });
         Assert.False(result.IsSuccess);
     }
 }
