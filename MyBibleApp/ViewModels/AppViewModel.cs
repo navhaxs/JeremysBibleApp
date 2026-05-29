@@ -346,6 +346,21 @@ public class AppViewModel : ViewModelBase, IDisposable
         await _syncCoordinator.ForceSyncAsync().ConfigureAwait(false);
     }
 
+    public async Task SyncJournalNowAsync()
+    {
+        if (_syncCoordinator == null || !IsAuthenticated)
+        {
+            AppendSyncDebugLog("Cannot sync journal: not authenticated.");
+            return;
+        }
+        AppendSyncDebugLog("Manual journal sync requested.");
+        var result = await _syncCoordinator.SyncJournalDataAsync().ConfigureAwait(false);
+        AppendSyncDebugLog(result.IsSuccess
+            ? $"Journal sync succeeded ({result.ItemsSynced} item(s))."
+            : $"Journal sync failed: {result.ErrorMessage}");
+        await RefreshSyncDebugDataAsync().ConfigureAwait(false);
+    }
+
     public async Task<bool> HasPendingLocalSyncChangesAsync()
     {
         if (!IsAuthenticated || _syncQueueManager == null)
@@ -507,6 +522,22 @@ public class AppViewModel : ViewModelBase, IDisposable
             }
         }
 
+        if (_localStorageProvider != null)
+        {
+            try
+            {
+                var journalModTime = await _localStorageProvider.GetAsync("DriveModTime_journals.json").ConfigureAwait(false);
+                var userDataModTime = await _localStorageProvider.GetAsync("DriveModTime_user_data.json").ConfigureAwait(false);
+                lines.Add("--- Cached Drive Mod Times ---");
+                lines.Add($"journals.json:   {(string.IsNullOrWhiteSpace(journalModTime) ? "(none)" : journalModTime)}");
+                lines.Add($"user_data.json:  {(string.IsNullOrWhiteSpace(userDataModTime) ? "(none)" : userDataModTime)}");
+            }
+            catch (Exception ex)
+            {
+                lines.Add($"Cached mod time read error: {ex.Message}");
+            }
+        }
+
         if (_googleDriveSyncService != null && IsAuthenticated)
         {
             try
@@ -522,6 +553,45 @@ public class AppViewModel : ViewModelBase, IDisposable
             catch (Exception ex)
             {
                 lines.Add($"Remote read error: {ex.Message}");
+            }
+
+            try
+            {
+                var journalJson = await _googleDriveSyncService.GetJournalDataAsync().ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(journalJson))
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(journalJson);
+                    if (doc.RootElement.TryGetProperty("journals", out var arr)
+                        && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        lines.Add($"Remote Journals: {arr.GetArrayLength()} journal(s)  ({journalJson.Length:N0} bytes)");
+                        var n = 0;
+                        foreach (var j in arr.EnumerateArray())
+                        {
+                            if (n++ >= 3) break;
+                            var hasMeta = j.TryGetProperty("metadata", out var meta);
+                            var name = hasMeta && meta.TryGetProperty("name", out var np) ? np.GetString() ?? "?" : "?";
+                            var modified = hasMeta && meta.TryGetProperty("lastModifiedUtc", out var mp) ? mp.GetString() ?? "?" : "?";
+                            var shortName = name.Length > 28 ? name[..28] + "…" : name;
+                            var shortMod = modified.Length > 20 ? modified[..20] : modified;
+                            lines.Add($"  · \"{shortName}\"  {shortMod}");
+                        }
+                        if (arr.GetArrayLength() > 3)
+                            lines.Add($"  … and {arr.GetArrayLength() - 3} more");
+                    }
+                    else
+                    {
+                        lines.Add($"Remote Journals: (non-standard format, {journalJson.Length:N0} bytes)");
+                    }
+                }
+                else
+                {
+                    lines.Add("Remote Journals: (none on Drive)");
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add($"Remote journal read error: {ex.Message}");
             }
         }
 
