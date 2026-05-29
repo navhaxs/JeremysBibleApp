@@ -321,5 +321,32 @@ public sealed class SyncCoordinatorTests : IDisposable
 
         await _syncService.Received().GetFileModifiedTimesAsync();
     }
+
+    // ── SyncJournalDataAsync ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task SyncJournalDataAsync_AfterSuccessfulPush_CachesNewModifiedTime()
+    {
+        _authService.IsAuthenticated.Returns(true);
+
+        var journalProvider = Substitute.For<IJournalSyncProvider>();
+        journalProvider.GetSnapshotJsonAsync().Returns("{\"journals\":[]}");
+        journalProvider.MergeRemoteJsonAsync(Arg.Any<string>()).Returns(Task.CompletedTask);
+
+        _syncService.GetJournalDataAsync().Returns((string?)null);
+        _syncService.SaveJournalDataAsync(Arg.Any<string>()).Returns(SyncResult.Success(1));
+
+        var newModTime = new DateTime(2026, 5, 29, 10, 0, 0, DateTimeKind.Utc);
+        _syncService.GetFileModifiedTimesAsync()
+            .Returns(new Dictionary<string, DateTime?> { ["journals.json"] = newModTime });
+
+        _coordinator.SetJournalSyncProvider(journalProvider);
+
+        await _coordinator.SyncJournalDataAsync();
+
+        await _localStorage.Received(1).SaveAsync(
+            "DriveModTime_journals.json",
+            newModTime.ToString("O"));
+    }
 }
 

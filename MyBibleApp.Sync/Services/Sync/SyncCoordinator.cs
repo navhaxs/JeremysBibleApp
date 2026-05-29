@@ -197,6 +197,13 @@ public class SyncCoordinator : ISyncCoordinator
             var localJson = await _journalSyncProvider.GetSnapshotJsonAsync().ConfigureAwait(false);
             var pushResult = await _syncService.SaveJournalDataAsync(localJson).ConfigureAwait(false);
 
+            if (pushResult.IsSuccess)
+            {
+                var updatedTimes = await _syncService.GetFileModifiedTimesAsync().ConfigureAwait(false);
+                if (updatedTimes.TryGetValue("journals.json", out var newModTime) && newModTime.HasValue)
+                    await SaveCachedModifiedTimeAsync("journals.json", newModTime.Value).ConfigureAwait(false);
+            }
+
             return pushResult;
         }
         catch (Exception ex)
