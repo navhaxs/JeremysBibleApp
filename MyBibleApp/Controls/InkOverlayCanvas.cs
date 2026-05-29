@@ -12,6 +12,9 @@ using SkiaSharp;
 
 namespace MyBibleApp.Controls;
 
+/// <summary>Controls which stroke types an <see cref="InkOverlayCanvas"/> renders.</summary>
+public enum InkDrawMode { All, PenOnly, HighlightOnly }
+
 public sealed class InkStrokeEventArgs : EventArgs
 {
     public required string StrokeId { get; init; }
@@ -30,17 +33,16 @@ public sealed class InkStrokeRemovedEventArgs(IReadOnlyList<string> strokeIds) :
 }
 
 /// <summary>
-/// A single full-viewport ink canvas placed as a sibling of the ListBox.
-/// It is IsHitTestVisible=false so touch events fall through to the ListBox for
-/// scrolling. Pen events are routed here by MainView via pointer capture.
+/// A full-viewport ink canvas placed as a sibling of the ListBox.
+/// IsHitTestVisible=false so touch events fall through to the ListBox for scrolling.
+/// Pen events are routed here by MainView via pointer capture.
 ///
-/// Strokes are stored in content-space coordinates (y + scrollOffset at time of
-/// drawing) and rendered back to viewport space via a single PushTransform so they
-/// appear to scroll along with the text.
+/// Strokes are stored in content-space coordinates and rendered back to viewport space
+/// so they scroll with the text.
 ///
-/// Highlight strokes are composited with SKBlendMode.Multiply via a custom Skia draw
-/// operation so they darken the underlying text rather than covering it.
-/// Pen strokes use regular SourceOver rendering on top.
+/// Highlight strokes use SKBlendMode.Multiply (drawn above text). Pen strokes use
+/// SKBlendMode.SrcOver and are rendered on a sibling canvas placed below the text layer.
+/// Set <see cref="DrawMode"/> and <see cref="DataSource"/> to split the two layers.
 /// </summary>
 public class InkOverlayCanvas : Control
 {
@@ -74,6 +76,47 @@ public class InkOverlayCanvas : Control
         set => SetValue(IsHighlighterModeProperty, value);
     }
 
+    public static readonly StyledProperty<InkDrawMode> DrawModeProperty =
+        AvaloniaProperty.Register<InkOverlayCanvas, InkDrawMode>(nameof(DrawMode), InkDrawMode.All);
+
+    public InkDrawMode DrawMode
+    {
+        get => GetValue(DrawModeProperty);
+        set => SetValue(DrawModeProperty, value);
+    }
+
+    /// <summary>
+    /// When set, this canvas reads stroke data from the source canvas rather than its own store.
+    /// Used by the pen-underlay canvas (DrawMode=PenOnly) to mirror the primary InkOverlay.
+    /// </summary>
+    public InkOverlayCanvas? DataSource { get; set; }
+
+    private List<InkOverlayCanvas>? _renderSlaves;
+
+    /// <summary>Register a slave canvas that should be invalidated whenever this canvas redraws.</summary>
+    public void RegisterSlave(InkOverlayCanvas slave) =>
+        (_renderSlaves ??= new()).Add(slave);
+
+    private void Redraw()
+    {
+        InvalidateVisual();
+        if (_renderSlaves != null)
+            foreach (var s in _renderSlaves)
+                s.InvalidateVisual();
+    }
+
+    // During active stroke drawing only the layer rendering that stroke type needs
+    // updating. Highlights live on InkOverlay (self); pen strokes live on PenUnderlay
+    // (slaves). This avoids redundant full re-renders on the other layer at 120Hz.
+    private void RedrawActiveStrokeLayer()
+    {
+        if (_activeIsHighlight)
+            InvalidateVisual();
+        else if (_renderSlaves != null)
+            foreach (var s in _renderSlaves)
+                s.InvalidateVisual();
+    }
+
     private const double PenStrokeWidth         = 2.5;
     private const double HighlighterStrokeWidth = 14.0;
 
@@ -88,11 +131,12 @@ public class InkOverlayCanvas : Control
         Rect ContentBounds,         // content-space AABB for culling / eraser
         Color Color,                // per-stroke ink colour
         double StrokeWidth,         // pen width used when drawing this stroke
-        bool IsHighlight,           // true → drawn with multiply blend
+        bool IsHighlight,           // true → highlight (Multiply blend, above text); false → pen (SrcOver, below text)
         IReadOnlyList<Point>? Points, // raw points for eraser hit-testing (null for dots)
         int AnchorParagraphIndex = -1,   // index into the paragraph list at draw time
         double AnchorContentTop = 0,     // content-space Y of that paragraph's top at draw time
-        string StrokeId = "");           // stable ID linking cache entry to journal store
+        string StrokeId = "",            // stable ID linking cache entry to journal store
+        SKPath? CachedPath = null);      // pre-built Skia path; reused every frame to avoid O(n) rebuild
 
     private readonly List<StrokeCache> _cachedStrokes = new();
     private readonly Stack<StrokeCache> _redoStack = new();
@@ -135,7 +179,7 @@ public class InkOverlayCanvas : Control
     {
         if (Math.Abs(offsetY - _scrollOffsetY) < 0.5) return;
         _scrollOffsetY = offsetY;
-        InvalidateVisual();
+        Redraw();
     }
 
     /// <summary>
@@ -147,7 +191,7 @@ public class InkOverlayCanvas : Control
     {
         if (Math.Abs(offsetX - _textColumnOffsetX) < 0.5) return;
         _textColumnOffsetX = offsetX;
-        InvalidateVisual();
+        Redraw();
     }
 
     /// <summary>Begin a new ink stroke (or erase) at the given viewport position.</summary>
@@ -170,7 +214,7 @@ public class InkOverlayCanvas : Control
         _activeAnchorContentTop = anchor?.ContentTop ?? 0;
 
         _activeStroke = new List<Point> { contentPt };
-        InvalidateVisual();
+        Redraw();
     }
 
     /// <summary>Add a point to the active stroke (or continue erasing).</summary>
@@ -182,8 +226,15 @@ public class InkOverlayCanvas : Control
             return;
         }
         if (_activeStroke == null) return;
-        _activeStroke.Add(ToContent(viewportPoint));
-        InvalidateVisual();
+        var contentPt = ToContent(viewportPoint);
+        // Skip near-duplicate points — reduces point count and mitigates render-
+        // thread coalescing pressure. Threshold ~1.4 px in content space.
+        var last = _activeStroke[_activeStroke.Count - 1];
+        var dx = contentPt.X - last.X;
+        var dy = contentPt.Y - last.Y;
+        if (dx * dx + dy * dy < 2.0) return;
+        _activeStroke.Add(contentPt);
+        RedrawActiveStrokeLayer();
     }
 
     /// <summary>Finish the current stroke. No-op in eraser mode.</summary>
@@ -225,7 +276,8 @@ public class InkOverlayCanvas : Control
                     pts,
                     _activeAnchorIndex,
                     _activeAnchorContentTop,
-                    id));
+                    id,
+                    CachedPath: BuildSmoothPath(pts)));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
                     StrokeId = id,
@@ -241,7 +293,7 @@ public class InkOverlayCanvas : Control
         _activeStroke = null;
         _activeAnchorIndex = -1;
         _activeAnchorContentTop = 0;
-        InvalidateVisual();
+        Redraw();
     }
 
     // ── Per-tab ink state snapshot ────────────────────────────────────────────
@@ -265,7 +317,7 @@ public class InkOverlayCanvas : Control
         if (state != null)
             _cachedStrokes.AddRange(state.Strokes);
         _activeStroke = null;
-        InvalidateVisual();
+        Redraw();
     }
 
     /// <summary>Erase all strokes.</summary>
@@ -274,7 +326,7 @@ public class InkOverlayCanvas : Control
         _cachedStrokes.Clear();
         _redoStack.Clear();
         _activeStroke = null;
-        InvalidateVisual();
+        Redraw();
     }
 
     /// <summary>Load strokes from a persisted journal, replacing any existing strokes.</summary>
@@ -306,10 +358,11 @@ public class InkOverlayCanvas : Control
                     ComputeBounds(pts),
                     color, stroke.StrokeWidth, stroke.IsHighlight,
                     pts,
-                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
+                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id,
+                    CachedPath: BuildSmoothPath(pts)));
             }
         }
-        InvalidateVisual();
+        Redraw();
     }
 
     /// <summary>Remove the most recently completed stroke, pushing it onto the redo stack.</summary>
@@ -319,7 +372,7 @@ public class InkOverlayCanvas : Control
         var removed = _cachedStrokes[_cachedStrokes.Count - 1];
         _cachedStrokes.RemoveAt(_cachedStrokes.Count - 1);
         _redoStack.Push(removed);
-        InvalidateVisual();
+        Redraw();
         if (!string.IsNullOrEmpty(removed.StrokeId))
             StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs([removed.StrokeId]));
     }
@@ -330,7 +383,7 @@ public class InkOverlayCanvas : Control
         if (_redoStack.Count == 0) return;
         var stroke = _redoStack.Pop();
         _cachedStrokes.Add(stroke);
-        InvalidateVisual();
+        Redraw();
         if (!string.IsNullOrEmpty(stroke.StrokeId))
         {
             var pts = stroke.Points ?? (IReadOnlyList<Point>)[];
@@ -442,12 +495,52 @@ public class InkOverlayCanvas : Control
         if (removedIds != null)
         {
             _redoStack.Clear();
-            InvalidateVisual();
+            Redraw();
             StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(removedIds));
         }
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a smooth Catmull-Rom spline (converted to cubic Béziers) through all
+    /// input points. Called once per completed stroke; the result is cached in
+    /// <see cref="StrokeCache.CachedPath"/> and reused on every render frame.
+    /// </summary>
+    private static SKPath BuildSmoothPath(IReadOnlyList<Point> pts)
+    {
+        var path = new SKPath();
+        if (pts.Count < 2) return path;
+
+        path.MoveTo((float)pts[0].X, (float)pts[0].Y);
+
+        if (pts.Count == 2)
+        {
+            path.LineTo((float)pts[1].X, (float)pts[1].Y);
+            return path;
+        }
+
+        // Catmull-Rom → cubic Bézier: each segment uses adjacent points as
+        // Catmull-Rom tangent sources, producing C1-continuous smooth curves
+        // that pass through every captured point. Recovers visual quality even
+        // when pointer events were coalesced under render load.
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            var p0 = pts[Math.Max(0, i - 1)];
+            var p1 = pts[i];
+            var p2 = pts[i + 1];
+            var p3 = pts[Math.Min(pts.Count - 1, i + 2)];
+
+            float cp1x = (float)(p1.X + (p2.X - p0.X) / 6.0);
+            float cp1y = (float)(p1.Y + (p2.Y - p0.Y) / 6.0);
+            float cp2x = (float)(p2.X - (p3.X - p1.X) / 6.0);
+            float cp2y = (float)(p2.Y - (p3.Y - p1.Y) / 6.0);
+
+            path.CubicTo(cp1x, cp1y, cp2x, cp2y, (float)p2.X, (float)p2.Y);
+        }
+
+        return path;
+    }
 
     /// <summary>
     /// Compute drift delta for a stroke's anchor paragraph. Returns 0 if no
@@ -464,27 +557,36 @@ public class InkOverlayCanvas : Control
     {
         base.Render(context);
 
-        if (_cachedStrokes.Count == 0 && _activeStroke == null) return;
+        var src  = DataSource ?? this;
+        var mode = DrawMode;
+
+        if (src._cachedStrokes.Count == 0 && src._activeStroke == null) return;
 
         using var clip = context.PushClip(new Rect(Bounds.Size));
 
-        double viewTop    = _scrollOffsetY - 2000;
-        double viewBottom = _scrollOffsetY + Bounds.Height + 2000;
+        double viewTop    = src._scrollOffsetY - 2000;
+        double viewBottom = src._scrollOffsetY + Bounds.Height + 2000;
 
         List<(StrokeCache Stroke, double DriftDelta)>? highlightStrokes = null;
         List<(StrokeCache Stroke, double DriftDelta)>? penStrokes = null;
 
-        foreach (var s in _cachedStrokes)
+        foreach (var s in src._cachedStrokes)
         {
-            var delta = GetDriftDelta(s.AnchorParagraphIndex, s.AnchorContentTop);
+            var delta = src.GetDriftDelta(s.AnchorParagraphIndex, s.AnchorContentTop);
             var top   = s.ContentBounds.Top    + delta;
             var bot   = s.ContentBounds.Bottom + delta;
             if (bot < viewTop || top > viewBottom) continue;
 
             if (s.IsHighlight)
-                (highlightStrokes ??= new()).Add((s, delta));
+            {
+                if (mode != InkDrawMode.PenOnly)
+                    (highlightStrokes ??= new()).Add((s, delta));
+            }
             else
-                (penStrokes ??= new()).Add((s, delta));
+            {
+                if (mode != InkDrawMode.HighlightOnly)
+                    (penStrokes ??= new()).Add((s, delta));
+            }
         }
 
         StrokeCache? activeHighlight = null;
@@ -492,18 +594,24 @@ public class InkOverlayCanvas : Control
         StrokeCache? activePen       = null;
         double activePenDelta        = 0;
 
-        if (_activeStroke != null && _activeStroke.Count > 0)
+        if (src._activeStroke != null && src._activeStroke.Count > 0)
         {
-            var pts = _activeStroke.AsReadOnly();
-            if (_activeIsHighlight)
+            var pts = src._activeStroke.AsReadOnly();
+            if (src._activeIsHighlight)
             {
-                activeHighlight      = new StrokeCache(default, default, _activeStrokeColor, _activeStrokeWidth, true, pts, _activeAnchorIndex, _activeAnchorContentTop);
-                activeHighlightDelta = GetDriftDelta(_activeAnchorIndex, _activeAnchorContentTop);
+                if (mode != InkDrawMode.PenOnly)
+                {
+                    activeHighlight      = new StrokeCache(default, default, src._activeStrokeColor, src._activeStrokeWidth, true, pts, src._activeAnchorIndex, src._activeAnchorContentTop);
+                    activeHighlightDelta = src.GetDriftDelta(src._activeAnchorIndex, src._activeAnchorContentTop);
+                }
             }
             else
             {
-                activePen      = new StrokeCache(default, default, _activeStrokeColor, _activeStrokeWidth, false, pts, _activeAnchorIndex, _activeAnchorContentTop);
-                activePenDelta = GetDriftDelta(_activeAnchorIndex, _activeAnchorContentTop);
+                if (mode != InkDrawMode.HighlightOnly)
+                {
+                    activePen      = new StrokeCache(default, default, src._activeStrokeColor, src._activeStrokeWidth, false, pts, src._activeAnchorIndex, src._activeAnchorContentTop);
+                    activePenDelta = src.GetDriftDelta(src._activeAnchorIndex, src._activeAnchorContentTop);
+                }
             }
         }
 
@@ -513,10 +621,10 @@ public class InkOverlayCanvas : Control
                 highlightStrokes, penStrokes,
                 activeHighlight, activeHighlightDelta,
                 activePen, activePenDelta,
-                _scrollOffsetY, _textColumnOffsetX));
+                src._scrollOffsetY, src._textColumnOffsetX));
     }
 
-    // ── Skia ink draw operation (Multiply blend for both highlights and pen) ─────
+    // ── Skia ink draw operation ───────────────────────────────────────────────────
 
     private sealed class SkiaInkDrawOperation : ICustomDrawOperation
     {
@@ -570,10 +678,10 @@ public class InkOverlayCanvas : Control
                 StrokeCap   = SKStrokeCap.Round,
                 StrokeJoin  = SKStrokeJoin.Round,
                 IsAntialias = true,
-                BlendMode   = SKBlendMode.Multiply,
             };
 
-            // Highlights first (alpha=128), pen strokes on top (stroke's own alpha).
+            // Highlights use Multiply so they darken text rather than covering it.
+            paint.BlendMode = SKBlendMode.Multiply;
             if (_highlightStrokes != null)
                 foreach (var (stroke, delta) in _highlightStrokes)
                 {
@@ -591,6 +699,8 @@ public class InkOverlayCanvas : Control
                 canvas.Restore();
             }
 
+            // Pen strokes use SrcOver; they live on a canvas below the text so text reads over them.
+            paint.BlendMode = SKBlendMode.SrcOver;
             if (_penStrokes != null)
                 foreach (var (stroke, delta) in _penStrokes)
                 {
@@ -634,6 +744,14 @@ public class InkOverlayCanvas : Control
                 canvas.DrawCircle((float)pts[0].X, (float)pts[0].Y,
                     (float)(stroke.StrokeWidth / 2), paint);
                 paint.Style = SKPaintStyle.Stroke;
+                return;
+            }
+
+            // Use the pre-built cached path (all completed strokes); fall back to
+            // on-the-fly LineTo only for the active (in-progress) stroke.
+            if (stroke.CachedPath != null)
+            {
+                canvas.DrawPath(stroke.CachedPath, paint);
                 return;
             }
 

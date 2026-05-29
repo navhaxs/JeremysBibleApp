@@ -49,6 +49,7 @@ public partial class MainView : UserControl
     public event EventHandler<InkStrokeRemovedEventArgs>? StrokeRemoved;
 
     private InkOverlayCanvas? _inkOverlay;
+    private InkOverlayCanvas? _penUnderlay;
     private Grid? _inkAreaGrid;
     private Border? _readerProgressTrack;
     private Border? _readerProgressThumb;
@@ -59,6 +60,9 @@ public partial class MainView : UserControl
     private bool _isScrollTrackingAttached;
     private bool _waitingForLayoutToAttachScrollViewer;
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
+    // Content-space Y position of each paragraph, indexed by paragraph list position.
+    // Built once per layout change; O(1) lookup replaces per-frame visual-tree traversal.
+    private double[] _paragraphContentTops = [];
     private ScriptureViewModel? _subscribedVm;
     // Velocity-based chapter marker reveal
     private double _lastScrollOffset;
@@ -150,6 +154,7 @@ public partial class MainView : UserControl
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
+        _penUnderlay    = this.FindControl<InkOverlayCanvas>("PenUnderlay");
         _inkAreaGrid    = this.FindControl<Grid>("InkAreaGrid");
 
         // Provide paragraph-position callbacks so ink strokes can anchor to
@@ -157,9 +162,19 @@ public partial class MainView : UserControl
         if (_inkOverlay != null)
         {
             _inkOverlay.FindParagraphAtContentY = FindParagraphAtContentY;
-            _inkOverlay.GetParagraphContentTop = GetParagraphContentTopByIndex;
+            _inkOverlay.GetParagraphContentTop = GetParagraphContentTopFast;
             _inkOverlay.StrokeCompleted += (_, e) => StrokeCompleted?.Invoke(this, e);
             _inkOverlay.StrokeRemoved += (_, e) => StrokeRemoved?.Invoke(this, e);
+            // Highlights stay on the overlay (above text, Multiply blend).
+            _inkOverlay.DrawMode = InkDrawMode.HighlightOnly;
+        }
+
+        // Pen underlay sits below the text layer; it mirrors stroke data from the overlay.
+        if (_penUnderlay != null && _inkOverlay != null)
+        {
+            _penUnderlay.DataSource = _inkOverlay;
+            _penUnderlay.DrawMode   = InkDrawMode.PenOnly;
+            _inkOverlay.RegisterSlave(_penUnderlay);
         }
 
         _journalsHeaderButton = this.FindControl<Button>("JournalsButton");
@@ -239,6 +254,8 @@ public partial class MainView : UserControl
             _inkAreaGrid.AddHandler(PointerPressedEvent, OnMarginTouchPressed, handledEventsToo: false);
             _inkAreaGrid.AddHandler(PointerMovedEvent, OnMarginTouchMoved, handledEventsToo: false);
             _inkAreaGrid.AddHandler(PointerReleasedEvent, OnMarginTouchReleased, handledEventsToo: false);
+            // Keep ink canvas column-offset in sync when the viewport is resized.
+            _inkAreaGrid.SizeChanged += (_, _) => UpdateInkTextColumnOffset();
         }
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
@@ -284,6 +301,7 @@ public partial class MainView : UserControl
     private void OnParagraphListLayoutUpdated(object? sender, EventArgs e)
     {
         EnsureScrollTrackingAttached();
+        RebuildParagraphTopCache();
     }
 
     private void OnParagraphScrollChanged(object? sender, ScrollChangedEventArgs e)
@@ -426,6 +444,16 @@ public partial class MainView : UserControl
         return offset;
     }
 
+    /// <summary>Forces the ink overlay scroll offset to match the current scroll viewer position.
+    /// Call after loading journal strokes so the ink canvas renders at the right content-Y.</summary>
+    public void SyncInkScrollOffset()
+    {
+        if (_inkOverlay == null || _paragraphScrollViewer == null) return;
+        _inkOverlay.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
+        if (DataContext is ScriptureViewModel vm)
+            vm.AppVM.AppendSyncDebugLog($"[Ink] SyncInkScrollOffset → Y={_paragraphScrollViewer.Offset.Y:F1}");
+    }
+
     /// <summary>Suppresses scroll-driven side effects (header sync, chapter markers, reading progress).
     /// Call before changing DataContext during tab switches to prevent stale scroll events.</summary>
     public void SuppressScrollEvents()
@@ -457,35 +485,6 @@ public partial class MainView : UserControl
                     vm.AppVM.AppendSyncDebugLog("[Scroll] Suppress flags cleared");
             }, DispatcherPriority.Loaded);
         }
-    }
-
-    /// <summary>Restores a previously captured scroll offset when switching back to a tab.
-    /// Scroll-driven events (header sync, chapter markers) are suppressed until restore completes.</summary>
-    public void RestoreScrollOffset(double? offsetY)
-    {
-        // Cancel any in-progress restore from a previous tab switch.
-        ClearScrollRestoreHook();
-
-        if (offsetY == null || _paragraphScrollViewer == null)
-        {
-            if (DataContext is ScriptureViewModel vm2)
-                vm2.AppVM.AppendSyncDebugLog($"[Scroll] RestoreScrollOffset skipped (offsetY={offsetY?.ToString("F1") ?? "null"}, scrollViewer={((_paragraphScrollViewer != null) ? "present" : "null")})");
-            return;
-        }
-
-        _suppressScrollEventsForTabSwitch = true;
-        _suppressReaderProgressSync = true;
-        _pendingScrollRestoreY = offsetY.Value;
-        _scrollRestoreRetries = 0;
-
-        if (DataContext is ScriptureViewModel vm)
-            vm.AppVM.AppendSyncDebugLog($"[Scroll] RestoreScrollOffset pending Y={offsetY.Value:F1}, suppressing events");
-
-        // Hook LayoutUpdated to repeatedly apply the offset until it sticks.
-        // The virtualizing panel may reset scroll to 0 across several layout passes
-        // as it re-measures after an ItemsSource change.
-        if (_paragraphList != null)
-            _paragraphList.LayoutUpdated += OnScrollRestoreLayoutUpdated;
     }
 
     private void OnScrollRestoreLayoutUpdated(object? sender, EventArgs e)
@@ -1159,6 +1158,43 @@ public partial class MainView : UserControl
     // ── Ink paragraph anchoring helpers ───────────────────────────────────────
 
     /// <summary>
+    /// Walks the visual tree once and caches every paragraph's content-space Y.
+    /// Called after layout settles; safe to call repeatedly (cheap if no change).
+    /// </summary>
+    private void RebuildParagraphTopCache()
+    {
+        if (_paragraphList == null || _paragraphScrollViewer == null || _paragraphs.Count == 0)
+        {
+            _paragraphContentTops = [];
+            return;
+        }
+
+        var tops = new double[_paragraphs.Count];
+        Array.Fill(tops, -1.0);
+
+        foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
+        {
+            if (item.DataContext is not BibleParagraph para) continue;
+            var idx = FindParagraphIndex(para);
+            if (idx < 0) continue;
+            var viewportY = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
+            if (viewportY == null) continue;
+            // content-Y = scrollOffset + viewportY (scroll-independent)
+            tops[idx] = _paragraphScrollViewer.Offset.Y + viewportY.Value;
+        }
+
+        _paragraphContentTops = tops;
+    }
+
+    /// <summary>O(1) paragraph content-top lookup for the ink drift-correction callback.</summary>
+    private double? GetParagraphContentTopFast(int paragraphIndex)
+    {
+        if (paragraphIndex < 0 || paragraphIndex >= _paragraphContentTops.Length) return null;
+        var v = _paragraphContentTops[paragraphIndex];
+        return v >= 0 ? v : null;
+    }
+
+    /// <summary>
     /// Given a content-space Y coordinate, finds the realized paragraph whose
     /// bounds contain that Y and returns its index + content-space top.
     /// </summary>
@@ -1501,10 +1537,14 @@ public partial class MainView : UserControl
                 _paragraphList.FontFamily = new Avalonia.Media.FontFamily(layout.FontFamily);
         }
 
-        // Keep the ink canvas co-extensive with the text column so strokes are stored
-        // in text-column-relative X coordinates and remain aligned on any screen width.
-        if (_inkOverlay != null)
-            _inkOverlay.MaxWidth = _paragraphList.MaxWidth;
+        // Update ink canvas text-column offset after layout settles.
+        Dispatcher.UIThread.Post(UpdateInkTextColumnOffset, DispatcherPriority.Loaded);
+    }
+
+    private void UpdateInkTextColumnOffset()
+    {
+        if (_inkOverlay == null || _paragraphList == null) return;
+        _inkOverlay.UpdateTextColumnOffsetX(_paragraphList.Bounds.X);
     }
 }
 

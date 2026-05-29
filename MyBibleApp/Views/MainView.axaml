@@ -371,6 +371,8 @@
       
       <!-- Main content grid (row 2) with overlay -->
       <Grid x:Name="InkAreaGrid" Grid.Row="2" RowDefinitions="*" Margin="0,0,0,0" Background="Transparent">
+        <!-- Pen ink underlay — below the scripture text, SrcOver blend -->
+        <controls:InkOverlayCanvas Grid.Row="0" x:Name="PenUnderlay" IsHitTestVisible="False" ZIndex="-1" />
         <!-- ListBox for Bible content -->
         <ListBox Grid.Row="0"
                  Name="ParagraphList"
