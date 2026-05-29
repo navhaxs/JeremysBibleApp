@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace MyBibleApp.Models;
 
@@ -18,8 +19,15 @@ public sealed class DeletedJournalTombstone
 
 public sealed class JournalEntry
 {
-    public Journal Metadata { get; init; } = new();
-    public List<JournalInkStroke> InkStrokes { get; init; } = [];
+    public Journal Metadata { get; set; } = new();
+
+    // Primary store. Key = "{BOOKCODE}:{chapter}" e.g. "GEN:1", "ROM:8", "PSA:119"
+    public Dictionary<string, List<JournalInkStroke>> InkStrokesByChapter { get; set; } = new();
+
+    // v1 migration shim. Populated by JSON deserializer when reading old format.
+    // Set to null after migration so it is omitted from all subsequent writes.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<JournalInkStroke>? InkStrokes { get; set; }
 }
 
 public sealed class JournalCreateRequest
