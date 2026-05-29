@@ -153,6 +153,10 @@ internal static class Program
                         await DoClearAll();
                         break;
 
+                    case ConsoleKey.J:
+                        await DoInspectJournalJson();
+                        break;
+
                     case ConsoleKey.Q:
                     case ConsoleKey.Escape:
                         return;
@@ -445,6 +449,54 @@ internal static class Program
         PrintResult("Local queue and storage cleared.");
     }
 
+    private static async Task DoInspectJournalJson()
+    {
+        if (!_authService.IsAuthenticated)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("  Not authenticated — authenticate first (option 1).");
+            Console.ResetColor();
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("  ── Remote journals.json ────────────────────────────");
+        Console.ResetColor();
+
+        var json = await _syncService.GetJournalDataAsync();
+        if (string.IsNullOrEmpty(json))
+        {
+            Console.WriteLine("    (no journals.json on Drive)");
+            return;
+        }
+
+        Console.WriteLine($"    Size: {json.Length:N0} bytes");
+        Console.WriteLine();
+
+        try
+        {
+            var element = JsonSerializer.Deserialize<JsonElement>(json);
+            var pretty = JsonSerializer.Serialize(element, new JsonSerializerOptions { WriteIndented = true });
+            var lines = pretty.Split('\n');
+            var limit = Math.Min(lines.Length, 120);
+            for (var i = 0; i < limit; i++)
+                Console.WriteLine("    " + lines[i]);
+            if (lines.Length > 120)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"    … ({lines.Length - 120} more lines — copy to file for full view)");
+                Console.ResetColor();
+            }
+        }
+        catch
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("    (not valid JSON — dumping raw)");
+            Console.ResetColor();
+            Console.WriteLine(Truncate(json, 3000));
+        }
+    }
+
     // ────────────────────────────────────────────────────────────────
     //  UI helpers
     // ────────────────────────────────────────────────────────────────
@@ -483,6 +535,7 @@ internal static class Program
           8  Fetch remote data from Drive
           9  Sign out
           0  Clear local queue & storage
+          J  Inspect journals.json (raw)
           Q  Quit
           ──────────────────────────────────────
         """);
