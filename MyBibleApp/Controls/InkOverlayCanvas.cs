@@ -84,8 +84,7 @@ public class InkOverlayCanvas : Control
     // virtualizing-panel drift by comparing the anchor paragraph's recorded
     // content-top with its current content-top.
     internal readonly record struct StrokeCache(
-        StreamGeometry? Geo,        // null → single-dot stroke
-        Point DotCenter,            // used only when Geo is null
+        Point DotCenter,            // used only when Points is null
         Rect ContentBounds,         // content-space AABB for culling / eraser
         Color Color,                // per-stroke ink colour
         double StrokeWidth,         // pen width used when drawing this stroke
@@ -98,10 +97,8 @@ public class InkOverlayCanvas : Control
     private readonly List<StrokeCache> _cachedStrokes = new();
     private readonly Stack<StrokeCache> _redoStack = new();
 
-    // Active stroke raw points (content-space) and its cached geometry.
+    // Active stroke raw points (content-space).
     private List<Point>? _activeStroke;
-    private StreamGeometry? _activeGeo;     // rebuilt lazily when _activeStrokeDirty
-    private bool _activeStrokeDirty;
     private Color _activeStrokeColor;
     private double _activeStrokeWidth;
     private bool _activeIsHighlight;
@@ -109,8 +106,7 @@ public class InkOverlayCanvas : Control
     private double _activeAnchorContentTop;
 
     private double _scrollOffsetY;
-
-    private readonly Dictionary<(Color, double), Pen> _penCache = new();
+    private double _textColumnOffsetX;
 
     // ── Paragraph position provider (set by MainView) ────────────────────────
 
@@ -137,7 +133,20 @@ public class InkOverlayCanvas : Control
     /// <summary>Call when the ListBox ScrollViewer offset changes.</summary>
     public void UpdateScrollOffset(double offsetY)
     {
+        if (Math.Abs(offsetY - _scrollOffsetY) < 0.5) return;
         _scrollOffsetY = offsetY;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Call when the text column's X position within this canvas changes (e.g. journal layout
+    /// applied, window resized). Strokes are stored in column-relative X coordinates so they
+    /// stay aligned regardless of screen width; this offset converts between the two spaces.
+    /// </summary>
+    public void UpdateTextColumnOffsetX(double offsetX)
+    {
+        if (Math.Abs(offsetX - _textColumnOffsetX) < 0.5) return;
+        _textColumnOffsetX = offsetX;
         InvalidateVisual();
     }
 
@@ -161,8 +170,6 @@ public class InkOverlayCanvas : Control
         _activeAnchorContentTop = anchor?.ContentTop ?? 0;
 
         _activeStroke = new List<Point> { contentPt };
-        _activeGeo = null;
-        _activeStrokeDirty = true;
         InvalidateVisual();
     }
 
@@ -176,7 +183,6 @@ public class InkOverlayCanvas : Control
         }
         if (_activeStroke == null) return;
         _activeStroke.Add(ToContent(viewportPoint));
-        _activeStrokeDirty = true;
         InvalidateVisual();
     }
 
@@ -192,7 +198,7 @@ public class InkOverlayCanvas : Control
             {
                 var p = _activeStroke[0];
                 _cachedStrokes.Add(new StrokeCache(
-                    null, p,
+                    p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     _activeStrokeColor, _activeStrokeWidth, _activeIsHighlight, null,
                     _activeAnchorIndex, _activeAnchorContentTop, id));
@@ -211,7 +217,6 @@ public class InkOverlayCanvas : Control
             {
                 var pts = _activeStroke.AsReadOnly();
                 _cachedStrokes.Add(new StrokeCache(
-                    BuildGeometry(_activeStroke),
                     default,
                     ComputeBounds(_activeStroke),
                     _activeStrokeColor,
@@ -234,8 +239,6 @@ public class InkOverlayCanvas : Control
             }
         }
         _activeStroke = null;
-        _activeGeo = null;
-        _activeStrokeDirty = false;
         _activeAnchorIndex = -1;
         _activeAnchorContentTop = 0;
         InvalidateVisual();
@@ -262,8 +265,6 @@ public class InkOverlayCanvas : Control
         if (state != null)
             _cachedStrokes.AddRange(state.Strokes);
         _activeStroke = null;
-        _activeGeo = null;
-        _activeStrokeDirty = false;
         InvalidateVisual();
     }
 
@@ -273,8 +274,6 @@ public class InkOverlayCanvas : Control
         _cachedStrokes.Clear();
         _redoStack.Clear();
         _activeStroke = null;
-        _activeGeo = null;
-        _activeStrokeDirty = false;
         InvalidateVisual();
     }
 
@@ -295,7 +294,7 @@ public class InkOverlayCanvas : Control
             {
                 var p = pts[0];
                 _cachedStrokes.Add(new StrokeCache(
-                    null, p,
+                    p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     color, stroke.StrokeWidth, stroke.IsHighlight, null,
                     stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
@@ -303,7 +302,6 @@ public class InkOverlayCanvas : Control
             else
             {
                 _cachedStrokes.Add(new StrokeCache(
-                    BuildGeometry(pts),
                     default,
                     ComputeBounds(pts),
                     color, stroke.StrokeWidth, stroke.IsHighlight,
@@ -381,7 +379,6 @@ public class InkOverlayCanvas : Control
     protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
     {
         _activeStroke = null;
-        _activeGeo = null;
         base.OnPointerCaptureLost(e);
     }
 
@@ -408,7 +405,7 @@ public class InkOverlayCanvas : Control
                 continue;
 
             // Single-dot stroke.
-            if (s.Geo is null)
+            if (s.Points is null)
             {
                 var dx = s.DotCenter.X - adjustedPoint.X;
                 var dy = s.DotCenter.Y - adjustedPoint.Y;
@@ -421,14 +418,18 @@ public class InkOverlayCanvas : Control
                 continue;
             }
 
-            // Multi-point stroke – hit if any recorded point is within eraser radius.
-            if (s.Points is null) continue;
+            // Multi-point stroke – hit if eraser circle intersects any segment.
             bool hit = false;
-            foreach (var p in s.Points)
+            if (s.Points.Count == 1)
             {
-                var dx = p.X - adjustedPoint.X;
-                var dy = p.Y - adjustedPoint.Y;
-                if (dx * dx + dy * dy <= radiusSq) { hit = true; break; }
+                var dx = s.Points[0].X - adjustedPoint.X;
+                var dy = s.Points[0].Y - adjustedPoint.Y;
+                hit = dx * dx + dy * dy <= radiusSq;
+            }
+            else
+            {
+                for (int j = 0; j < s.Points.Count - 1 && !hit; j++)
+                    hit = DistToSegmentSq(adjustedPoint, s.Points[j], s.Points[j + 1]) <= radiusSq;
             }
             if (hit)
             {
@@ -465,114 +466,88 @@ public class InkOverlayCanvas : Control
 
         if (_cachedStrokes.Count == 0 && _activeStroke == null) return;
 
-        // Clip to the visible viewport so strokes don't render outside our bounds.
         using var clip = context.PushClip(new Rect(Bounds.Size));
 
-        // Use a generous view range to account for drift-corrected strokes that
-        // shift into/out of the naive range.
         double viewTop    = _scrollOffsetY - 2000;
         double viewBottom = _scrollOffsetY + Bounds.Height + 2000;
 
-        // ── Highlight strokes: rendered first with Skia Multiply blend ────────
-        // Collect visible highlight strokes for the custom Skia draw operation.
         List<(StrokeCache Stroke, double DriftDelta)>? highlightStrokes = null;
+        List<(StrokeCache Stroke, double DriftDelta)>? penStrokes = null;
+
         foreach (var s in _cachedStrokes)
         {
-            if (!s.IsHighlight) continue;
             var delta = GetDriftDelta(s.AnchorParagraphIndex, s.AnchorContentTop);
-            var adjustedTop = s.ContentBounds.Top + delta;
-            var adjustedBottom = s.ContentBounds.Bottom + delta;
-            if (adjustedBottom >= viewTop && adjustedTop <= viewBottom)
+            var top   = s.ContentBounds.Top    + delta;
+            var bot   = s.ContentBounds.Bottom + delta;
+            if (bot < viewTop || top > viewBottom) continue;
+
+            if (s.IsHighlight)
                 (highlightStrokes ??= new()).Add((s, delta));
-        }
-
-        // Include an in-progress highlight stroke if one is active.
-        StrokeCache? activeHighlight = (_activeStroke != null && _activeIsHighlight)
-            ? new StrokeCache(null, default, default, _activeStrokeColor, _activeStrokeWidth, true,
-                              _activeStroke.AsReadOnly(),
-                              _activeAnchorIndex, _activeAnchorContentTop)
-            : null;
-        double activeHighlightDelta = (_activeStroke != null && _activeIsHighlight)
-            ? GetDriftDelta(_activeAnchorIndex, _activeAnchorContentTop) : 0;
-
-        if (highlightStrokes?.Count > 0 || activeHighlight.HasValue)
-            context.Custom(new HighlightDrawOperation(
-                new Rect(Bounds.Size), highlightStrokes, activeHighlight, activeHighlightDelta, _scrollOffsetY));
-
-        // ── Pen strokes: regular SourceOver rendering on top of highlights ────
-        foreach (var stroke in _cachedStrokes)
-        {
-            if (stroke.IsHighlight) continue;
-            var delta = GetDriftDelta(stroke.AnchorParagraphIndex, stroke.AnchorContentTop);
-            var adjustedTop = stroke.ContentBounds.Top + delta;
-            var adjustedBottom = stroke.ContentBounds.Bottom + delta;
-            if (adjustedBottom < _scrollOffsetY - 10 ||
-                adjustedTop    > _scrollOffsetY + Bounds.Height + 10)
-                continue;
-
-            using var transform = context.PushTransform(
-                Matrix.CreateTranslation(0, -_scrollOffsetY + delta));
-
-            var pen   = GetPen(stroke.Color, stroke.StrokeWidth);
-            var brush = pen.Brush!;
-
-            if (stroke.Geo is null)
-                context.DrawEllipse(brush, null, stroke.DotCenter, 1.5, 1.5);
             else
-                context.DrawGeometry(null, pen, stroke.Geo);
+                (penStrokes ??= new()).Add((s, delta));
         }
 
-        if (_activeStroke != null && !_activeIsHighlight && _activeStroke.Count > 0)
-        {
-            var activeDelta = GetDriftDelta(_activeAnchorIndex, _activeAnchorContentTop);
-            using var activeTransform = context.PushTransform(
-                Matrix.CreateTranslation(0, -_scrollOffsetY + activeDelta));
+        StrokeCache? activeHighlight = null;
+        double activeHighlightDelta  = 0;
+        StrokeCache? activePen       = null;
+        double activePenDelta        = 0;
 
-            var activePen = GetPen(_activeStrokeColor, _activeStrokeWidth);
-            if (_activeStroke.Count == 1)
+        if (_activeStroke != null && _activeStroke.Count > 0)
+        {
+            var pts = _activeStroke.AsReadOnly();
+            if (_activeIsHighlight)
             {
-                context.DrawEllipse(activePen.Brush!, null, _activeStroke[0], 1.5, 1.5);
+                activeHighlight      = new StrokeCache(default, default, _activeStrokeColor, _activeStrokeWidth, true, pts, _activeAnchorIndex, _activeAnchorContentTop);
+                activeHighlightDelta = GetDriftDelta(_activeAnchorIndex, _activeAnchorContentTop);
             }
             else
             {
-                if (_activeStrokeDirty)
-                {
-                    _activeGeo = BuildGeometry(_activeStroke);
-                    _activeStrokeDirty = false;
-                }
-                context.DrawGeometry(null, activePen, _activeGeo!);
+                activePen      = new StrokeCache(default, default, _activeStrokeColor, _activeStrokeWidth, false, pts, _activeAnchorIndex, _activeAnchorContentTop);
+                activePenDelta = GetDriftDelta(_activeAnchorIndex, _activeAnchorContentTop);
             }
         }
+
+        if (highlightStrokes != null || penStrokes != null || activeHighlight.HasValue || activePen.HasValue)
+            context.Custom(new SkiaInkDrawOperation(
+                new Rect(Bounds.Size),
+                highlightStrokes, penStrokes,
+                activeHighlight, activeHighlightDelta,
+                activePen, activePenDelta,
+                _scrollOffsetY, _textColumnOffsetX));
     }
 
-    // ── Highlight draw operation (Skia Multiply blend) ────────────────────────
+    // ── Skia ink draw operation (Multiply blend for both highlights and pen) ─────
 
-    /// <summary>
-    /// Custom draw operation that renders highlight strokes directly via the Skia
-    /// canvas using SKBlendMode.Multiply so the highlight darkens the underlying
-    /// Bible text rather than covering it.
-    /// </summary>
-    private sealed class HighlightDrawOperation : ICustomDrawOperation
+    private sealed class SkiaInkDrawOperation : ICustomDrawOperation
     {
-        private readonly IReadOnlyList<(StrokeCache Stroke, double DriftDelta)>? _strokes;
-        private readonly StrokeCache? _activeStroke;
-        private readonly double _activeDriftDelta;
+        private readonly IReadOnlyList<(StrokeCache Stroke, double DriftDelta)>? _highlightStrokes;
+        private readonly IReadOnlyList<(StrokeCache Stroke, double DriftDelta)>? _penStrokes;
+        private readonly StrokeCache? _activeHighlight;
+        private readonly double _activeHighlightDelta;
+        private readonly StrokeCache? _activePen;
+        private readonly double _activePenDelta;
         private readonly double _scrollOffsetY;
+        private readonly double _textColumnOffsetX;
 
         public Rect Bounds { get; }
 
-        public HighlightDrawOperation(
+        public SkiaInkDrawOperation(
             Rect bounds,
-            IReadOnlyList<(StrokeCache Stroke, double DriftDelta)>? strokes,
-            StrokeCache? activeStroke,
-            double activeDriftDelta,
-            double scrollOffsetY)
+            IReadOnlyList<(StrokeCache Stroke, double DriftDelta)>? highlightStrokes,
+            IReadOnlyList<(StrokeCache Stroke, double DriftDelta)>? penStrokes,
+            StrokeCache? activeHighlight, double activeHighlightDelta,
+            StrokeCache? activePen, double activePenDelta,
+            double scrollOffsetY, double textColumnOffsetX)
         {
-            Bounds             = bounds;
-            _strokes           = strokes;
-            _activeStroke      = activeStroke;
-            _activeDriftDelta  = activeDriftDelta;
-            _scrollOffsetY     = scrollOffsetY;
+            Bounds                = bounds;
+            _highlightStrokes     = highlightStrokes;
+            _penStrokes           = penStrokes;
+            _activeHighlight      = activeHighlight;
+            _activeHighlightDelta = activeHighlightDelta;
+            _activePen            = activePen;
+            _activePenDelta       = activePenDelta;
+            _scrollOffsetY        = scrollOffsetY;
+            _textColumnOffsetX    = textColumnOffsetX;
         }
 
         public bool Equals(ICustomDrawOperation? other) => false;
@@ -584,7 +559,7 @@ public class InkOverlayCanvas : Control
             var leaseFeature = context.TryGetFeature(typeof(ISkiaSharpApiLeaseFeature)) as ISkiaSharpApiLeaseFeature;
             if (leaseFeature == null) return;
 
-            using var lease  = leaseFeature.Lease();
+            using var lease = leaseFeature.Lease();
             var canvas = lease.SkCanvas;
             canvas.Save();
             canvas.ClipRect(new SKRect(0, 0, (float)Bounds.Width, (float)Bounds.Height));
@@ -598,40 +573,56 @@ public class InkOverlayCanvas : Control
                 BlendMode   = SKBlendMode.Multiply,
             };
 
-            if (_strokes != null)
-                foreach (var (stroke, delta) in _strokes)
+            // Highlights first (alpha=128), pen strokes on top (stroke's own alpha).
+            if (_highlightStrokes != null)
+                foreach (var (stroke, delta) in _highlightStrokes)
                 {
                     canvas.Save();
-                    canvas.Translate(0, (float)(-_scrollOffsetY + delta));
-                    DrawStroke(canvas, paint, stroke);
+                    canvas.Translate((float)_textColumnOffsetX, (float)(-_scrollOffsetY + delta));
+                    DrawStroke(canvas, paint, stroke, isHighlight: true);
                     canvas.Restore();
                 }
 
-            if (_activeStroke.HasValue)
+            if (_activeHighlight.HasValue)
             {
                 canvas.Save();
-                canvas.Translate(0, (float)(-_scrollOffsetY + _activeDriftDelta));
-                DrawStroke(canvas, paint, _activeStroke.Value);
+                canvas.Translate((float)_textColumnOffsetX, (float)(-_scrollOffsetY + _activeHighlightDelta));
+                DrawStroke(canvas, paint, _activeHighlight.Value, isHighlight: true);
+                canvas.Restore();
+            }
+
+            if (_penStrokes != null)
+                foreach (var (stroke, delta) in _penStrokes)
+                {
+                    canvas.Save();
+                    canvas.Translate((float)_textColumnOffsetX, (float)(-_scrollOffsetY + delta));
+                    DrawStroke(canvas, paint, stroke, isHighlight: false);
+                    canvas.Restore();
+                }
+
+            if (_activePen.HasValue)
+            {
+                canvas.Save();
+                canvas.Translate((float)_textColumnOffsetX, (float)(-_scrollOffsetY + _activePenDelta));
+                DrawStroke(canvas, paint, _activePen.Value, isHighlight: false);
                 canvas.Restore();
             }
 
             canvas.Restore();
         }
 
-        private static void DrawStroke(SKCanvas canvas, SKPaint paint, StrokeCache stroke)
+        private static void DrawStroke(SKCanvas canvas, SKPaint paint, StrokeCache stroke, bool isHighlight)
         {
-            // 50% opacity layer: alpha=128 keeps highlight visible while letting text show through.
-            paint.Color       = new SKColor(stroke.Color.R, stroke.Color.G, stroke.Color.B, 128);
+            var alpha         = isHighlight ? (byte)128 : stroke.Color.A;
+            paint.Color       = new SKColor(stroke.Color.R, stroke.Color.G, stroke.Color.B, alpha);
             paint.StrokeWidth = (float)stroke.StrokeWidth;
 
             var pts = stroke.Points;
 
             if (pts == null)
             {
-                // Completed single-tap dot (no points list).
                 paint.Style = SKPaintStyle.Fill;
-                canvas.DrawCircle(
-                    (float)stroke.DotCenter.X, (float)stroke.DotCenter.Y,
+                canvas.DrawCircle((float)stroke.DotCenter.X, (float)stroke.DotCenter.Y,
                     (float)(stroke.StrokeWidth / 2), paint);
                 paint.Style = SKPaintStyle.Stroke;
                 return;
@@ -640,8 +631,7 @@ public class InkOverlayCanvas : Control
             if (pts.Count == 1)
             {
                 paint.Style = SKPaintStyle.Fill;
-                canvas.DrawCircle(
-                    (float)pts[0].X, (float)pts[0].Y,
+                canvas.DrawCircle((float)pts[0].X, (float)pts[0].Y,
                     (float)(stroke.StrokeWidth / 2), paint);
                 paint.Style = SKPaintStyle.Stroke;
                 return;
@@ -657,25 +647,19 @@ public class InkOverlayCanvas : Control
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private Pen GetPen(Color color, double width)
+    internal static double DistToSegmentSq(Point p, Point a, Point b)
     {
-        var key = (color, width);
-        if (_penCache.TryGetValue(key, out var pen)) return pen;
-        pen = new Pen(new SolidColorBrush(color), width,
-            lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round);
-        _penCache[key] = pen;
-        return pen;
-    }
-
-    private static StreamGeometry BuildGeometry(List<Point> points)
-    {
-        var geo = new StreamGeometry();
-        using var ctx = geo.Open();
-        ctx.BeginFigure(points[0], false);
-        for (int i = 1; i < points.Count; i++)
-            ctx.LineTo(points[i]);
-        ctx.EndFigure(false);
-        return geo;
+        double dx = b.X - a.X, dy = b.Y - a.Y;
+        double lenSq = dx * dx + dy * dy;
+        if (lenSq < 1e-10)
+        {
+            dx = p.X - a.X; dy = p.Y - a.Y;
+            return dx * dx + dy * dy;
+        }
+        double t = Math.Clamp(((p.X - a.X) * dx + (p.Y - a.Y) * dy) / lenSq, 0.0, 1.0);
+        dx = p.X - (a.X + t * dx);
+        dy = p.Y - (a.Y + t * dy);
+        return dx * dx + dy * dy;
     }
 
     private static Rect ComputeBounds(List<Point> points)
@@ -693,7 +677,10 @@ public class InkOverlayCanvas : Control
         return new Rect(minX - 5, minY - 5, maxX - minX + 10, maxY - minY + 10);
     }
 
-    /// <summary>Convert a viewport point to content space (scroll-relative).</summary>
+    /// <summary>
+    /// Convert a viewport point to content space.
+    /// Y becomes scroll-relative; X becomes text-column-relative (negative = left margin).
+    /// </summary>
     private Point ToContent(Point viewport) =>
-        new(viewport.X, viewport.Y + _scrollOffsetY);
+        new(viewport.X - _textColumnOffsetX, viewport.Y + _scrollOffsetY);
 }
