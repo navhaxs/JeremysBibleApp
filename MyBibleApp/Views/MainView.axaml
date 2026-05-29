@@ -379,6 +379,16 @@
                  ItemsSource="{Binding Paragraphs}"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ScrollViewer.VerticalScrollBarVisibility="Hidden">
+          <!-- Plain StackPanel disables item-container recycling.
+               VirtualizingStackPanel caches item heights; when a container is recycled
+               from a short paragraph to a tall one the stale cached height causes items
+               to overlap. Bible chapters are short enough (≤200 paragraphs) that
+               full materialisation is fine. -->
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel />
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
         <ListBox.ItemTemplate>
             <DataTemplate x:DataType="model:BibleParagraph">
               <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto">

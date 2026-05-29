@@ -1500,6 +1500,11 @@ public partial class MainView : UserControl
             if (!string.IsNullOrEmpty(layout.FontFamily))
                 _paragraphList.FontFamily = new Avalonia.Media.FontFamily(layout.FontFamily);
         }
+
+        // Keep the ink canvas co-extensive with the text column so strokes are stored
+        // in text-column-relative X coordinates and remain aligned on any screen width.
+        if (_inkOverlay != null)
+            _inkOverlay.MaxWidth = _paragraphList.MaxWidth;
     }
 }
 
