@@ -384,8 +384,8 @@ internal static class Program
                     {
                         if (shown++ >= 5) break;
                         var hasMeta = j.TryGetProperty("metadata", out var meta);
-                        var name = hasMeta && meta.TryGetProperty("name", out var np) ? np.GetString() : "?";
-                        var modified = hasMeta && meta.TryGetProperty("lastModifiedUtc", out var mp) ? mp.GetString() : "?";
+                        var name = hasMeta && meta.TryGetProperty("name", out var np) ? np.GetString() ?? "?" : "?";
+                        var modified = hasMeta && meta.TryGetProperty("lastModifiedUtc", out var mp) ? mp.GetString() ?? "?" : "?";
                         var strokeCount = j.TryGetProperty("inkStrokes", out var strokes) && strokes.ValueKind == JsonValueKind.Array
                             ? strokes.GetArrayLength() : 0;
                         Console.WriteLine($"      \"{Truncate(name, 36)}\"  modified={Truncate(modified, 20)}  strokes={strokeCount}");
