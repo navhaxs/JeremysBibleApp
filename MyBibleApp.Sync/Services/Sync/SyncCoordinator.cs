@@ -456,7 +456,9 @@ public class SyncCoordinator : ISyncCoordinator
                     var localJournalJson = await _journalSyncProvider.GetSnapshotJsonAsync().ConfigureAwait(false);
                     await _syncService.SaveJournalDataAsync(localJournalJson).ConfigureAwait(false);
 
-                    await SaveCachedModifiedTimeAsync("journals.json", journalRemoteTime.Value).ConfigureAwait(false);
+                    var updatedJournalTimes = await _syncService.GetFileModifiedTimesAsync().ConfigureAwait(false);
+                    var actualJournalModTime = updatedJournalTimes.GetValueOrDefault("journals.json") ?? journalRemoteTime;
+                    await SaveCachedModifiedTimeAsync("journals.json", actualJournalModTime!.Value).ConfigureAwait(false);
                 }
             }
 
