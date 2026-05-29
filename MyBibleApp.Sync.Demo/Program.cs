@@ -426,12 +426,6 @@ internal static class Program
 
     private static void DoSignOut()
     {
-        if (!_authService.IsAuthenticated)
-        {
-            Console.WriteLine("  Not currently authenticated.");
-            return;
-        }
-
         _coordinator.SignOut();
         PrintResult("Signed out.");
     }

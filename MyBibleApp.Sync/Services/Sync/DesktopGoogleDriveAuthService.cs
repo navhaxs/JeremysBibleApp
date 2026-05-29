@@ -181,8 +181,20 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
                 interactiveFlow,
                 _activeCodeReceiver);
 
-            _credential = await installedApp.AuthorizeAsync("user", interactiveCt)
-                .ConfigureAwait(false);
+            try
+            {
+                _credential = await installedApp.AuthorizeAsync("user", interactiveCt)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsInvalidGrantError(ex))
+            {
+                // Stale cached token rejected by Google — purge it and redo the browser flow
+                await interactiveFlow.DataStore
+                    .DeleteAsync<Google.Apis.Auth.OAuth2.Responses.TokenResponse>("user")
+                    .ConfigureAwait(false);
+                _credential = await installedApp.AuthorizeAsync("user", interactiveCt)
+                    .ConfigureAwait(false);
+            }
 
             _activeCodeReceiver = null;
 
@@ -201,6 +213,12 @@ public class DesktopGoogleDriveAuthService : IGoogleDriveAuthService
         {
             return AuthenticationResult.Failure($"Authentication failed: {ex.Message}");
         }
+    }
+
+    private static bool IsInvalidGrantError(Exception ex)
+    {
+        var msg = ex.Message + (ex.InnerException?.Message ?? string.Empty);
+        return msg.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ValidateDesktopCredentials(string json)
