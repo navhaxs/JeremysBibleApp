@@ -55,6 +55,12 @@ public partial class SyncDebugView : UserControl
             vm.ForceSync();
     }
 
+    private void OnSyncJournalNowClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is AppViewModel vm)
+            _ = vm.SyncJournalNowAsync();
+    }
+
     private async void OnClearRemoteDataClick(object? sender, RoutedEventArgs e)
     {
         if (DataContext is AppViewModel vm)

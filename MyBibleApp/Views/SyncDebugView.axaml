@@ -14,6 +14,7 @@
       <Button Content="Clear Logs" MinWidth="100" Margin="0,0,8,4" Click="OnClearLogsClick" />
       <Button Content="Copy Snapshot" MinWidth="110" Margin="0,0,8,4" Click="OnCopySnapshotClick" />
       <Button Content="Sync Now" MinWidth="100" Margin="0,0,8,4" Click="OnSyncNowClick" IsEnabled="{Binding CanForceSync}" />
+      <Button Content="Sync Journal Now" MinWidth="140" Margin="0,0,8,4" Click="OnSyncJournalNowClick" IsEnabled="{Binding CanForceSync}" />
       <Button Content="Clear Remote Data" MinWidth="130" Margin="0,0,8,4" Click="OnClearRemoteDataClick" IsEnabled="{Binding IsAuthenticated}" />
       <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" Margin="0,0,0,4">
         <TextBlock Text="Last Updated:" VerticalAlignment="Center" />
