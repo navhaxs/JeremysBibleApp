@@ -15,7 +15,9 @@ public sealed class JournalStore : IJournalStore
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     // Tracks journals whose ink stroke save failed and need retry on next save
-    private readonly Dictionary<string, IReadOnlyList<JournalInkStroke>> _pendingRetry = new();
+    private readonly Dictionary<(string JournalId, string ChapterKey), IReadOnlyList<JournalInkStroke>> _pendingRetry = new();
+
+    private static string ChapterKey(string bookCode, int chapter) => $"{bookCode}:{chapter}";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -67,7 +69,7 @@ public sealed class JournalStore : IJournalStore
                 LastModifiedUtc = now
             };
 
-            entries.Add(new JournalEntry { Metadata = journal, InkStrokes = [] });
+            entries.Add(new JournalEntry { Metadata = journal });
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
 
             return Result<Journal>.Success(journal);
@@ -184,7 +186,7 @@ public sealed class JournalStore : IJournalStore
             };
 
             var index = entries.IndexOf(entry);
-            entries[index] = new JournalEntry { Metadata = updatedJournal, InkStrokes = entry.InkStrokes };
+            entries[index] = new JournalEntry { Metadata = updatedJournal, InkStrokesByChapter = entry.InkStrokesByChapter };
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
 
             return Result.Success();
@@ -211,7 +213,7 @@ public sealed class JournalStore : IJournalStore
                 return Result.Failure("Journal not found.");
 
             var index = entries.IndexOf(entry);
-            entries[index] = new JournalEntry { Metadata = journal, InkStrokes = entry.InkStrokes };
+            entries[index] = new JournalEntry { Metadata = journal, InkStrokesByChapter = entry.InkStrokesByChapter };
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
             return Result.Success();
         }
@@ -226,83 +228,14 @@ public sealed class JournalStore : IJournalStore
     }
 
     /// <inheritdoc />
-    public async Task<Result> SaveInkStrokesAsync(string journalId, IReadOnlyList<JournalInkStroke> strokes)
-    {
-        await _semaphore.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            var (entries, tombstones) = await LoadEntriesAsync().ConfigureAwait(false);
-            var entry = entries.FirstOrDefault(e => e.Metadata.Id == journalId);
-            if (entry == null)
-                return Result.Failure("Journal not found.");
+    /// TODO: replaced in Task 6 — stub to satisfy interface until then
+    public Task<Result> SaveInkStrokesAsync(string journalId, string bookCode, int chapter, IReadOnlyList<JournalInkStroke> strokes)
+        => Task.FromResult(Result.Failure("Not yet implemented"));
 
-            // Replace ink strokes entirely
-            var index = entries.IndexOf(entry);
-            var updatedJournal = new Journal
-            {
-                Id = entry.Metadata.Id,
-                Name = entry.Metadata.Name,
-                TranslationId = entry.Metadata.TranslationId,
-                TranslationVersionDate = entry.Metadata.TranslationVersionDate,
-                BookCode = entry.Metadata.BookCode,
-                StartChapter = entry.Metadata.StartChapter,
-                StartVerse = entry.Metadata.StartVerse,
-                EndChapter = entry.Metadata.EndChapter,
-                EndVerse = entry.Metadata.EndVerse,
-                ContentHash = entry.Metadata.ContentHash,
-                Layout = entry.Metadata.Layout,
-                CreatedAtUtc = entry.Metadata.CreatedAtUtc,
-                LastModifiedUtc = DateTime.UtcNow
-            };
-
-            entries[index] = new JournalEntry
-            {
-                Metadata = updatedJournal,
-                InkStrokes = strokes.ToList()
-            };
-
-            // Also flush any pending retries for other journals
-            foreach (var (pendingJournalId, pendingStrokes) in _pendingRetry.ToList())
-            {
-                if (pendingJournalId == journalId)
-                    continue; // Current save supersedes pending retry for same journal
-
-                var pendingEntry = entries.FirstOrDefault(e => e.Metadata.Id == pendingJournalId);
-                if (pendingEntry != null)
-                {
-                    var pendingIndex = entries.IndexOf(pendingEntry);
-                    entries[pendingIndex] = new JournalEntry
-                    {
-                        Metadata = pendingEntry.Metadata,
-                        InkStrokes = pendingStrokes.ToList()
-                    };
-                }
-            }
-
-            try
-            {
-                await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
-                // Persistence succeeded — clear all pending retries that were flushed
-                _pendingRetry.Remove(journalId);
-                foreach (var key in _pendingRetry.Keys.ToList())
-                {
-                    if (entries.Any(e => e.Metadata.Id == key))
-                        _pendingRetry.Remove(key);
-                }
-                return Result.Success();
-            }
-            catch (Exception ex)
-            {
-                // Persistence failed — retain strokes in memory for retry on next save
-                _pendingRetry[journalId] = strokes;
-                return Result.Failure($"Failed to persist ink strokes (retained in memory for retry): {ex.Message}");
-            }
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
-    }
+    /// <inheritdoc />
+    /// TODO: replaced in Task 6 — stub to satisfy interface until then
+    public Task<Result> SaveAllInkStrokesAsync(string journalId, IReadOnlyList<JournalInkStroke> strokes)
+        => Task.FromResult(Result.Failure("Not yet implemented"));
 
     /// <inheritdoc />
     public async Task<Result> AppendInkStrokeAsync(string journalId, JournalInkStroke stroke)
@@ -315,7 +248,10 @@ public sealed class JournalStore : IJournalStore
             if (entry == null)
                 return Result.Failure($"Journal '{journalId}' not found.");
 
-            entry.InkStrokes.Add(stroke);
+            var key = ChapterKey(stroke.BookCode, stroke.ChapterNumber);
+            if (!entry.InkStrokesByChapter.TryGetValue(key, out var bucket))
+                entry.InkStrokesByChapter[key] = bucket = [];
+            bucket.Add(stroke);
             entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
             return Result.Success();
@@ -331,7 +267,7 @@ public sealed class JournalStore : IJournalStore
     }
 
     /// <inheritdoc />
-    public async Task<Result> RemoveInkStrokeAsync(string journalId, string strokeId)
+    public async Task<Result> RemoveInkStrokeAsync(string journalId, string strokeId, string bookCode, int chapter)
     {
         await _semaphore.WaitAsync().ConfigureAwait(false);
         try
@@ -341,11 +277,15 @@ public sealed class JournalStore : IJournalStore
             if (entry == null)
                 return Result.Failure($"Journal '{journalId}' not found.");
 
-            var removed = entry.InkStrokes.RemoveAll(s => s.Id == strokeId);
-            if (removed > 0)
+            var key = ChapterKey(bookCode, chapter);
+            if (entry.InkStrokesByChapter.TryGetValue(key, out var bucket))
             {
-                entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
-                await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+                var removed = bucket.RemoveAll(s => s.Id == strokeId);
+                if (removed > 0)
+                {
+                    entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
+                    await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+                }
             }
             return Result.Success();
         }
@@ -360,22 +300,20 @@ public sealed class JournalStore : IJournalStore
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<JournalInkStroke>> GetInkStrokesAsync(string journalId)
+    public async Task<IReadOnlyList<JournalInkStroke>> GetInkStrokesAsync(string journalId, string bookCode, int chapter)
     {
         await _semaphore.WaitAsync().ConfigureAwait(false);
         try
         {
-            // If there are pending retry strokes in memory for this journal, return those
-            // (they represent the most recent state that hasn't been persisted yet)
-            if (_pendingRetry.TryGetValue(journalId, out var pendingStrokes))
+            var chapterKey = ChapterKey(bookCode, chapter);
+            if (_pendingRetry.TryGetValue((journalId, chapterKey), out var pendingStrokes))
                 return pendingStrokes;
 
             var (entries, _) = await LoadEntriesAsync().ConfigureAwait(false);
             var entry = entries.FirstOrDefault(e => e.Metadata.Id == journalId);
-            if (entry == null)
-                return [];
+            if (entry == null) return [];
 
-            return entry.InkStrokes;
+            return entry.InkStrokesByChapter.TryGetValue(chapterKey, out var list) ? list : [];
         }
         finally
         {
@@ -472,7 +410,7 @@ public sealed class JournalStore : IJournalStore
 
     private async Task<(List<JournalEntry> Entries, List<DeletedJournalTombstone> Tombstones)> LoadEntriesAsync()
     {
-        return await Task.Run(() =>
+        return await Task.Run(async () =>
         {
             if (!File.Exists(_filePath))
                 return (new List<JournalEntry>(), new List<DeletedJournalTombstone>());
@@ -484,8 +422,31 @@ public sealed class JournalStore : IJournalStore
                     return (new List<JournalEntry>(), new List<DeletedJournalTombstone>());
 
                 var snapshot = JsonSerializer.Deserialize<JournalDataSnapshot>(json, JsonOptions);
-                return (snapshot?.Journals ?? new List<JournalEntry>(),
-                        snapshot?.DeletedJournals ?? new List<DeletedJournalTombstone>());
+                var entries = snapshot?.Journals ?? new List<JournalEntry>();
+                var tombstones = snapshot?.DeletedJournals ?? new List<DeletedJournalTombstone>();
+
+                // One-time migration: re-bucket v1 flat inkStrokes into inkStrokesByChapter
+                bool dirty = false;
+                foreach (var entry in entries)
+                {
+                    if (entry.InkStrokes is { Count: > 0 } legacy && entry.InkStrokesByChapter.Count == 0)
+                    {
+                        foreach (var s in legacy)
+                        {
+                            var key = ChapterKey(s.BookCode, s.ChapterNumber);
+                            if (!entry.InkStrokesByChapter.TryGetValue(key, out var bucket))
+                                entry.InkStrokesByChapter[key] = bucket = [];
+                            bucket.Add(s);
+                        }
+                        entry.InkStrokes = null;
+                        dirty = true;
+                    }
+                }
+
+                if (dirty)
+                    await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+
+                return (entries, tombstones);
             }
             catch (Exception ex)
             {

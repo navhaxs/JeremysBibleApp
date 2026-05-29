@@ -200,38 +200,37 @@ public partial class AppShellView : UserControl
         _appVM.AppendSyncDebugLog($"[Tab] Entering tab {index} \"{vm.Header}\" — navigating to {targetPos.Chapter}:{targetPos.Verse}");
         _ = _primaryView.NavigateToVerseAndUnsuppressAsync(targetPos.Chapter, targetPos.Verse);
 
-        // Load journal strokes for incoming tab
-        var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
-        if (journalId != null)
+        // Load journal strokes for incoming tab.
+        // Skip during restore — RestoreTabsAndAuthAsync reloads after content and BookCode are ready.
+        if (!_isRestoringTabs)
         {
-            var journal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(journalId);
-            if (journal != null)
+            var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
+            if (journalId != null)
             {
-                var allStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId);
-                // vm.BookCode is set by ApplyLoadedBook (after API content loads).
-                // On app relaunch SelectTab fires before content loads, so BookCode is still "".
-                // Fall back to SelectedLookupBook.Code, which is set by RestoreLookupPosition.
-                var bookCode = !string.IsNullOrEmpty(vm.BookCode)
-                    ? vm.BookCode
-                    : vm.SelectedLookupBook?.Code ?? string.Empty;
-                var passageStrokes = allStrokes
-                    .Where(s => s.BookCode == bookCode && s.ChapterNumber == vm.SelectedLookupChapter)
-                    .ToList();
-                _primaryView.LoadJournalStrokes(passageStrokes);
-                _primaryView.SetActiveJournalName(journal.Name);
-                _primaryView.SetUnsavedBadgeVisible(false);
-                _primaryView.SetJournalLayout(journal.Layout);
+                var journal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(journalId);
+                if (journal != null)
+                {
+                    // SelectedLookupBook.Code is set by RestoreLookupPosition and is always the
+                    // correct restored book. BookCode comes from ApplyLoadedBook and on startup
+                    // reflects the constructor's sample USX ("JHN") until the API call completes.
+                    var bookCode = vm.SelectedLookupBook?.Code ?? vm.BookCode;
+                    var passageStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId, bookCode, vm.SelectedLookupChapter);
+                    _primaryView.LoadJournalStrokes(passageStrokes);
+                    _primaryView.SetActiveJournalName(journal.Name);
+                    _primaryView.SetUnsavedBadgeVisible(false);
+                    _primaryView.SetJournalLayout(journal.Layout);
+                }
             }
-        }
-        else
-        {
-            var ephemeral = _tabEphemeralStrokes.TryGetValue(vm, out var ep) ? ep : [];
-            var passageEphemeral = ephemeral
-                .Where(s => s.BookCode == vm.BookCode && s.ChapterNumber == vm.SelectedLookupChapter)
-                .ToList();
-            _primaryView.LoadJournalStrokes(passageEphemeral);
-            _primaryView.SetActiveJournalName(null);
-            _primaryView.SetUnsavedBadgeVisible(ephemeral.Count > 0);
+            else
+            {
+                var ephemeral = _tabEphemeralStrokes.TryGetValue(vm, out var ep) ? ep : [];
+                var passageEphemeral = ephemeral
+                    .Where(s => s.BookCode == vm.BookCode && s.ChapterNumber == vm.SelectedLookupChapter)
+                    .ToList();
+                _primaryView.LoadJournalStrokes(passageEphemeral);
+                _primaryView.SetActiveJournalName(null);
+                _primaryView.SetUnsavedBadgeVisible(ephemeral.Count > 0);
+            }
         }
 
         RefreshTabButtons();
@@ -629,6 +628,11 @@ public partial class AppShellView : UserControl
                 await contentTasks[activeIdx]; // active tab ready before overlay hides
                 _appVM.AppendSyncDebugLog("[Tabs] Active tab content loaded");
 
+                // Wait for the first layout/render pass to complete before navigating.
+                // On Android the virtualizing ListBox needs an extra dispatcher cycle after
+                // content loads before ScrollIntoView can find realized items.
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
                 // Navigate to the persisted verse so the user lands where they left off.
                 // Use the original persisted state values (not the VM, which may have been
                 // reset by TryLoadBookFromApiAsync).
@@ -639,6 +643,7 @@ public partial class AppShellView : UserControl
                 {
                     _appVM.AppendSyncDebugLog($"[Tabs] Navigating active tab to {ch}:{vs}");
                     await _primaryView.NavigateToVerseAsync(ch, vs);
+                    _appVM.AppendSyncDebugLog($"[Tabs] Navigation done, scroll Y={_primaryView.CaptureScrollOffset()?.ToString("F0") ?? "null"}");
                 }
 
                 // Reload journal strokes after content is loaded and navigation is complete.
@@ -647,20 +652,25 @@ public partial class AppShellView : UserControl
                 // flyout-selection path exactly.
                 var activeVm = _tabs[activeIdx];
                 var activeJournalId = _tabActiveJournalIds.TryGetValue(activeVm, out var ajid) ? ajid : null;
+                _appVM.AppendSyncDebugLog($"[Tabs] Journal restore — journalId={activeJournalId ?? "null"}, bookCode={activeVm.SelectedLookupBook?.Code ?? activeVm.BookCode}, chapter={activeVm.SelectedLookupChapter}");
                 if (activeJournalId != null && _primaryView != null)
                 {
                     var activeJournal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(activeJournalId);
+                    _appVM.AppendSyncDebugLog($"[Tabs] Journal lookup → {(activeJournal != null ? $"\"{activeJournal.Name}\"" : "null (not found in store)")}");
                     if (activeJournal != null)
                     {
-                        var allStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(activeJournalId);
-                        var passageStrokes = allStrokes
-                            .Where(s => s.BookCode == activeVm.BookCode && s.ChapterNumber == activeVm.SelectedLookupChapter)
-                            .ToList();
+                        // SelectedLookupBook.Code is set by RestoreLookupPosition and is always
+                        // correct. BookCode (_bookCode) comes from ApplyLoadedBook and may still
+                        // reflect the constructor's sample USX ("JHN") if the API call failed.
+                        var bookCode = activeVm.SelectedLookupBook?.Code ?? activeVm.BookCode;
+                        var passageStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(activeJournalId, bookCode, activeVm.SelectedLookupChapter);
+                        _appVM.AppendSyncDebugLog($"[Tabs] Strokes: passage={passageStrokes.Count} (filter: book={bookCode} ch={activeVm.SelectedLookupChapter})");
                         _primaryView.LoadJournalStrokes(passageStrokes);
                         _primaryView.SetActiveJournalName(activeJournal.Name);
                         _primaryView.SetUnsavedBadgeVisible(false);
                         _primaryView.SetJournalLayout(activeJournal.Layout);
-                        _appVM.AppendSyncDebugLog($"[Tabs] Reloaded journal strokes: {passageStrokes.Count} strokes for \"{activeJournal.Name}\"");
+                        _primaryView.SyncInkScrollOffset();
+                        _appVM.AppendSyncDebugLog($"[Tabs] Journal strokes loaded and scroll synced");
                     }
                 }
 
@@ -890,14 +900,10 @@ public partial class AppShellView : UserControl
         // Re-verify vm is still the active tab after async gap
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
 
-        var allStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId);
+        var passageStrokes = await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId, vm.BookCode, vm.SelectedLookupChapter);
 
         // Re-verify vm is still the active tab after async gap
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
-
-        var passageStrokes = allStrokes
-            .Where(s => s.BookCode == vm.BookCode && s.ChapterNumber == vm.SelectedLookupChapter)
-            .ToList();
         _primaryView?.LoadJournalStrokes(passageStrokes);
         _primaryView?.SetActiveJournalName(journal.Name);
         _primaryView?.SetUnsavedBadgeVisible(false);
@@ -955,7 +961,7 @@ public partial class AppShellView : UserControl
         if (!result.IsSuccess) return;
 
         var journal = result.Value!;
-        await SharedSyncRuntime.Instance.JournalStore.SaveInkStrokesAsync(journal.Id, ephemeral);
+        await SharedSyncRuntime.Instance.JournalStore.SaveAllInkStrokesAsync(journal.Id, ephemeral);
 
         _tabActiveJournalIds[vm] = journal.Id;
         _tabEphemeralStrokes[vm].Clear();
@@ -1010,7 +1016,7 @@ public partial class AppShellView : UserControl
         {
             if (journalId != null)
             {
-                await SharedSyncRuntime.Instance.JournalStore.RemoveInkStrokeAsync(journalId, strokeId);
+                await SharedSyncRuntime.Instance.JournalStore.RemoveInkStrokeAsync(journalId, strokeId, vm.BookCode, vm.SelectedLookupChapter);
             }
             else
             {
