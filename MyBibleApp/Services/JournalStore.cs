@@ -256,13 +256,7 @@ public sealed class JournalStore : IJournalStore
 
                 await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
 
-                // Clear all pending retries whose entries exist
-                _pendingRetry.Remove((journalId, chapterKey));
-                foreach (var key in _pendingRetry.Keys.ToList())
-                {
-                    if (entries.Any(e => e.Metadata.Id == key.JournalId))
-                        _pendingRetry.Remove(key);
-                }
+                _pendingRetry.Clear();
 
                 return Result.Success();
             }
