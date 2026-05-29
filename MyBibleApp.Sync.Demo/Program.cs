@@ -298,6 +298,19 @@ internal static class Program
         Console.WriteLine($"    CurrentReadingProgress:   {Truncate(progress, 80) ?? "(none)"}");
         Console.WriteLine($"    UserPreferences:          {Truncate(prefs, 80) ?? "(none)"}");
 
+        var bibleProgress = await _localStorage.GetAsync("BibleReadingProgress");
+        Console.WriteLine($"    BibleReadingProgress:     {Truncate(bibleProgress, 80) ?? "(none)"}");
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("  ── Cached Drive Mod Times ──────────────────────────");
+        Console.ResetColor();
+        string[] modTimeKeys = ["DriveModTime_user_data.json", "DriveModTime_journals.json"];
+        foreach (var key in modTimeKeys)
+        {
+            var val = await _localStorage.GetAsync(key);
+            Console.WriteLine($"    {key}: {val ?? "(none)"}");
+        }
+
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine($"\n    Files on disk: {StorageDir}");
         if (Directory.Exists(StorageDir))
@@ -346,6 +359,46 @@ internal static class Program
             Console.WriteLine($"      {a.BookCode} {a.Chapter}:{a.Verse}  notes=\"{Truncate(a.Notes, 40)}\"");
         if (annotations.Count > 5)
             Console.WriteLine($"      … and {annotations.Count - 5} more");
+
+        Console.Write("    Journals… ");
+        var journalJson = await _syncService.GetJournalDataAsync();
+        if (string.IsNullOrEmpty(journalJson))
+        {
+            Console.WriteLine("(none)");
+        }
+        else
+        {
+            try
+            {
+                using var journalDoc = JsonDocument.Parse(journalJson);
+                if (journalDoc.RootElement.TryGetProperty("journals", out var journalsArr)
+                    && journalsArr.ValueKind == JsonValueKind.Array)
+                {
+                    Console.WriteLine($"{journalsArr.GetArrayLength()} journal(s)  ({journalJson.Length:N0} bytes)");
+                    var shown = 0;
+                    foreach (var j in journalsArr.EnumerateArray())
+                    {
+                        if (shown++ >= 5) break;
+                        var hasMeta = j.TryGetProperty("metadata", out var meta);
+                        var name = hasMeta && meta.TryGetProperty("name", out var np) ? np.GetString() : "?";
+                        var modified = hasMeta && meta.TryGetProperty("lastModifiedUtc", out var mp) ? mp.GetString() : "?";
+                        var strokeCount = j.TryGetProperty("inkStrokes", out var strokes) && strokes.ValueKind == JsonValueKind.Array
+                            ? strokes.GetArrayLength() : 0;
+                        Console.WriteLine($"      \"{Truncate(name, 36)}\"  modified={Truncate(modified, 20)}  strokes={strokeCount}");
+                    }
+                    if (journalsArr.GetArrayLength() > 5)
+                        Console.WriteLine($"      … and {journalsArr.GetArrayLength() - 5} more (use J to inspect full JSON)");
+                }
+                else
+                {
+                    Console.WriteLine($"(non-standard JSON format, {journalJson.Length:N0} bytes — use J to inspect)");
+                }
+            }
+            catch
+            {
+                Console.WriteLine($"(JSON parse error, {journalJson.Length:N0} bytes raw)");
+            }
+        }
 
         Console.Write("    Preferences… ");
         var remotePrefs = userData?.Preferences;
