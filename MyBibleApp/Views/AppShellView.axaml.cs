@@ -562,6 +562,7 @@ public partial class AppShellView : UserControl
     {
         // Load persisted debug mode state early so the overlay is visible during restore.
         await _appVM.LoadDebugModeFromStorageAsync();
+        await _appVM.LoadDotPatternFromStorageAsync();
 
         // Load persisted theme and apply it.
         await _appVM.LoadThemeFromStorageAsync();
