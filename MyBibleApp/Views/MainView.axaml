@@ -378,7 +378,6 @@
                  Name="ParagraphList"
                  SelectionMode="Single"
                  SelectionChanged="OnParagraphListSelectionChanged"
-                 ItemsSource="{Binding Paragraphs}"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ScrollViewer.VerticalScrollBarVisibility="Hidden">
           <!-- Plain StackPanel disables item-container recycling.

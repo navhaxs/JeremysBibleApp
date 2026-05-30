@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Threading;
@@ -35,6 +36,23 @@ public partial class MainView : UserControl
     private Button? _headerLookupButton;
     private bool _suppressSplitEvent;
     private bool _isApplyingLookupSelection;
+
+    // Windowed paragraph loading.
+    private readonly ObservableCollection<BibleParagraph>
+        _windowedItems = [];
+    private int _windowStart;   // index into _chapterGroups (0-based)
+    private int _windowEnd;     // exclusive upper bound into _chapterGroups
+
+    // Events for chapter enter/exit — AppShellView uses these to load/unload ink strokes.
+    public event EventHandler<int>? ChapterEnteredWindow;
+    public event EventHandler<int>? ChapterExitedWindow;
+
+    public int WindowStart => _windowStart;   // 0-based index into _chapterGroups
+    public int WindowEnd   => _windowEnd;     // exclusive
+
+    /// <summary>Book code of the currently loaded book, for ink store queries.</summary>
+    public string CurrentBookCode =>
+        (DataContext as ScriptureViewModel)?.BookCode ?? string.Empty;
 
     // Raised when the user taps the split-view toggle (true = split on, false = off).
     public event EventHandler<bool>? SplitToggled;
@@ -157,6 +175,8 @@ public partial class MainView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
+        if (_paragraphList != null)
+            _paragraphList.ItemsSource = _windowedItems;
         _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
@@ -231,6 +251,7 @@ public partial class MainView : UserControl
         {
             _paragraphs = vm.Paragraphs;
             RebuildChapterGroups();
+            ReinitializeWindow();
         }
 
         if (_paragraphList == null || _annotationToggle == null) return;
@@ -377,6 +398,8 @@ public partial class MainView : UserControl
                 }
             });
         }, TaskScheduler.Default);
+
+        CheckWindowBounds();
     }
 
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -385,6 +408,7 @@ public partial class MainView : UserControl
         {
             _paragraphs = vm.Paragraphs;
             RebuildChapterGroups();
+            ReinitializeWindow();
         }
         // Don't call RefreshReaderProgress() here — the ListBox is mid-render when
         // Paragraphs changes; reading the visual tree now gives stale positions.
@@ -828,12 +852,15 @@ public partial class MainView : UserControl
 
         if (fraction <= 0 && _paragraphScrollViewer != null)
         {
+            EnsureChapterInWindow(1);
             _paragraphScrollViewer.Offset = new Avalonia.Vector(0, 0);
             return;
         }
 
         if (fraction >= 1 && _paragraphScrollViewer != null)
         {
+            var lastChapter = _chapterGroups.Count;
+            EnsureChapterInWindow(lastChapter);
             var scrollableHeight = _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height;
             if (scrollableHeight > 0)
                 _paragraphScrollViewer.Offset = new Avalonia.Vector(0, scrollableHeight);
@@ -841,7 +868,9 @@ public partial class MainView : UserControl
         }
 
         var targetIndex = (int)(fraction * (_paragraphs.Count - 1));
-        _paragraphList.ScrollIntoView(_paragraphs[targetIndex]);
+        var targetPara  = _paragraphs[targetIndex];
+        EnsureChapterInWindow(targetPara.StartChapter);
+        _paragraphList.ScrollIntoView(targetPara);
     }
 
     private void OnProgressTrackPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -1032,6 +1061,8 @@ public partial class MainView : UserControl
         if (target == null)
             return;
 
+        EnsureChapterInWindow(target.StartChapter);
+
         // Retry loop: re-issue ScrollIntoView on each attempt so that it fires after
         // the ListBox has applied a newly-changed ItemsSource (book navigation) and
         // after the virtualized container is realized in the visual tree.
@@ -1176,6 +1207,227 @@ public partial class MainView : UserControl
         (_chapterGroups, _paragraphChapterInfo) = ChapterGroupBuilder.Build(_paragraphs);
         _chapterStartY.Clear();
         _chapterLocalTops.Clear();
+    }
+
+    /// <summary>
+    /// Resets the scroll window to the first N chapters that fill 3× viewport height.
+    /// Call whenever _paragraphs / _chapterGroups changes.
+    /// </summary>
+    private void ReinitializeWindow()
+    {
+        _windowedItems.Clear();
+        _windowStart = 0;
+        _windowEnd   = 0;
+        _chapterStartY.Clear();
+        _chapterLocalTops.Clear();
+
+        if (_chapterGroups.Count == 0) return;
+
+        // Wait for viewport to be known; if not yet, use a fallback.
+        var vpHeight = _paragraphScrollViewer?.Viewport.Height;
+        var targetHeight = (vpHeight > 0 ? vpHeight.Value : 800) * 3;
+        ExtendWindowDown(targetHeight);
+    }
+
+    /// <summary>
+    /// Adds chapters at the bottom of the window until the added content height
+    /// reaches targetHeight or the end of the book is reached.
+    /// Fires ChapterEnteredWindow for each chapter added.
+    /// </summary>
+    private void ExtendWindowDown(double targetHeight = 0)
+    {
+        double added = 0;
+        while (_windowEnd < _chapterGroups.Count && (targetHeight <= 0 || added < targetHeight))
+        {
+            var chapter = _windowEnd + 1;   // 1-based chapter number
+            foreach (var para in _chapterGroups[_windowEnd])
+                _windowedItems.Add(para);
+
+            _windowEnd++;
+            added += EstimateChapterHeight(chapter);
+            ChapterEnteredWindow?.Invoke(this, chapter);
+        }
+    }
+
+    /// <summary>
+    /// Adds chapters at the top of the window. Compensates scroll offset for inserted height.
+    /// Fires ChapterEnteredWindow for each chapter added.
+    /// </summary>
+    private void ExtendWindowUp()
+    {
+        if (_windowStart == 0 || _paragraphScrollViewer == null) return;
+
+        _windowStart--;
+        var chapter = _windowStart + 1;     // 1-based
+        var newParagraphs = _chapterGroups[_windowStart];
+        var estimatedHeight = EstimateChapterHeight(chapter);
+
+        // Prepend paragraphs (ObservableCollection has no AddRange; insert individually).
+        for (var i = newParagraphs.Count - 1; i >= 0; i--)
+            _windowedItems.Insert(0, newParagraphs[i]);
+
+        // Compensate scroll offset so visible content doesn't jump.
+        var newOffset = _paragraphScrollViewer.Offset.Y + estimatedHeight;
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+
+        ChapterEnteredWindow?.Invoke(this, chapter);
+    }
+
+    /// <summary>
+    /// Removes the topmost chapter from the window.
+    /// Compensates scroll offset for the removed height.
+    /// Fires ChapterExitedWindow.
+    /// </summary>
+    private void TrimWindowTop()
+    {
+        if (_windowEnd - _windowStart <= 1 || _paragraphScrollViewer == null) return;
+
+        var chapter = _windowStart + 1;     // 1-based
+        var removedParagraphs = _chapterGroups[_windowStart];
+        var removedHeight = MeasureChapterHeight(chapter) ?? EstimateChapterHeight(chapter);
+
+        // Remove paragraphs from the start of _windowedItems.
+        for (var i = 0; i < removedParagraphs.Count; i++)
+            _windowedItems.RemoveAt(0);
+
+        _windowStart++;
+
+        // Compensate scroll offset downward.
+        var newOffset = Math.Max(0, _paragraphScrollViewer.Offset.Y - removedHeight);
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+
+        ChapterExitedWindow?.Invoke(this, chapter);
+    }
+
+    /// <summary>
+    /// Removes the bottommost chapter from the window.
+    /// No scroll offset compensation needed (removing from end doesn't shift content).
+    /// Fires ChapterExitedWindow.
+    /// </summary>
+    private void TrimWindowBottom()
+    {
+        if (_windowEnd - _windowStart <= 1) return;
+
+        _windowEnd--;
+        var chapter = _windowEnd + 1;       // 1-based
+        var removedParagraphs = _chapterGroups[_windowEnd];
+
+        for (var i = 0; i < removedParagraphs.Count; i++)
+            _windowedItems.RemoveAt(_windowedItems.Count - 1);
+
+        ChapterExitedWindow?.Invoke(this, chapter);
+    }
+
+    /// <summary>
+    /// Estimates chapter height from verse count × average line height.
+    /// Used for scroll offset compensation when the chapter is not yet realized.
+    /// ~60px per paragraph is a conservative estimate.
+    /// </summary>
+    private double EstimateChapterHeight(int chapter)
+    {
+        // chapter is 1-based; _chapterGroups is 0-based.
+        var groupIdx = chapter - 1;
+        if (groupIdx < 0 || groupIdx >= _chapterGroups.Count) return 600;
+        var paragraphCount = _chapterGroups[groupIdx].Count;
+        return paragraphCount * 60;    // 60 px per paragraph
+    }
+
+    /// <summary>
+    /// Returns the actual measured height of a chapter by summing realized ListBoxItem heights.
+    /// Returns null if the chapter is not currently realized.
+    /// </summary>
+    private double? MeasureChapterHeight(int chapter)
+    {
+        if (_paragraphList == null) return null;
+
+        double total = 0;
+        bool found = false;
+
+        foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
+        {
+            if (item.DataContext is not BibleParagraph para) continue;
+            if (!_paragraphChapterInfo.TryGetValue(para, out var info)) continue;
+            if (info.Chapter != chapter) continue;
+            total += item.Bounds.Height;
+            found = true;
+        }
+
+        return found ? total : null;
+    }
+
+    private void CheckWindowBounds()
+    {
+        if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
+
+        var scrollTop    = _paragraphScrollViewer.Offset.Y;
+        var scrollBottom = scrollTop + _paragraphScrollViewer.Viewport.Height;
+        var contentBottom = _paragraphScrollViewer.Extent.Height;
+        var vpHeight     = _paragraphScrollViewer.Viewport.Height;
+
+        // Extend down if close to the bottom of the window.
+        if (_windowEnd < _chapterGroups.Count &&
+            contentBottom - scrollBottom < vpHeight)
+        {
+            ExtendWindowDown(vpHeight);
+        }
+
+        // Extend up if close to the top of the window.
+        if (_windowStart > 0 &&
+            scrollTop < vpHeight * 0.5)
+        {
+            ExtendWindowUp();
+        }
+
+        // Trim top if far from the top of the window.
+        if (_windowEnd - _windowStart > 1 &&
+            scrollTop > vpHeight * 2)
+        {
+            TrimWindowTop();
+        }
+
+        // Trim bottom if far from the bottom of the window.
+        if (_windowEnd - _windowStart > 1 &&
+            contentBottom - scrollBottom > vpHeight * 2)
+        {
+            TrimWindowBottom();
+        }
+    }
+
+    /// <summary>
+    /// Synchronously repositions the window so the given chapter is realized.
+    /// Called before ScrollIntoView jumps to a target outside the current window.
+    /// </summary>
+    private void EnsureChapterInWindow(int chapter)
+    {
+        var groupIdx = chapter - 1;
+        if (groupIdx < 0 || groupIdx >= _chapterGroups.Count) return;
+
+        // Check if already in window.
+        if (groupIdx >= _windowStart && groupIdx < _windowEnd) return;
+
+        // Rebuild window centered on target chapter.
+        _windowedItems.Clear();
+        _chapterStartY.Clear();
+        _chapterLocalTops.Clear();
+
+        // Load target chapter + 2 either side (for buffer).
+        _windowStart = Math.Max(0, groupIdx - 2);
+        _windowEnd   = _windowStart;
+
+        var targetEnd = Math.Min(_chapterGroups.Count, groupIdx + 3);
+
+        while (_windowEnd < targetEnd)
+        {
+            var ch = _windowEnd + 1;
+            foreach (var para in _chapterGroups[_windowEnd])
+                _windowedItems.Add(para);
+            _windowEnd++;
+            ChapterEnteredWindow?.Invoke(this, ch);
+        }
+
+        // Adjust scroll offset to top (will be corrected by layout once items are realized).
+        if (_paragraphScrollViewer != null)
+            _paragraphScrollViewer.Offset = new Vector(0, 0);
     }
 
     /// <summary>Adds stokes for chapters entering the window (with legacy anchor migration).</summary>
