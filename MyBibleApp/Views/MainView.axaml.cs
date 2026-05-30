@@ -1809,6 +1809,46 @@ public partial class MainView : UserControl
             Application.Current.Resources["ThemeForegroundBrush"] = new SolidColorBrush(fg);
         else
             Application.Current.Resources.Remove("ThemeForegroundBrush");
+
+        Application.Current.Resources["ThemeDotPatternBrush"] = BuildDotPatternBrush(theme);
+    }
+
+    private static DrawingBrush BuildDotPatternBrush(Models.AppTheme theme)
+    {
+        var bgColor = theme.BackgroundOverride ?? theme.SwatchColor;
+        var dotColor = theme.Variant == ThemeVariant.Dark
+            ? Color.FromArgb(45, 255, 255, 255)
+            : Color.FromArgb(45, 0, 0, 0);
+
+        const double tileSize = 20;
+        const double dotRadius = 1.5;
+
+        return new DrawingBrush
+        {
+            TileMode = TileMode.Tile,
+            DestinationRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
+            Drawing = new DrawingGroup
+            {
+                Children =
+                [
+                    new GeometryDrawing
+                    {
+                        Brush = new SolidColorBrush(bgColor),
+                        Geometry = new RectangleGeometry { Rect = new Rect(0, 0, tileSize, tileSize) }
+                    },
+                    new GeometryDrawing
+                    {
+                        Brush = new SolidColorBrush(dotColor),
+                        Geometry = new EllipseGeometry
+                        {
+                            Center = new Point(tileSize / 2, tileSize / 2),
+                            RadiusX = dotRadius,
+                            RadiusY = dotRadius
+                        }
+                    }
+                ]
+            }
+        };
     }
 
     private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)
