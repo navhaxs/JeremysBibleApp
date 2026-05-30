@@ -45,6 +45,7 @@ public sealed class JournalInkStroke
     public int ChapterNumber { get; init; }
     public int AnchorParagraphIndex { get; init; } = -1;
     public double AnchorContentTop { get; init; }
+    public int AnchorChapter { get; init; }      // 1-based chapter; 0 = legacy global index
 }
 
 public readonly record struct StrokePoint(double X, double Y);

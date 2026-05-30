@@ -33,4 +33,25 @@ public class JournalInkStrokeTests
         var stroke = new JournalInkStroke { Id = "s2" };
         Assert.Equal(-1, stroke.AnchorParagraphIndex);
     }
+
+    [Fact]
+    public void JournalInkStroke_AnchorChapter_DefaultsToZero()
+    {
+        var stroke = new JournalInkStroke { Id = "s3" };
+        Assert.Equal(0, stroke.AnchorChapter);
+    }
+
+    [Fact]
+    public void JournalInkStroke_AnchorChapter_RoundTrips()
+    {
+        var stroke = new JournalInkStroke
+        {
+            Id = "s4",
+            AnchorChapter = 5,
+            AnchorParagraphIndex = 2,
+            AnchorContentTop = 330.0
+        };
+        Assert.Equal(5, stroke.AnchorChapter);
+        Assert.Equal(2, stroke.AnchorParagraphIndex);
+    }
 }
