@@ -1718,10 +1718,10 @@ public partial class MainView : UserControl
             vm.AppVM.SignOut();
     }
 
-    private void OnSyncForceSyncButtonClick(object? sender, RoutedEventArgs e)
+    private async void OnSyncForceSyncButtonClick(object? sender, RoutedEventArgs e)
     {
         if (DataContext is ScriptureViewModel vm)
-            vm.AppVM.ForceSync();
+            await vm.AppVM.ForceSyncAsync();
     }
 
     // ── Standard handlers ────────────────────────────────────────────────────

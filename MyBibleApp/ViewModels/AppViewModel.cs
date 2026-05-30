@@ -342,7 +342,6 @@ public class AppViewModel : ViewModelBase, IDisposable
         if (_syncCoordinator == null || !IsAuthenticated)
             return;
 
-        AppendSyncDebugLog("Sync on shutdown requested.");
         await _syncCoordinator.ForceSyncAsync().ConfigureAwait(false);
     }
 
