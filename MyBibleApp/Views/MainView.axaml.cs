@@ -128,6 +128,7 @@ public partial class MainView : UserControl
     private bool _suppressScrollEventsForTabSwitch;
     private double? _pendingScrollRestoreY;
     private int _scrollRestoreRetries;
+    private bool _isAdjustingWindow;
 
     public MainView()
     {
@@ -1215,18 +1216,26 @@ public partial class MainView : UserControl
     /// </summary>
     private void ReinitializeWindow()
     {
-        _windowedItems.Clear();
-        _windowStart = 0;
-        _windowEnd   = 0;
-        _chapterStartY.Clear();
-        _chapterLocalTops.Clear();
+        _isAdjustingWindow = true;
+        try
+        {
+            _windowedItems.Clear();
+            _windowStart = 0;
+            _windowEnd   = 0;
+            _chapterStartY.Clear();
+            _chapterLocalTops.Clear();
 
-        if (_chapterGroups.Count == 0) return;
+            if (_chapterGroups.Count == 0) return;
 
-        // Wait for viewport to be known; if not yet, use a fallback.
-        var vpHeight = _paragraphScrollViewer?.Viewport.Height;
-        var targetHeight = (vpHeight > 0 ? vpHeight.Value : 800) * 3;
-        ExtendWindowDown(targetHeight);
+            // Wait for viewport to be known; if not yet, use a fallback.
+            var vpHeight = _paragraphScrollViewer?.Viewport.Height;
+            var targetHeight = (vpHeight > 0 ? vpHeight.Value : 800) * 3;
+            ExtendWindowDown(targetHeight);
+        }
+        finally
+        {
+            _isAdjustingWindow = false;
+        }
     }
 
     /// <summary>
@@ -1357,39 +1366,48 @@ public partial class MainView : UserControl
 
     private void CheckWindowBounds()
     {
+        if (_isAdjustingWindow) return;
         if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
 
-        var scrollTop    = _paragraphScrollViewer.Offset.Y;
-        var scrollBottom = scrollTop + _paragraphScrollViewer.Viewport.Height;
-        var contentBottom = _paragraphScrollViewer.Extent.Height;
-        var vpHeight     = _paragraphScrollViewer.Viewport.Height;
-
-        // Extend down if close to the bottom of the window.
-        if (_windowEnd < _chapterGroups.Count &&
-            contentBottom - scrollBottom < vpHeight)
+        _isAdjustingWindow = true;
+        try
         {
-            ExtendWindowDown(vpHeight);
+            var scrollTop     = _paragraphScrollViewer.Offset.Y;
+            var scrollBottom  = scrollTop + _paragraphScrollViewer.Viewport.Height;
+            var contentBottom = _paragraphScrollViewer.Extent.Height;
+            var vpHeight      = _paragraphScrollViewer.Viewport.Height;
+
+            // Extend down if close to the bottom of the window.
+            if (_windowEnd < _chapterGroups.Count &&
+                contentBottom - scrollBottom < vpHeight)
+            {
+                ExtendWindowDown(vpHeight);
+            }
+
+            // Extend up if close to the top of the window.
+            if (_windowStart > 0 &&
+                scrollTop < vpHeight * 0.5)
+            {
+                ExtendWindowUp();
+            }
+
+            // Trim top if far from the top of the window.
+            if (_windowEnd - _windowStart > 1 &&
+                scrollTop > vpHeight * 2)
+            {
+                TrimWindowTop();
+            }
+
+            // Trim bottom if far from the bottom of the window.
+            if (_windowEnd - _windowStart > 1 &&
+                contentBottom - scrollBottom > vpHeight * 2)
+            {
+                TrimWindowBottom();
+            }
         }
-
-        // Extend up if close to the top of the window.
-        if (_windowStart > 0 &&
-            scrollTop < vpHeight * 0.5)
+        finally
         {
-            ExtendWindowUp();
-        }
-
-        // Trim top if far from the top of the window.
-        if (_windowEnd - _windowStart > 1 &&
-            scrollTop > vpHeight * 2)
-        {
-            TrimWindowTop();
-        }
-
-        // Trim bottom if far from the bottom of the window.
-        if (_windowEnd - _windowStart > 1 &&
-            contentBottom - scrollBottom > vpHeight * 2)
-        {
-            TrimWindowBottom();
+            _isAdjustingWindow = false;
         }
     }
 
@@ -1405,29 +1423,37 @@ public partial class MainView : UserControl
         // Check if already in window.
         if (groupIdx >= _windowStart && groupIdx < _windowEnd) return;
 
-        // Rebuild window centered on target chapter.
-        _windowedItems.Clear();
-        _chapterStartY.Clear();
-        _chapterLocalTops.Clear();
-
-        // Load target chapter + 2 either side (for buffer).
-        _windowStart = Math.Max(0, groupIdx - 2);
-        _windowEnd   = _windowStart;
-
-        var targetEnd = Math.Min(_chapterGroups.Count, groupIdx + 3);
-
-        while (_windowEnd < targetEnd)
+        _isAdjustingWindow = true;
+        try
         {
-            var ch = _windowEnd + 1;
-            foreach (var para in _chapterGroups[_windowEnd])
-                _windowedItems.Add(para);
-            _windowEnd++;
-            ChapterEnteredWindow?.Invoke(this, ch);
-        }
+            // Rebuild window centered on target chapter.
+            _windowedItems.Clear();
+            _chapterStartY.Clear();
+            _chapterLocalTops.Clear();
 
-        // Adjust scroll offset to top (will be corrected by layout once items are realized).
-        if (_paragraphScrollViewer != null)
-            _paragraphScrollViewer.Offset = new Vector(0, 0);
+            // Load target chapter + 2 either side (for buffer).
+            _windowStart = Math.Max(0, groupIdx - 2);
+            _windowEnd   = _windowStart;
+
+            var targetEnd = Math.Min(_chapterGroups.Count, groupIdx + 3);
+
+            while (_windowEnd < targetEnd)
+            {
+                var ch = _windowEnd + 1;
+                foreach (var para in _chapterGroups[_windowEnd])
+                    _windowedItems.Add(para);
+                _windowEnd++;
+                ChapterEnteredWindow?.Invoke(this, ch);
+            }
+
+            // Adjust scroll offset to top (will be corrected by layout once items are realized).
+            if (_paragraphScrollViewer != null)
+                _paragraphScrollViewer.Offset = new Vector(0, 0);
+        }
+        finally
+        {
+            _isAdjustingWindow = false;
+        }
     }
 
     /// <summary>Adds stokes for chapters entering the window (with legacy anchor migration).</summary>
