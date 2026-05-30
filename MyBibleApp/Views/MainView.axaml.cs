@@ -333,6 +333,16 @@ public partial class MainView : UserControl
         _paragraphScrollViewer = sv;
         _paragraphScrollViewer.ScrollChanged += OnParagraphScrollChanged;
         _isScrollTrackingAttached = true;
+
+        // Keep the paragraph-position cache fresh for as long as the view lives.
+        // The cache (_chapterStartY / _chapterLocalTops) must be rebuilt after
+        // every layout change caused by windowed chapter loads/unloads — if it is
+        // stale, the ink drift-correction delta is wrong and strokes render at an
+        // offset of ±removed-chapter-height from the correct position.
+        // EnsureScrollTrackingAttached() returns immediately on re-entry
+        // (because _isScrollTrackingAttached is now true), so subscribing here is
+        // cheap and idempotent across repeated calls.
+        _paragraphList.LayoutUpdated += OnParagraphListLayoutUpdated;
     }
 
     private void OnParagraphListLayoutUpdated(object? sender, EventArgs e)
