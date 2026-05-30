@@ -128,7 +128,7 @@ public class InkOverlayCanvas : Control
     // ── Stroke cache ──────────────────────────────────────────────────────────
 
     // Represents a completed, immutable stroke.
-    // AnchorParagraphIndex / AnchorContentTop let the renderer correct for
+    // AnchorChapter / AnchorParagraphIndex / AnchorContentTop let the renderer correct for
     // virtualizing-panel drift by comparing the anchor paragraph's recorded
     // content-top with its current content-top.
     internal readonly record struct StrokeCache(
@@ -138,7 +138,8 @@ public class InkOverlayCanvas : Control
         double StrokeWidth,         // pen width used when drawing this stroke
         bool IsHighlight,           // true → highlight (Multiply blend, above text); false → pen (SrcOver, below text)
         IReadOnlyList<Point>? Points, // raw points for eraser hit-testing (null for dots)
-        int AnchorParagraphIndex = -1,   // index into the paragraph list at draw time
+        int AnchorChapter = 0,           // 1-based chapter number; 0 = unanchored/legacy
+        int AnchorParagraphIndex = -1,   // within-chapter paragraph index
         double AnchorContentTop = 0,     // content-space Y of that paragraph's top at draw time
         string StrokeId = "",            // stable ID linking cache entry to journal store
         SKPath? CachedPath = null);      // pre-built Skia path; reused every frame to avoid O(n) rebuild
@@ -151,7 +152,8 @@ public class InkOverlayCanvas : Control
     private Color _activeStrokeColor;
     private double _activeStrokeWidth;
     private bool _activeIsHighlight;
-    private int _activeAnchorIndex = -1;
+    private int _activeAnchorChapter;         // 1-based
+    private int _activeAnchorLocalIndex = -1; // within-chapter
     private double _activeAnchorContentTop;
 
     private double _scrollOffsetY;
@@ -160,16 +162,18 @@ public class InkOverlayCanvas : Control
     // ── Paragraph position provider (set by MainView) ────────────────────────
 
     /// <summary>
-    /// Given a content-space Y, returns the paragraph index and its content-top.
+    /// Given a content-space Y, returns the chapter number, within-chapter paragraph index,
+    /// and content-space top of the nearest realized paragraph.
     /// Used to anchor strokes to paragraphs at draw time.
     /// </summary>
-    public Func<double, (int Index, double ContentTop)?>? FindParagraphAtContentY { get; set; }
+    public Func<double, (int Chapter, int LocalIndex, double ContentTop)?>? FindParagraphAtContentY { get; set; }
 
     /// <summary>
-    /// Given a paragraph index, returns its current content-space top.
+    /// Given a (chapter, withinChapterIndex) pair, returns its current content-space top.
+    /// Returns null if the chapter is not currently realized in the window.
     /// Used at render time to correct for virtualizing-panel drift.
     /// </summary>
-    public Func<int, double?>? GetParagraphContentTop { get; set; }
+    public Func<int, int, double?>? GetParagraphContentTop { get; set; }
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -215,8 +219,9 @@ public class InkOverlayCanvas : Control
 
         // Anchor to the nearest paragraph so strokes survive virtualizing-panel re-layout.
         var anchor = FindParagraphAtContentY?.Invoke(contentPt.Y);
-        _activeAnchorIndex = anchor?.Index ?? -1;
-        _activeAnchorContentTop = anchor?.ContentTop ?? 0;
+        _activeAnchorChapter     = anchor?.Chapter    ?? 0;
+        _activeAnchorLocalIndex  = anchor?.LocalIndex ?? -1;
+        _activeAnchorContentTop  = anchor?.ContentTop ?? 0;
 
         _activeStroke = new List<Point> { contentPt };
         Redraw();
@@ -257,16 +262,17 @@ public class InkOverlayCanvas : Control
                     p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     _activeStrokeColor, _activeStrokeWidth, _activeIsHighlight, null,
-                    _activeAnchorIndex, _activeAnchorContentTop, id));
+                    _activeAnchorChapter, _activeAnchorLocalIndex, _activeAnchorContentTop, id));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
-                    StrokeId = id,
-                    Points = [],
-                    Color = _activeStrokeColor,
-                    StrokeWidth = _activeStrokeWidth,
-                    IsHighlight = _activeIsHighlight,
-                    AnchorParagraphIndex = _activeAnchorIndex,
-                    AnchorContentTop = _activeAnchorContentTop
+                    StrokeId              = id,
+                    Points                = [],
+                    Color                 = _activeStrokeColor,
+                    StrokeWidth           = _activeStrokeWidth,
+                    IsHighlight           = _activeIsHighlight,
+                    AnchorChapter         = _activeAnchorChapter,
+                    AnchorParagraphIndex  = _activeAnchorLocalIndex,
+                    AnchorContentTop      = _activeAnchorContentTop
                 });
             }
             else
@@ -279,24 +285,27 @@ public class InkOverlayCanvas : Control
                     _activeStrokeWidth,
                     _activeIsHighlight,
                     pts,
-                    _activeAnchorIndex,
+                    _activeAnchorChapter,
+                    _activeAnchorLocalIndex,
                     _activeAnchorContentTop,
                     id,
                     CachedPath: BuildSmoothPath(pts)));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
-                    StrokeId = id,
-                    Points = pts,
-                    Color = _activeStrokeColor,
-                    StrokeWidth = _activeStrokeWidth,
-                    IsHighlight = _activeIsHighlight,
-                    AnchorParagraphIndex = _activeAnchorIndex,
-                    AnchorContentTop = _activeAnchorContentTop
+                    StrokeId              = id,
+                    Points                = pts,
+                    Color                 = _activeStrokeColor,
+                    StrokeWidth           = _activeStrokeWidth,
+                    IsHighlight           = _activeIsHighlight,
+                    AnchorChapter         = _activeAnchorChapter,
+                    AnchorParagraphIndex  = _activeAnchorLocalIndex,
+                    AnchorContentTop      = _activeAnchorContentTop
                 });
             }
         }
         _activeStroke = null;
-        _activeAnchorIndex = -1;
+        _activeAnchorChapter    = 0;
+        _activeAnchorLocalIndex = -1;
         _activeAnchorContentTop = 0;
         Redraw();
     }
@@ -354,7 +363,7 @@ public class InkOverlayCanvas : Control
                     p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     color, stroke.StrokeWidth, stroke.IsHighlight, null,
-                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
+                    stroke.AnchorChapter, stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
             }
             else
             {
@@ -363,11 +372,55 @@ public class InkOverlayCanvas : Control
                     ComputeBounds(pts),
                     color, stroke.StrokeWidth, stroke.IsHighlight,
                     pts,
-                    stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id,
+                    stroke.AnchorChapter, stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id,
                     CachedPath: BuildSmoothPath(pts)));
             }
         }
         Redraw();
+    }
+
+    /// <summary>
+    /// Appends strokes for one chapter entering the scroll window.
+    /// Does not clear existing strokes from other chapters.
+    /// </summary>
+    public void AppendChapterStrokes(IReadOnlyList<JournalInkStroke> strokes)
+    {
+        foreach (var stroke in strokes)
+        {
+            var pts = stroke.Points.Select(p => new Point(p.X, p.Y)).ToList();
+            var color = Color.Parse(stroke.Color.Length > 0 ? stroke.Color : "#FF000000");
+            if (pts.Count == 0) continue;
+
+            if (pts.Count == 1)
+            {
+                var p = pts[0];
+                _cachedStrokes.Add(new StrokeCache(
+                    p, new Rect(p.X - 2, p.Y - 2, 4, 4),
+                    color, stroke.StrokeWidth, stroke.IsHighlight, null,
+                    stroke.AnchorChapter, stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
+            }
+            else
+            {
+                _cachedStrokes.Add(new StrokeCache(
+                    default, ComputeBounds(pts),
+                    color, stroke.StrokeWidth, stroke.IsHighlight, pts,
+                    stroke.AnchorChapter, stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id,
+                    CachedPath: BuildSmoothPath(pts)));
+            }
+        }
+        Redraw();
+    }
+
+    /// <summary>
+    /// Removes all strokes whose AnchorChapter matches the given chapter.
+    /// Called when a chapter leaves the scroll window.
+    /// </summary>
+    public void RemoveChapterStrokes(int chapter)
+    {
+        var countBefore = _cachedStrokes.Count;
+        _cachedStrokes.RemoveAll(s => s.AnchorChapter == chapter);
+        if (_cachedStrokes.Count != countBefore)
+            Redraw();
     }
 
     /// <summary>Remove the most recently completed stroke, pushing it onto the redo stack.</summary>
@@ -379,7 +432,8 @@ public class InkOverlayCanvas : Control
         _redoStack.Push(removed);
         Redraw();
         if (!string.IsNullOrEmpty(removed.StrokeId))
-            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs([removed.StrokeId]));
+            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(
+                [(removed.StrokeId, removed.AnchorChapter)]));
     }
 
     /// <summary>Re-apply the most recently undone stroke.</summary>
@@ -394,13 +448,14 @@ public class InkOverlayCanvas : Control
             var pts = stroke.Points ?? (IReadOnlyList<Point>)[];
             StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
             {
-                StrokeId = stroke.StrokeId,
-                Points = pts,
-                Color = stroke.Color,
-                StrokeWidth = stroke.StrokeWidth,
-                IsHighlight = stroke.IsHighlight,
+                StrokeId             = stroke.StrokeId,
+                Points               = pts,
+                Color                = stroke.Color,
+                StrokeWidth          = stroke.StrokeWidth,
+                IsHighlight          = stroke.IsHighlight,
+                AnchorChapter        = stroke.AnchorChapter,
                 AnchorParagraphIndex = stroke.AnchorParagraphIndex,
-                AnchorContentTop = stroke.AnchorContentTop
+                AnchorContentTop     = stroke.AnchorContentTop
             });
         }
     }
@@ -446,12 +501,12 @@ public class InkOverlayCanvas : Control
     {
         const double radius   = 14.0;
         const double radiusSq = radius * radius;
-        List<string>? removedIds = null;
+        List<(string StrokeId, int Chapter)>? removedStrokes = null;
 
         for (int i = _cachedStrokes.Count - 1; i >= 0; i--)
         {
             var s = _cachedStrokes[i];
-            var delta = GetDriftDelta(s.AnchorParagraphIndex, s.AnchorContentTop);
+            var delta = GetDriftDelta(s.AnchorChapter, s.AnchorParagraphIndex, s.AnchorContentTop);
             // Adjust the erase point into the stroke's original coordinate space.
             var adjustedPoint = new Point(contentPoint.X, contentPoint.Y - delta);
 
@@ -470,7 +525,7 @@ public class InkOverlayCanvas : Control
                 if (dx * dx + dy * dy <= radiusSq)
                 {
                     if (!string.IsNullOrEmpty(s.StrokeId))
-                        (removedIds ??= []).Add(s.StrokeId);
+                        (removedStrokes ??= []).Add((s.StrokeId, s.AnchorChapter));
                     _cachedStrokes.RemoveAt(i);
                 }
                 continue;
@@ -492,16 +547,16 @@ public class InkOverlayCanvas : Control
             if (hit)
             {
                 if (!string.IsNullOrEmpty(s.StrokeId))
-                    (removedIds ??= []).Add(s.StrokeId);
+                    (removedStrokes ??= []).Add((s.StrokeId, s.AnchorChapter));
                 _cachedStrokes.RemoveAt(i);
             }
         }
 
-        if (removedIds != null)
+        if (removedStrokes != null)
         {
             _redoStack.Clear();
             Redraw();
-            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(removedIds));
+            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(removedStrokes));
         }
     }
 
@@ -551,10 +606,10 @@ public class InkOverlayCanvas : Control
     /// Compute drift delta for a stroke's anchor paragraph. Returns 0 if no
     /// anchor is available or the paragraph position can't be resolved.
     /// </summary>
-    private double GetDriftDelta(int anchorIndex, double anchorContentTop)
+    private double GetDriftDelta(int anchorChapter, int anchorLocalIndex, double anchorContentTop)
     {
-        if (anchorIndex < 0 || GetParagraphContentTop == null) return 0;
-        var currentTop = GetParagraphContentTop(anchorIndex);
+        if (anchorChapter <= 0 || anchorLocalIndex < 0 || GetParagraphContentTop == null) return 0;
+        var currentTop = GetParagraphContentTop(anchorChapter, anchorLocalIndex);
         return currentTop.HasValue ? currentTop.Value - anchorContentTop : 0;
     }
 
@@ -577,7 +632,7 @@ public class InkOverlayCanvas : Control
 
         foreach (var s in src._cachedStrokes)
         {
-            var delta = src.GetDriftDelta(s.AnchorParagraphIndex, s.AnchorContentTop);
+            var delta = src.GetDriftDelta(s.AnchorChapter, s.AnchorParagraphIndex, s.AnchorContentTop);
             var top   = s.ContentBounds.Top    + delta;
             var bot   = s.ContentBounds.Bottom + delta;
             if (bot < viewTop || top > viewBottom) continue;
@@ -606,16 +661,16 @@ public class InkOverlayCanvas : Control
             {
                 if (mode != InkDrawMode.PenOnly)
                 {
-                    activeHighlight      = new StrokeCache(default, default, src._activeStrokeColor, src._activeStrokeWidth, true, pts, src._activeAnchorIndex, src._activeAnchorContentTop);
-                    activeHighlightDelta = src.GetDriftDelta(src._activeAnchorIndex, src._activeAnchorContentTop);
+                    activeHighlight      = new StrokeCache(default, default, src._activeStrokeColor, src._activeStrokeWidth, true, pts, src._activeAnchorChapter, src._activeAnchorLocalIndex, src._activeAnchorContentTop);
+                    activeHighlightDelta = src.GetDriftDelta(src._activeAnchorChapter, src._activeAnchorLocalIndex, src._activeAnchorContentTop);
                 }
             }
             else
             {
                 if (mode != InkDrawMode.HighlightOnly)
                 {
-                    activePen      = new StrokeCache(default, default, src._activeStrokeColor, src._activeStrokeWidth, false, pts, src._activeAnchorIndex, src._activeAnchorContentTop);
-                    activePenDelta = src.GetDriftDelta(src._activeAnchorIndex, src._activeAnchorContentTop);
+                    activePen      = new StrokeCache(default, default, src._activeStrokeColor, src._activeStrokeWidth, false, pts, src._activeAnchorChapter, src._activeAnchorLocalIndex, src._activeAnchorContentTop);
+                    activePenDelta = src.GetDriftDelta(src._activeAnchorChapter, src._activeAnchorLocalIndex, src._activeAnchorContentTop);
                 }
             }
         }
