@@ -130,6 +130,7 @@ public partial class MainView : UserControl
     private int _scrollRestoreRetries;
     private bool _isAdjustingWindow;
     private CancellationTokenSource? _windowCheckCts;
+    private bool _immediateExtendPending;
 
     public MainView()
     {
@@ -405,12 +406,21 @@ public partial class MainView : UserControl
             });
         }, TaskScheduler.Default);
 
-        // Debounce windowing decisions: cancel the previous pending check and
-        // restart the 100 ms timer. Rapid scroll events collapse into a single
-        // CheckWindowBounds call that fires only after scrolling pauses.
-        // The Task.Delay + CancellationToken pattern also prevents the layout
-        // feedback loop (layout → ScrollChanged → modify items → layout → …)
-        // because CheckWindowBounds is never called synchronously from here.
+        // Immediate (no debounce): ensure the chapters immediately adjacent to
+        // the visible range are loaded. Fires at Loaded priority on the very next
+        // frame — fast enough to stay ahead of momentum scrolling.
+        if (!_immediateExtendPending && !_isAdjustingWindow)
+        {
+            _immediateExtendPending = true;
+            Dispatcher.UIThread.Post(() =>
+            {
+                _immediateExtendPending = false;
+                CheckWindowExtend();
+            }, DispatcherPriority.Loaded);
+        }
+
+        // Debounced (100 ms after scroll stops): trim chapters that are no longer
+        // near the viewport. Collapsing rapid events prevents thrashing.
         if (!_isAdjustingWindow)
         {
             _windowCheckCts?.Cancel();
@@ -1432,6 +1442,91 @@ public partial class MainView : UserControl
         {
             _isAdjustingWindow = false;
         }
+    }
+
+    /// <summary>
+    /// Immediate (no debounce) extend-only check.
+    /// Ensures the chapter immediately before the topmost visible chapter and the
+    /// chapter immediately after the bottommost visible chapter are both in the window.
+    /// Called at Loaded priority on every scroll event — fast enough to stay ahead
+    /// of momentum scrolling without triggering a layout-loop.
+    /// </summary>
+    private void CheckWindowExtend()
+    {
+        if (_isAdjustingWindow) return;
+        if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
+
+        var vpHeight = _paragraphScrollViewer.Viewport.Height;
+        if (vpHeight <= 0) return;
+
+        var scrollTop    = _paragraphScrollViewer.Offset.Y;
+        var scrollBottom = scrollTop + vpHeight;
+        var contentBottom = _paragraphScrollViewer.Extent.Height;
+
+        _isAdjustingWindow = true;
+        try
+        {
+            if (_chapterStartY.Count > 0)
+            {
+                // Precise path: use measured chapter Y positions to determine which
+                // chapters are actually visible, then ensure ±1 chapter is loaded.
+                var (topVisible, bottomVisible) = GetVisibleChapterRange(scrollTop, scrollBottom);
+
+                // Extend up: load the chapter before the topmost visible chapter.
+                var needAbove = topVisible - 1;          // 1-based
+                if (needAbove >= 1 && (needAbove - 1) < _windowStart)
+                    ExtendWindowUp();
+
+                // Extend down: load the chapter after the bottommost visible chapter.
+                var needBelow = bottomVisible + 1;       // 1-based
+                if (needBelow <= _chapterGroups.Count && (needBelow - 1) >= _windowEnd)
+                    ExtendWindowDown(1);                 // targetHeight=1 → adds exactly one chapter
+            }
+            else
+            {
+                // Fallback when chapter positions aren't measured yet: use content-height
+                // heuristic (same logic as CheckWindowBounds extend conditions).
+                if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
+                    ExtendWindowDown(vpHeight * 3);
+                if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
+                    ExtendWindowUp();
+            }
+        }
+        finally
+        {
+            _isAdjustingWindow = false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the 1-based chapter numbers of the topmost and bottommost chapters
+    /// that overlap the visible scroll range, using the cached <see cref="_chapterStartY"/> positions.
+    /// Falls back to the full loaded window when positions are unavailable.
+    /// </summary>
+    private (int TopChapter, int BottomChapter) GetVisibleChapterRange(double scrollTop, double scrollBottom)
+    {
+        // Start conservative: assume the entire loaded window might be visible.
+        int topVisible    = _windowStart + 1;   // 1-based
+        int bottomVisible = _windowStart + 1;   // 1-based
+
+        foreach (var (chapter, chapterY) in _chapterStartY)
+        {
+            // Only consider chapters inside the loaded window.
+            if (chapter < _windowStart + 1 || chapter > _windowEnd) continue;
+
+            // topVisible = the highest-numbered chapter whose top edge is at or above scrollTop
+            // (i.e. this chapter's content starts before or at the viewport top).
+            if (chapterY <= scrollTop)
+                topVisible = Math.Max(topVisible, chapter);
+
+            // bottomVisible = the highest-numbered chapter whose top edge is at or above scrollBottom
+            // (i.e. this chapter extends into or past the viewport bottom).
+            if (chapterY <= scrollBottom)
+                bottomVisible = Math.Max(bottomVisible, chapter);
+        }
+
+        bottomVisible = Math.Max(topVisible, bottomVisible);
+        return (topVisible, bottomVisible);
     }
 
     /// <summary>
