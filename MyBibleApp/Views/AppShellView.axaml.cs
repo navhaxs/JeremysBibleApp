@@ -972,15 +972,16 @@ public partial class AppShellView : UserControl
 
         var stroke = new JournalInkStroke
         {
-            Id = e.StrokeId,
-            Points = e.Points.Select(p => new StrokePoint(p.X, p.Y)).ToList(),
-            Color = $"#{e.Color.A:X2}{e.Color.R:X2}{e.Color.G:X2}{e.Color.B:X2}",
-            StrokeWidth = e.StrokeWidth,
-            IsHighlight = e.IsHighlight,
-            BookCode = vm.BookCode,
-            ChapterNumber = vm.SelectedLookupChapter,
+            Id                   = e.StrokeId,
+            Points               = e.Points.Select(p => new StrokePoint(p.X, p.Y)).ToList(),
+            Color                = $"#{e.Color.A:X2}{e.Color.R:X2}{e.Color.G:X2}{e.Color.B:X2}",
+            StrokeWidth          = e.StrokeWidth,
+            IsHighlight          = e.IsHighlight,
+            BookCode             = vm.BookCode,
+            ChapterNumber        = e.AnchorChapter > 0 ? e.AnchorChapter : vm.SelectedLookupChapter,
+            AnchorChapter        = e.AnchorChapter,
             AnchorParagraphIndex = e.AnchorParagraphIndex,
-            AnchorContentTop = e.AnchorContentTop
+            AnchorContentTop     = e.AnchorContentTop
         };
 
         var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
@@ -1002,11 +1003,14 @@ public partial class AppShellView : UserControl
         var vm = _tabs[_activeTabIndex];
 
         var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
-        foreach (var strokeId in e.StrokeIds)
+        foreach (var (strokeId, chapter) in e.RemovedStrokes)
         {
             if (journalId != null)
             {
-                await SharedSyncRuntime.Instance.JournalStore.RemoveInkStrokeAsync(journalId, strokeId, vm.BookCode, vm.SelectedLookupChapter);
+                // Use per-stroke chapter for correct bucket routing.
+                var strokeChapter = chapter > 0 ? chapter : vm.SelectedLookupChapter;
+                await SharedSyncRuntime.Instance.JournalStore.RemoveInkStrokeAsync(
+                    journalId, strokeId, vm.BookCode, strokeChapter);
             }
             else
             {
