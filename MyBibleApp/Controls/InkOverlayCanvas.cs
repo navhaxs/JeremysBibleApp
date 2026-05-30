@@ -24,12 +24,17 @@ public sealed class InkStrokeEventArgs : EventArgs
     public required bool IsHighlight { get; init; }
     public required int AnchorParagraphIndex { get; init; }
     public required double AnchorContentTop { get; init; }
+    public required int AnchorChapter { get; init; }
 }
 
-/// <summary>Carries IDs of strokes removed by undo or the eraser tool.</summary>
-public sealed class InkStrokeRemovedEventArgs(IReadOnlyList<string> strokeIds) : EventArgs
+/// <summary>Carries strokes removed by undo or the eraser tool, with their chapter for store routing.</summary>
+public sealed class InkStrokeRemovedEventArgs(IReadOnlyList<(string StrokeId, int Chapter)> removedStrokes) : EventArgs
 {
-    public IReadOnlyList<string> StrokeIds { get; } = strokeIds;
+    public IReadOnlyList<(string StrokeId, int Chapter)> RemovedStrokes { get; } = removedStrokes;
+
+    // Convenience: just the IDs (for callers that don't care about chapter).
+    public IReadOnlyList<string> StrokeIds { get; } =
+        removedStrokes.Select(r => r.StrokeId).ToList();
 }
 
 /// <summary>
