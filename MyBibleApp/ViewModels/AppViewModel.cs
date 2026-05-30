@@ -16,6 +16,7 @@ public class AppViewModel : ViewModelBase, IDisposable
     private const string LocalTabStateKey = "LocalTabState";
     private const string DebugModeKey = "IsDebugMode";
     private const string ThemeKey = "SelectedThemeId";
+    private const string DotPatternKey = "IsDotPatternEnabled";
     private const int DebugOverlayMaxLines = 12;
 
     private readonly ISyncCoordinator? _syncCoordinator;
@@ -25,6 +26,7 @@ public class AppViewModel : ViewModelBase, IDisposable
     private readonly ILocalStorageProvider? _localStorageProvider;
 
     private bool _isDebugMode;
+    private bool _isDotPatternEnabled;
     private bool _isSyncing;
     private bool _isAuthenticated;
     private bool _isAuthenticating;
@@ -96,6 +98,43 @@ public class AppViewModel : ViewModelBase, IDisposable
             if (string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
                 await Dispatcher.UIThread.InvokeAsync(() => _isDebugMode = true);
             this.RaisePropertyChanged(nameof(IsDebugMode));
+        }
+        catch { /* best-effort */ }
+    }
+
+    // ── Dot Pattern ──────────────────────────────────────────────────────────
+
+    public bool IsDotPatternEnabled
+    {
+        get => _isDotPatternEnabled;
+        set
+        {
+            var old = _isDotPatternEnabled;
+            this.RaiseAndSetIfChanged(ref _isDotPatternEnabled, value);
+            if (old != _isDotPatternEnabled)
+                _ = PersistDotPatternAsync(_isDotPatternEnabled);
+        }
+    }
+
+    private async Task PersistDotPatternAsync(bool value)
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            await _localStorageProvider.SaveAsync(DotPatternKey, value ? "true" : "false").ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
+    }
+
+    public async Task LoadDotPatternFromStorageAsync()
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            var stored = await _localStorageProvider.GetAsync(DotPatternKey).ConfigureAwait(false);
+            if (string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
+                await Dispatcher.UIThread.InvokeAsync(() => _isDotPatternEnabled = true);
+            this.RaisePropertyChanged(nameof(IsDotPatternEnabled));
         }
         catch { /* best-effort */ }
     }
