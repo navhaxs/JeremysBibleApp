@@ -1820,7 +1820,7 @@ public partial class MainView : UserControl
             : Color.FromArgb(45, 0, 0, 0);
 
         const double tileSize = 20;
-        const double dotRadius = 1.5;
+        const double dotRadius = 1.0;
 
         return new DrawingBrush
         {
