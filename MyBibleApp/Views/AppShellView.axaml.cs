@@ -1069,11 +1069,16 @@ public partial class AppShellView : UserControl
         _primaryView.LoadJournalStrokes([]);   // clear
 
         var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
-        var bookCode  = _primaryView.CurrentBookCode;
+        var bookCode  = _primaryView.CurrentBookCode.Length > 0 ? _primaryView.CurrentBookCode : vm.BookCode;
 
         // Fire enter for each currently windowed chapter to reload strokes.
         for (var ch = _primaryView.WindowStart + 1; ch <= _primaryView.WindowEnd; ch++)
+        {
+            // Guard: if tab changed while we were awaiting, stop loading for the old tab.
+            if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm)
+                return;
             await OnChapterEnteredWindowAsync(ch, journalId, bookCode, vm);
+        }
     }
 
     // ── Split management ──────────────────────────────────────────────────────
