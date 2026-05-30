@@ -129,6 +129,7 @@ public partial class MainView : UserControl
     private double? _pendingScrollRestoreY;
     private int _scrollRestoreRetries;
     private bool _isAdjustingWindow;
+    private bool _windowCheckPending;
 
     public MainView()
     {
@@ -400,7 +401,20 @@ public partial class MainView : UserControl
             });
         }, TaskScheduler.Default);
 
-        CheckWindowBounds();
+        // Defer windowing decisions to after the current layout cycle.
+        // Calling CheckWindowBounds synchronously here causes a feedback loop:
+        //   layout → ScrollChanged → modify items → InvalidateMeasure → layout → ...
+        // Running it at Loaded priority breaks the chain so Avalonia never sees
+        // more than one layout pass per windowing adjustment.
+        if (!_windowCheckPending && !_isAdjustingWindow)
+        {
+            _windowCheckPending = true;
+            Dispatcher.UIThread.Post(() =>
+            {
+                _windowCheckPending = false;
+                CheckWindowBounds();
+            }, DispatcherPriority.Loaded);
+        }
     }
 
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -1369,41 +1383,34 @@ public partial class MainView : UserControl
         if (_isAdjustingWindow) return;
         if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
 
+        // Don't make trimming/extending decisions when the viewport has not been
+        // measured yet — vpHeight == 0 makes every condition evaluate incorrectly
+        // (e.g. "contentBottom > 0" looks like "trim" when we should do nothing).
+        var vpHeight = _paragraphScrollViewer.Viewport.Height;
+        if (vpHeight <= 0) return;
+
         _isAdjustingWindow = true;
         try
         {
             var scrollTop     = _paragraphScrollViewer.Offset.Y;
-            var scrollBottom  = scrollTop + _paragraphScrollViewer.Viewport.Height;
+            var scrollBottom  = scrollTop + vpHeight;
             var contentBottom = _paragraphScrollViewer.Extent.Height;
-            var vpHeight      = _paragraphScrollViewer.Viewport.Height;
 
-            // Extend down if close to the bottom of the window.
-            if (_windowEnd < _chapterGroups.Count &&
-                contentBottom - scrollBottom < vpHeight)
-            {
+            // Extend down when near the bottom of loaded content.
+            if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
                 ExtendWindowDown(vpHeight);
-            }
 
-            // Extend up if close to the top of the window.
-            if (_windowStart > 0 &&
-                scrollTop < vpHeight * 0.5)
-            {
+            // Extend up when near the top of loaded content.
+            if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
                 ExtendWindowUp();
-            }
 
-            // Trim top if far from the top of the window.
-            if (_windowEnd - _windowStart > 1 &&
-                scrollTop > vpHeight * 2)
-            {
+            // Trim top when well past the top buffer.
+            if (_windowEnd - _windowStart > 1 && scrollTop > vpHeight * 2)
                 TrimWindowTop();
-            }
 
-            // Trim bottom if far from the bottom of the window.
-            if (_windowEnd - _windowStart > 1 &&
-                contentBottom - scrollBottom > vpHeight * 2)
-            {
+            // Trim bottom when well past the bottom buffer.
+            if (_windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 2)
                 TrimWindowBottom();
-            }
         }
         finally
         {
