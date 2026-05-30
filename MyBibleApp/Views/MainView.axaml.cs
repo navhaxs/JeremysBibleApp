@@ -16,6 +16,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
+using MyBibleApp.Helpers;
 using MyBibleApp.Models;
 using MyBibleApp.Services;
 using MyBibleApp.ViewModels;
@@ -60,9 +61,16 @@ public partial class MainView : UserControl
     private bool _isScrollTrackingAttached;
     private bool _waitingForLayoutToAttachScrollViewer;
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
-    // Content-space Y position of each paragraph, indexed by paragraph list position.
-    // Built once per layout change; O(1) lookup replaces per-frame visual-tree traversal.
-    private double[] _paragraphContentTops = [];
+    // Chapter grouping built from _paragraphs on every book load.
+    // _chapterGroups[i] = all paragraphs for chapter (i+1), in order.
+    private List<List<BibleParagraph>> _chapterGroups = [];
+    // Fast lookup: paragraph → (1-based chapter, within-chapter index).
+    private Dictionary<BibleParagraph, (int Chapter, int LocalIndex)> _paragraphChapterInfo = [];
+
+    // Chapter content positions — populated from visual tree when chapters are realized.
+    private Dictionary<int, double> _chapterStartY = [];
+    // Per-chapter within-chapter local tops. Only populated when chapter is in window.
+    private Dictionary<int, double[]> _chapterLocalTops = [];
     private ScriptureViewModel? _subscribedVm;
     // Velocity-based chapter marker reveal
     private double _lastScrollOffset;
@@ -222,6 +230,7 @@ public partial class MainView : UserControl
         if (DataContext is MyBibleApp.ViewModels.ScriptureViewModel vm)
         {
             _paragraphs = vm.Paragraphs;
+            RebuildChapterGroups();
         }
 
         if (_paragraphList == null || _annotationToggle == null) return;
@@ -373,7 +382,10 @@ public partial class MainView : UserControl
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ScriptureViewModel.Paragraphs) && sender is ScriptureViewModel vm)
+        {
             _paragraphs = vm.Paragraphs;
+            RebuildChapterGroups();
+        }
         // Don't call RefreshReaderProgress() here — the ListBox is mid-render when
         // Paragraphs changes; reading the visual tree now gives stale positions.
         // OnParagraphScrollChanged fires naturally once the list settles.
@@ -1155,6 +1167,31 @@ public partial class MainView : UserControl
         return -1;
     }
 
+    /// <summary>
+    /// Rebuilds _chapterGroups and _paragraphChapterInfo from _paragraphs.
+    /// O(N) in paragraph count. Call whenever _paragraphs changes.
+    /// </summary>
+    private void RebuildChapterGroups()
+    {
+        (_chapterGroups, _paragraphChapterInfo) = ChapterGroupBuilder.Build(_paragraphs);
+        _chapterStartY.Clear();
+        _chapterLocalTops.Clear();
+    }
+
+    /// <summary>Adds stokes for chapters entering the window (with legacy anchor migration).</summary>
+    public void AppendChapterStrokes(IReadOnlyList<JournalInkStroke> strokes)
+    {
+        var migrated = InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
+        _inkOverlay?.AppendChapterStrokes(migrated);
+    }
+
+    /// <summary>Removes strokes for a chapter leaving the window.</summary>
+    public void RemoveChapterStrokes(int chapter) =>
+        _inkOverlay?.RemoveChapterStrokes(chapter);
+
+    private IReadOnlyList<JournalInkStroke> MigrateStrokeAnchors(IReadOnlyList<JournalInkStroke> strokes) =>
+        InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
+
     // ── Ink paragraph anchoring helpers ───────────────────────────────────────
 
     /// <summary>
@@ -1163,80 +1200,88 @@ public partial class MainView : UserControl
     /// </summary>
     private void RebuildParagraphTopCache()
     {
-        if (_paragraphList == null || _paragraphScrollViewer == null || _paragraphs.Count == 0)
-        {
-            _paragraphContentTops = [];
+        if (_paragraphList == null || _paragraphScrollViewer == null)
             return;
-        }
 
-        var tops = new double[_paragraphs.Count];
-        Array.Fill(tops, -1.0);
+        var byChapter = new Dictionary<int, List<(int LocalIndex, double ViewportY)>>();
 
         foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
         {
             if (item.DataContext is not BibleParagraph para) continue;
-            var idx = FindParagraphIndex(para);
-            if (idx < 0) continue;
+            if (!_paragraphChapterInfo.TryGetValue(para, out var info)) continue;
+
             var viewportY = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
             if (viewportY == null) continue;
-            // content-Y = scrollOffset + viewportY (scroll-independent)
-            tops[idx] = _paragraphScrollViewer.Offset.Y + viewportY.Value;
+
+            if (!byChapter.TryGetValue(info.Chapter, out var list))
+            {
+                list = [];
+                byChapter[info.Chapter] = list;
+            }
+            list.Add((info.LocalIndex, viewportY.Value));
         }
 
-        _paragraphContentTops = tops;
+        var scrollY = _paragraphScrollViewer.Offset.Y;
+
+        foreach (var (chapter, items) in byChapter)
+        {
+            items.Sort((a, b) => a.LocalIndex.CompareTo(b.LocalIndex));
+            var chapterViewportTop = items.Count > 0 ? items[0].ViewportY : 0;
+            _chapterStartY[chapter] = scrollY + chapterViewportTop;
+
+            var maxLocalIndex = items.Count > 0 ? items[^1].LocalIndex : 0;
+            var localTops = new double[maxLocalIndex + 1];
+            Array.Fill(localTops, -1.0);
+            foreach (var (localIndex, viewportY) in items)
+                localTops[localIndex] = viewportY - chapterViewportTop;
+
+            _chapterLocalTops[chapter] = localTops;
+        }
     }
 
     /// <summary>O(1) paragraph content-top lookup for the ink drift-correction callback.</summary>
-    private double? GetParagraphContentTopFast(int paragraphIndex)
+    private double? GetParagraphContentTopFast(int chapter, int withinChapterIndex)
     {
-        if (paragraphIndex < 0 || paragraphIndex >= _paragraphContentTops.Length) return null;
-        var v = _paragraphContentTops[paragraphIndex];
-        return v >= 0 ? v : null;
+        if (!_chapterStartY.TryGetValue(chapter, out var chapterY)) return null;
+        if (!_chapterLocalTops.TryGetValue(chapter, out var localTops)) return null;
+        if (withinChapterIndex < 0 || withinChapterIndex >= localTops.Length) return null;
+        var local = localTops[withinChapterIndex];
+        return local >= 0 ? chapterY + local : null;
     }
 
-    /// <summary>
-    /// Given a content-space Y coordinate, finds the realized paragraph whose
-    /// bounds contain that Y and returns its index + content-space top.
-    /// </summary>
-    private (int Index, double ContentTop)? FindParagraphAtContentY(double contentY)
+    private (int Chapter, int LocalIndex, double ContentTop)? FindParagraphAtContentY(double contentY)
     {
         if (_paragraphList == null || _paragraphScrollViewer == null || _paragraphs.Count == 0)
             return null;
 
         var scrollY = _paragraphScrollViewer.Offset.Y;
-
-        // Walk realized ListBoxItems and find the one containing contentY.
-        (int Index, double ContentTop, double Height)? best = null;
+        (int Chapter, int LocalIndex, double ContentTop, double Height)? best = null;
         double bestDist = double.MaxValue;
 
         foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
         {
             if (item.DataContext is not BibleParagraph para) continue;
+            if (!_paragraphChapterInfo.TryGetValue(para, out var info)) continue;
+
             var top = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
             if (top == null) continue;
 
             var contentTop = scrollY + top.Value;
             var height = item.Bounds.Height;
 
-            // Exact containment.
             if (contentY >= contentTop && contentY <= contentTop + height)
-            {
-                var idx = FindParagraphIndex(para);
-                if (idx >= 0) return (idx, contentTop);
-            }
+                return (info.Chapter, info.LocalIndex, contentTop);
 
-            // Track closest for fallback.
             var dist = Math.Min(Math.Abs(contentY - contentTop),
                                 Math.Abs(contentY - (contentTop + height)));
             if (dist < bestDist)
             {
                 bestDist = dist;
-                var idx = FindParagraphIndex(para);
-                if (idx >= 0) best = (idx, contentTop, height);
+                best = (info.Chapter, info.LocalIndex, contentTop, height);
             }
         }
 
-        return best.HasValue ? (best.Value.Index, best.Value.ContentTop) : null;
+        return best.HasValue ? (best.Value.Chapter, best.Value.LocalIndex, best.Value.ContentTop) : null;
     }
 
     /// <summary>
@@ -1511,8 +1556,11 @@ public partial class MainView : UserControl
             _journalUnsavedBadge.IsVisible = visible;
     }
 
-    public void LoadJournalStrokes(IReadOnlyList<JournalInkStroke> strokes) =>
-        _inkOverlay?.LoadJournalStrokes(strokes);
+    public void LoadJournalStrokes(IReadOnlyList<JournalInkStroke> strokes)
+    {
+        var migrated = MigrateStrokeAnchors(strokes);
+        _inkOverlay?.LoadJournalStrokes(migrated);
+    }
 
     public void SetJournalLayout(JournalLayout? layout)
     {
