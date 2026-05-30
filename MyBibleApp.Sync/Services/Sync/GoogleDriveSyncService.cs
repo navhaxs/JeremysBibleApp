@@ -107,9 +107,12 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
 
             return JsonSerializer.Deserialize<UserDataSnapshot>(content);
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            // Propagate to the caller (SyncCoordinator.PullFromDriveAsync) so it can
+            // surface the message via RaiseSyncProgress and return a PullResult.Failure.
+            // Common case: 403 insufficientPermissions when Google Drive scope was not granted.
+            throw new InvalidOperationException($"Could not download sync data from Drive: {ex.Message}", ex);
         }
     }
 
