@@ -286,6 +286,10 @@ public partial class MainView : UserControl
             _inkAreaGrid.AddHandler(PointerPressedEvent, OnMarginTouchPressed, handledEventsToo: false);
             _inkAreaGrid.AddHandler(PointerMovedEvent, OnMarginTouchMoved, handledEventsToo: false);
             _inkAreaGrid.AddHandler(PointerReleasedEvent, OnMarginTouchReleased, handledEventsToo: false);
+            // Forward unhandled wheel events from the margins to the scroll viewer.
+            // When the pointer is over the ListBox, its internal ScrollViewer marks
+            // the event handled; handledEventsToo:false means we only see margin hits.
+            _inkAreaGrid.AddHandler(PointerWheelChangedEvent, OnMarginMouseWheelChanged, handledEventsToo: false);
             // Keep ink canvas column-offset in sync when the viewport is resized.
             _inkAreaGrid.SizeChanged += (_, _) => UpdateInkTextColumnOffset();
         }
@@ -1826,6 +1830,19 @@ public partial class MainView : UserControl
 
         _isTouchPanning = false;
         e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    private void OnMarginMouseWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (_paragraphScrollViewer == null) return;
+
+        // Delta.Y is +1 per notch scrolling up, -1 scrolling down.
+        // Match the ~50 px/notch step Avalonia's ScrollViewer uses for pixel content.
+        const double ScrollStep = 50.0;
+        var newY = _paragraphScrollViewer.Offset.Y - e.Delta.Y * ScrollStep;
+        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, Math.Clamp(newY, 0, maxY));
         e.Handled = true;
     }
 
