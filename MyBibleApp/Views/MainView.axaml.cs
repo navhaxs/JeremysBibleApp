@@ -1396,20 +1396,25 @@ public partial class MainView : UserControl
             var scrollBottom  = scrollTop + vpHeight;
             var contentBottom = _paragraphScrollViewer.Extent.Height;
 
-            // Extend down when near the bottom of loaded content.
+            // Extend down when within 1 viewport of the window bottom.
+            // Use a 3× target to overshoot because EstimateChapterHeight is
+            // usually 2–3× larger than actual rendered height on desktop, so
+            // each call adds roughly 1 real viewport of content.
             if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
-                ExtendWindowDown(vpHeight);
+                ExtendWindowDown(vpHeight * 3);
 
-            // Extend up when near the top of loaded content.
+            // Extend up when within half a viewport of the window top.
             if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
                 ExtendWindowUp();
 
-            // Trim top when well past the top buffer.
-            if (_windowEnd - _windowStart > 1 && scrollTop > vpHeight * 2)
+            // Trim top only when 5+ viewports above the current scroll position.
+            // Wide hysteresis (extend < 1×, trim > 5×) prevents extend↔trim
+            // oscillation when individual chapter heights exceed 1 viewport.
+            if (_windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
                 TrimWindowTop();
 
-            // Trim bottom when well past the bottom buffer.
-            if (_windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 2)
+            // Trim bottom only when 5+ viewports below the current scroll position.
+            if (_windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
                 TrimWindowBottom();
         }
         finally
