@@ -129,7 +129,7 @@ public partial class MainView : UserControl
     private double? _pendingScrollRestoreY;
     private int _scrollRestoreRetries;
     private bool _isAdjustingWindow;
-    private bool _windowCheckPending;
+    private CancellationTokenSource? _windowCheckCts;
 
     public MainView()
     {
@@ -401,19 +401,26 @@ public partial class MainView : UserControl
             });
         }, TaskScheduler.Default);
 
-        // Defer windowing decisions to after the current layout cycle.
-        // Calling CheckWindowBounds synchronously here causes a feedback loop:
-        //   layout → ScrollChanged → modify items → InvalidateMeasure → layout → ...
-        // Running it at Loaded priority breaks the chain so Avalonia never sees
-        // more than one layout pass per windowing adjustment.
-        if (!_windowCheckPending && !_isAdjustingWindow)
+        // Debounce windowing decisions: cancel the previous pending check and
+        // restart the 100 ms timer. Rapid scroll events collapse into a single
+        // CheckWindowBounds call that fires only after scrolling pauses.
+        // The Task.Delay + CancellationToken pattern also prevents the layout
+        // feedback loop (layout → ScrollChanged → modify items → layout → …)
+        // because CheckWindowBounds is never called synchronously from here.
+        if (!_isAdjustingWindow)
         {
-            _windowCheckPending = true;
-            Dispatcher.UIThread.Post(() =>
+            _windowCheckCts?.Cancel();
+            _windowCheckCts = new CancellationTokenSource();
+            var windowCts = _windowCheckCts;
+            _ = Task.Delay(100, windowCts.Token).ContinueWith(t =>
             {
-                _windowCheckPending = false;
-                CheckWindowBounds();
-            }, DispatcherPriority.Loaded);
+                if (t.IsCanceled) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (!windowCts.IsCancellationRequested)
+                        CheckWindowBounds();
+                }, DispatcherPriority.Loaded);
+            }, TaskScheduler.Default);
         }
     }
 
