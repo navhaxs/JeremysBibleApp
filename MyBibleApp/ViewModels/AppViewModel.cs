@@ -342,7 +342,12 @@ public class AppViewModel : ViewModelBase, IDisposable
         if (_syncCoordinator == null || !IsAuthenticated)
             return;
 
+        // General sync: pull from Drive + drain local queue.
         await _syncCoordinator.ForceSyncAsync().ConfigureAwait(false);
+
+        // Explicit journal sync: push/pull journal data regardless of remote
+        // timestamp so local journal changes are never left behind.
+        await _syncCoordinator.SyncJournalDataAsync().ConfigureAwait(false);
     }
 
     public async Task SyncJournalNowAsync()
