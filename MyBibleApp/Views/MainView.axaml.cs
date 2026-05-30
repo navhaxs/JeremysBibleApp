@@ -1815,7 +1815,6 @@ public partial class MainView : UserControl
 
     private static DrawingBrush BuildDotPatternBrush(Models.AppTheme theme)
     {
-        var bgColor = theme.BackgroundOverride ?? theme.SwatchColor;
         var dotColor = theme.Variant == ThemeVariant.Dark
             ? Color.FromArgb(45, 255, 255, 255)
             : Color.FromArgb(45, 0, 0, 0);
@@ -1827,26 +1826,15 @@ public partial class MainView : UserControl
         {
             TileMode = TileMode.Tile,
             DestinationRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
-            Drawing = new DrawingGroup
+            Drawing = new GeometryDrawing
             {
-                Children =
-                [
-                    new GeometryDrawing
-                    {
-                        Brush = new SolidColorBrush(bgColor),
-                        Geometry = new RectangleGeometry { Rect = new Rect(0, 0, tileSize, tileSize) }
-                    },
-                    new GeometryDrawing
-                    {
-                        Brush = new SolidColorBrush(dotColor),
-                        Geometry = new EllipseGeometry
-                        {
-                            Center = new Point(tileSize / 2, tileSize / 2),
-                            RadiusX = dotRadius,
-                            RadiusY = dotRadius
-                        }
-                    }
-                ]
+                Brush = new SolidColorBrush(dotColor),
+                Geometry = new EllipseGeometry
+                {
+                    Center = new Point(tileSize / 2, tileSize / 2),
+                    RadiusX = dotRadius,
+                    RadiusY = dotRadius
+                }
             }
         };
     }
