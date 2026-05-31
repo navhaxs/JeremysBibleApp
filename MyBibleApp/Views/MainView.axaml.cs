@@ -1819,12 +1819,15 @@ public partial class MainView : UserControl
             ? Color.FromArgb(45, 255, 255, 255)
             : Color.FromArgb(45, 0, 0, 0);
 
-        const double tileSize = 20;
+        const double tileSize = 24;
         const double dotRadius = 1.0;
 
         return new DrawingBrush
         {
             TileMode = TileMode.Tile,
+            // SourceRect anchors the drawing coordinate space so the ellipse renders at
+            // its stated size rather than being scaled to fill the tile bounds.
+            SourceRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
             DestinationRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
             Drawing = new GeometryDrawing
             {
