@@ -38,6 +38,7 @@ public partial class MainView : UserControl
     private bool _isApplyingLookupSelection;
     private Models.AppTheme _currentTheme = Models.AppTheme.LightWhite;
     private AppViewModel? _watchedAppVM;
+    private readonly TranslateTransform _dotScrollTransform = new();
 
     // Windowed paragraph loading.
     private readonly ObservableCollection<BibleParagraph>
@@ -364,6 +365,7 @@ public partial class MainView : UserControl
 
         _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
         UpdateReaderProgress(_paragraphScrollViewer);
+        _dotScrollTransform.Y = -(_paragraphScrollViewer.Offset.Y % 24);
 
         // On mobile, briefly reveal the scrollbar during touch scrolling.
         if (!PlatformHelper.IsDesktop)
@@ -1837,7 +1839,7 @@ public partial class MainView : UserControl
             UpdateDotPatternResource(_currentTheme, appVM.IsDotPatternEnabled);
     }
 
-    private static void UpdateDotPatternResource(Models.AppTheme theme, bool enabled)
+    private void UpdateDotPatternResource(Models.AppTheme theme, bool enabled)
     {
         if (Application.Current == null) return;
         Application.Current.Resources["ThemeDotPatternBrush"] = enabled
@@ -1845,7 +1847,7 @@ public partial class MainView : UserControl
             : Brushes.Transparent;
     }
 
-    private static DrawingBrush BuildDotPatternBrush(Models.AppTheme theme)
+    private DrawingBrush BuildDotPatternBrush(Models.AppTheme theme)
     {
         var dotColor = theme.Variant == ThemeVariant.Dark
             ? Color.FromArgb(45, 255, 255, 255)
@@ -1861,6 +1863,8 @@ public partial class MainView : UserControl
             // its stated size rather than being scaled to fill the tile bounds.
             SourceRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
             DestinationRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
+            // Transform synced to scroll offset so dots move with scrolling content.
+            Transform = _dotScrollTransform,
             Drawing = new GeometryDrawing
             {
                 Brush = new SolidColorBrush(dotColor),
