@@ -567,7 +567,7 @@ public partial class AppShellView : UserControl
         // Load persisted theme and apply it.
         await _appVM.LoadThemeFromStorageAsync();
         var theme = Models.AppTheme.GetById(_appVM.SelectedThemeId);
-        _primaryView?.ApplyTheme(theme);
+        _primaryView?.ApplyTheme(theme, _appVM.IsDotPatternEnabled);
 
         var overlay = this.FindControl<Panel>("StartupOverlay");
 

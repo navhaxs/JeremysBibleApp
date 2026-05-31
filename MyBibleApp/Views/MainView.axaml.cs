@@ -36,6 +36,8 @@ public partial class MainView : UserControl
     private Button? _headerLookupButton;
     private bool _suppressSplitEvent;
     private bool _isApplyingLookupSelection;
+    private Models.AppTheme _currentTheme = Models.AppTheme.LightWhite;
+    private AppViewModel? _watchedAppVM;
 
     // Windowed paragraph loading.
     private readonly ObservableCollection<BibleParagraph>
@@ -1778,7 +1780,7 @@ public partial class MainView : UserControl
 
         vm.AppVM.SelectedThemeId = themeId;
         var theme = Models.AppTheme.GetById(themeId);
-        ApplyTheme(theme);
+        ApplyTheme(theme, vm.AppVM.IsDotPatternEnabled);
 
         // Update swatch borders to highlight the active one.
         if (_themeSwatchPanel == null) return;
@@ -1794,8 +1796,9 @@ public partial class MainView : UserControl
     }
 
     /// <summary>Apply the given theme: set variant + resource overrides.</summary>
-    public void ApplyTheme(Models.AppTheme theme)
+    public void ApplyTheme(Models.AppTheme theme, bool dotPatternEnabled = false)
     {
+        _currentTheme = theme;
         if (Application.Current == null) return;
         Application.Current.RequestedThemeVariant = theme.Variant;
 
@@ -1810,7 +1813,36 @@ public partial class MainView : UserControl
         else
             Application.Current.Resources.Remove("ThemeForegroundBrush");
 
-        Application.Current.Resources["ThemeDotPatternBrush"] = BuildDotPatternBrush(theme);
+        UpdateDotPatternResource(theme, dotPatternEnabled);
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        if (_watchedAppVM != null)
+        {
+            _watchedAppVM.PropertyChanged -= OnAppVMPropertyChanged;
+            _watchedAppVM = null;
+        }
+        if (DataContext is ScriptureViewModel vm)
+        {
+            _watchedAppVM = vm.AppVM;
+            vm.AppVM.PropertyChanged += OnAppVMPropertyChanged;
+        }
+    }
+
+    private void OnAppVMPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AppViewModel.IsDotPatternEnabled) && sender is AppViewModel appVM)
+            UpdateDotPatternResource(_currentTheme, appVM.IsDotPatternEnabled);
+    }
+
+    private static void UpdateDotPatternResource(Models.AppTheme theme, bool enabled)
+    {
+        if (Application.Current == null) return;
+        Application.Current.Resources["ThemeDotPatternBrush"] = enabled
+            ? BuildDotPatternBrush(theme)
+            : Brushes.Transparent;
     }
 
     private static DrawingBrush BuildDotPatternBrush(Models.AppTheme theme)
