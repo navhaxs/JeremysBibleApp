@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -54,12 +53,6 @@ public partial class MainView : UserControl
     // Events for chapter enter/exit — AppShellView uses these to load/unload ink strokes.
     public event EventHandler<int>? ChapterEnteredWindow;
     public event EventHandler<int>? ChapterExitedWindow;
-
-#if DEBUG
-    // Debug: track last extend-up so post-layout can compute estimation error.
-    private int    _dbgLastExtendUpChapter  = -1;
-    private double _dbgLastExtendUpEstimate = 0;
-#endif
 
     public int WindowStart => _windowStart;   // 0-based index into _chapterGroups
     public int WindowEnd   => _windowEnd;     // exclusive
@@ -363,33 +356,6 @@ public partial class MainView : UserControl
     {
         EnsureScrollTrackingAttached();
         RebuildParagraphTopCache();
-
-#if DEBUG
-        // After layout settles, check how far off the estimate was for the most recent ExtendUp.
-        // The delta is the scroll jump magnitude: positive = jumped down, negative = jumped up.
-        if (_dbgLastExtendUpChapter >= 1)
-        {
-            var chapterToCheck = _dbgLastExtendUpChapter;
-            _dbgLastExtendUpChapter = -1;   // always reset — prevents stale reads on next layout event
-            var actual = MeasureChapterHeight(chapterToCheck);
-            if (actual.HasValue)
-            {
-                var error = actual.Value - _dbgLastExtendUpEstimate;
-                var currentOffset = _paragraphScrollViewer?.Offset.Y ?? 0;
-                Debug.WriteLine(
-                    $"[WIN] PostLayout ch={chapterToCheck} " +
-                    $"estimate={_dbgLastExtendUpEstimate:F1} actual={actual.Value:F1} " +
-                    $"error={error:+0.0;-0.0;0.0}px " +
-                    $"(positive=underestimated→jumped down, negative=overestimated→jumped up) " +
-                    $"currentOffset={currentOffset:F1}");
-            }
-            else
-            {
-                Debug.WriteLine(
-                    $"[WIN] PostLayout ch={chapterToCheck} not yet realized — skipping estimate error check");
-            }
-        }
-#endif
     }
 
     private void OnParagraphScrollChanged(object? sender, ScrollChangedEventArgs e)
@@ -1358,21 +1324,9 @@ public partial class MainView : UserControl
         _windowStart--;
         var chapter = _windowStart + 1;     // 1-based
         var newParagraphs = _chapterGroups[_windowStart];
-        var isCached = _measuredChapterHeights.TryGetValue(chapter, out var cachedHeight);
-        var estimatedHeight = isCached ? cachedHeight : EstimateChapterHeight(chapter);
-
-#if DEBUG
-        var offsetBefore = _paragraphScrollViewer.Offset.Y;
-        var extentBefore = _paragraphScrollViewer.Extent.Height;
-        _dbgLastExtendUpChapter  = chapter;
-        _dbgLastExtendUpEstimate = estimatedHeight;
-        var heightSource = isCached ? "cached" : "estimated";
-        Debug.WriteLine(
-            $"[WIN] ExtendUp ch={chapter} paras={newParagraphs.Count} " +
-            $"height={estimatedHeight:F1}px ({heightSource}) " +
-            $"offsetBefore={offsetBefore:F1} extentBefore={extentBefore:F1} " +
-            $"window=[{_windowStart}..{_windowEnd})");
-#endif
+        var estimatedHeight = _measuredChapterHeights.TryGetValue(chapter, out var cachedHeight)
+            ? cachedHeight
+            : EstimateChapterHeight(chapter);
 
         // Prepend paragraphs (ObservableCollection has no AddRange; insert individually).
         for (var i = newParagraphs.Count - 1; i >= 0; i--)
@@ -1381,13 +1335,6 @@ public partial class MainView : UserControl
         // Compensate scroll offset so visible content doesn't jump.
         var newOffset = _paragraphScrollViewer.Offset.Y + estimatedHeight;
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
-
-#if DEBUG
-        Debug.WriteLine(
-            $"[WIN] ExtendUp ch={chapter} offsetAfter={newOffset:F1} " +
-            $"delta=+{estimatedHeight:F1} " +
-            $"(estimate error will print after layout)");
-#endif
 
         ChapterEnteredWindow?.Invoke(this, chapter);
     }
@@ -1408,24 +1355,6 @@ public partial class MainView : UserControl
         var removedHeight = measured ?? estimated;
         _measuredChapterHeights[chapter] = removedHeight;   // cache for next ExtendWindowUp
 
-#if DEBUG
-        var offsetBefore = _paragraphScrollViewer.Offset.Y;
-        Debug.WriteLine(
-            $"[WIN] TrimTop ch={chapter} paras={removedParagraphs.Count} " +
-            $"measured={measured?.ToString("F1") ?? "null (using estimate)"} " +
-            $"estimate={estimated:F1} " +
-            $"usingHeight={removedHeight:F1} " +
-            $"offsetBefore={offsetBefore:F1} " +
-            $"window=[{_windowStart}..{_windowEnd})");
-        if (measured.HasValue)
-        {
-            var error = measured.Value - estimated;
-            Debug.WriteLine(
-                $"[WIN] TrimTop ch={chapter} estimateError={error:+0.0;-0.0;0.0}px " +
-                $"(measured-estimate; positive=was too low, negative=was too high)");
-        }
-#endif
-
         // Remove paragraphs from the start of _windowedItems.
         for (var i = 0; i < removedParagraphs.Count; i++)
             _windowedItems.RemoveAt(0);
@@ -1435,11 +1364,6 @@ public partial class MainView : UserControl
         // Compensate scroll offset downward.
         var newOffset = Math.Max(0, _paragraphScrollViewer.Offset.Y - removedHeight);
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
-
-#if DEBUG
-        Debug.WriteLine(
-            $"[WIN] TrimTop ch={chapter} offsetAfter={newOffset:F1} delta=-{removedHeight:F1}");
-#endif
 
         ChapterExitedWindow?.Invoke(this, chapter);
     }
@@ -1518,32 +1442,18 @@ public partial class MainView : UserControl
             var scrollBottom  = scrollTop + vpHeight;
             var contentBottom = _paragraphScrollViewer.Extent.Height;
 
-#if DEBUG
-            Debug.WriteLine(
-                $"[WIN] CheckBounds scrollTop={scrollTop:F0} scrollBottom={scrollBottom:F0} " +
-                $"contentBottom={contentBottom:F0} vpHeight={vpHeight:F0} " +
-                $"window=[{_windowStart}..{_windowEnd})/{_chapterGroups.Count} " +
-                $"headroom={scrollTop:F0} tailroom={contentBottom - scrollBottom:F0}");
-#endif
-
             // Extend down when within 1 viewport of the window bottom.
             // Use a 3× target to overshoot because EstimateChapterHeight is
             // usually 2–3× larger than actual rendered height on desktop, so
             // each call adds roughly 1 real viewport of content.
             if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
             {
-#if DEBUG
-                Debug.WriteLine($"[WIN] CheckBounds → ExtendDown (tailroom={contentBottom - scrollBottom:F0} < vp={vpHeight:F0})");
-#endif
                 ExtendWindowDown(vpHeight * 3);
             }
 
             // Extend up when within half a viewport of the window top.
             if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
             {
-#if DEBUG
-                Debug.WriteLine($"[WIN] CheckBounds → ExtendUp (scrollTop={scrollTop:F0} < 0.5×vp={vpHeight * 0.5:F0})");
-#endif
                 ExtendWindowUp();
             }
 
@@ -1566,21 +1476,8 @@ public partial class MainView : UserControl
                 // When _chapterStartY is empty, can't compute visible range — skip trim.
                 if (safeToTrimTop)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[WIN] CheckBounds → TrimTop (scrollTop={scrollTop:F0} > 5×vp={vpHeight * 5:F0})");
-#endif
                     TrimWindowTop();
                 }
-#if DEBUG
-                else
-                {
-                    var topVis = _chapterStartY.Count > 0
-                        ? GetVisibleChapterRange(scrollTop, scrollBottom).TopChapter
-                        : 0;
-                    Debug.WriteLine(
-                        $"[WIN] CheckBounds TrimTop SKIPPED (ch{_windowStart + 1} within buffer of topVisible=ch{topVis})");
-                }
-#endif
             }
 
             // Trim bottom only when 5+ viewports below the current scroll position.
@@ -1600,21 +1497,8 @@ public partial class MainView : UserControl
                 // When _chapterStartY is empty, can't compute visible range — skip trim.
                 if (safeToTrimBottom)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[WIN] CheckBounds → TrimBottom (tailroom={contentBottom - scrollBottom:F0} > 5×vp={vpHeight * 5:F0})");
-#endif
                     TrimWindowBottom();
                 }
-#if DEBUG
-                else
-                {
-                    var botVis = _chapterStartY.Count > 0
-                        ? GetVisibleChapterRange(scrollTop, scrollBottom).BottomChapter
-                        : 0;
-                    Debug.WriteLine(
-                        $"[WIN] CheckBounds TrimBottom SKIPPED (ch{_windowEnd} within buffer of bottomVisible=ch{botVis})");
-                }
-#endif
             }
         }
         finally
@@ -1651,20 +1535,10 @@ public partial class MainView : UserControl
                 // chapters are actually visible, then ensure ±1 chapter is loaded.
                 var (topVisible, bottomVisible) = GetVisibleChapterRange(scrollTop, scrollBottom);
 
-#if DEBUG
-                Debug.WriteLine(
-                    $"[WIN] CheckExtend(precise) scrollTop={scrollTop:F0} vp={vpHeight:F0} " +
-                    $"visible=[ch{topVisible}..ch{bottomVisible}] " +
-                    $"window=[{_windowStart}..{_windowEnd}) chapterStartY.Count={_chapterStartY.Count}");
-#endif
-
                 // Extend up: load the chapter before the topmost visible chapter.
                 var needAbove = topVisible - 1;          // 1-based
                 if (needAbove >= 1 && (needAbove - 1) < _windowStart)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[WIN] CheckExtend → ExtendUp (needAbove=ch{needAbove}, windowStart={_windowStart})");
-#endif
                     ExtendWindowUp();
                 }
 
@@ -1672,9 +1546,6 @@ public partial class MainView : UserControl
                 var needBelow = bottomVisible + 1;       // 1-based
                 if (needBelow <= _chapterGroups.Count && (needBelow - 1) >= _windowEnd)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[WIN] CheckExtend → ExtendDown (needBelow=ch{needBelow}, windowEnd={_windowEnd})");
-#endif
                     ExtendWindowDown(1);                 // targetHeight=1 → adds exactly one chapter
                 }
             }
@@ -1682,24 +1553,12 @@ public partial class MainView : UserControl
             {
                 // Fallback when chapter positions aren't measured yet: use content-height
                 // heuristic (same logic as CheckWindowBounds extend conditions).
-#if DEBUG
-                Debug.WriteLine(
-                    $"[WIN] CheckExtend(fallback) scrollTop={scrollTop:F0} contentBottom={contentBottom:F0} " +
-                    $"tailroom={contentBottom - scrollBottom:F0} vp={vpHeight:F0} " +
-                    $"window=[{_windowStart}..{_windowEnd})");
-#endif
                 if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[WIN] CheckExtend fallback → ExtendDown");
-#endif
                     ExtendWindowDown(vpHeight * 3);
                 }
                 if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
                 {
-#if DEBUG
-                    Debug.WriteLine($"[WIN] CheckExtend fallback → ExtendUp");
-#endif
                     ExtendWindowUp();
                 }
             }
