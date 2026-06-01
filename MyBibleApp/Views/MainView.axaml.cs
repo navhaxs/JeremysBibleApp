@@ -1593,8 +1593,8 @@ public partial class MainView : UserControl
                 if (_chapterStartY.Count > 0)
                 {
                     var (_, bottomVisible) = GetVisibleChapterRange(scrollTop, scrollBottom);
-                    // Safe: last chapter in window (_windowEnd, 1-based) is more than
-                    // 1 chapter below bottomVisible (i.e., not the buffer chapter bottomVisible+1).
+                    // Safe: last loaded chapter (_windowEnd in 1-based, since _windowEnd is 0-based exclusive)
+                    // is more than 1 chapter below bottomVisible (i.e., not the buffer chapter bottomVisible+1).
                     safeToTrimBottom = _windowEnd > (bottomVisible + 1);
                 }
                 // When _chapterStartY is empty, can't compute visible range — skip trim.
