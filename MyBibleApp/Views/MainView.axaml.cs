@@ -1552,19 +1552,69 @@ public partial class MainView : UserControl
             // oscillation when individual chapter heights exceed 1 viewport.
             if (_windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
             {
+                // Guard: only trim if the chapter being removed is outside the ±1 buffer
+                // that CheckWindowExtend maintains. If we trim the buffer chapter,
+                // CheckWindowExtend immediately re-adds it → infinite oscillation.
+                bool safeToTrimTop = false;
+                if (_chapterStartY.Count > 0)
+                {
+                    var (topVisible, _) = GetVisibleChapterRange(scrollTop, scrollBottom);
+                    // Safe: chapter at windowStart (_windowStart+1, 1-based) is more than
+                    // 1 chapter above topVisible (i.e., not the buffer chapter topVisible-1).
+                    safeToTrimTop = (_windowStart + 1) < (topVisible - 1);
+                }
+                // When _chapterStartY is empty, can't compute visible range — skip trim.
+                if (safeToTrimTop)
+                {
 #if DEBUG
-                Debug.WriteLine($"[WIN] CheckBounds → TrimTop (scrollTop={scrollTop:F0} > 5×vp={vpHeight * 5:F0})");
+                    Debug.WriteLine($"[WIN] CheckBounds → TrimTop (scrollTop={scrollTop:F0} > 5×vp={vpHeight * 5:F0})");
 #endif
-                TrimWindowTop();
+                    TrimWindowTop();
+                }
+#if DEBUG
+                else
+                {
+                    var topVis = _chapterStartY.Count > 0
+                        ? GetVisibleChapterRange(scrollTop, scrollBottom).TopChapter
+                        : 0;
+                    Debug.WriteLine(
+                        $"[WIN] CheckBounds TrimTop SKIPPED (ch{_windowStart + 1} within buffer of topVisible=ch{topVis})");
+                }
+#endif
             }
 
             // Trim bottom only when 5+ viewports below the current scroll position.
             if (_windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
             {
+                // Guard: only trim if the chapter being removed is outside the ±1 buffer
+                // that CheckWindowExtend maintains. If we trim the buffer chapter,
+                // CheckWindowExtend immediately re-adds it → infinite oscillation.
+                bool safeToTrimBottom = false;
+                if (_chapterStartY.Count > 0)
+                {
+                    var (_, bottomVisible) = GetVisibleChapterRange(scrollTop, scrollBottom);
+                    // Safe: last chapter in window (_windowEnd, 1-based) is more than
+                    // 1 chapter below bottomVisible (i.e., not the buffer chapter bottomVisible+1).
+                    safeToTrimBottom = _windowEnd > (bottomVisible + 1);
+                }
+                // When _chapterStartY is empty, can't compute visible range — skip trim.
+                if (safeToTrimBottom)
+                {
 #if DEBUG
-                Debug.WriteLine($"[WIN] CheckBounds → TrimBottom (tailroom={contentBottom - scrollBottom:F0} > 5×vp={vpHeight * 5:F0})");
+                    Debug.WriteLine($"[WIN] CheckBounds → TrimBottom (tailroom={contentBottom - scrollBottom:F0} > 5×vp={vpHeight * 5:F0})");
 #endif
-                TrimWindowBottom();
+                    TrimWindowBottom();
+                }
+#if DEBUG
+                else
+                {
+                    var botVis = _chapterStartY.Count > 0
+                        ? GetVisibleChapterRange(scrollTop, scrollBottom).BottomChapter
+                        : 0;
+                    Debug.WriteLine(
+                        $"[WIN] CheckBounds TrimBottom SKIPPED (ch{_windowEnd} within buffer of bottomVisible=ch{botVis})");
+                }
+#endif
             }
         }
         finally
