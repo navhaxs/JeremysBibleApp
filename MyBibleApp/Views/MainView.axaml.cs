@@ -47,6 +47,10 @@ public partial class MainView : UserControl
     private int _windowStart;   // index into _chapterGroups (0-based)
     private int _windowEnd;     // exclusive upper bound into _chapterGroups
 
+    // Cache accurate measured heights by 1-based chapter number.
+    // Populated by TrimWindowTop; used by ExtendWindowUp for accurate offset compensation.
+    private readonly Dictionary<int, double> _measuredChapterHeights = new();
+
     // Events for chapter enter/exit — AppShellView uses these to load/unload ink strokes.
     public event EventHandler<int>? ChapterEnteredWindow;
     public event EventHandler<int>? ChapterExitedWindow;
@@ -1398,6 +1402,7 @@ public partial class MainView : UserControl
         var measured  = MeasureChapterHeight(chapter);
         var estimated = EstimateChapterHeight(chapter);
         var removedHeight = measured ?? estimated;
+        _measuredChapterHeights[chapter] = removedHeight;   // cache for next ExtendWindowUp
 
 #if DEBUG
         var offsetBefore = _paragraphScrollViewer.Offset.Y;
