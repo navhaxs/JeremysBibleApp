@@ -1295,6 +1295,7 @@ public partial class MainView : UserControl
         (_chapterGroups, _paragraphChapterInfo) = ChapterGroupBuilder.Build(_paragraphs);
         _chapterStartY.Clear();
         _chapterLocalTops.Clear();
+        _measuredChapterHeights.Clear();
     }
 
     /// <summary>
@@ -1311,6 +1312,7 @@ public partial class MainView : UserControl
             _windowEnd   = 0;
             _chapterStartY.Clear();
             _chapterLocalTops.Clear();
+            _measuredChapterHeights.Clear();
 
             if (_chapterGroups.Count == 0) return;
 
