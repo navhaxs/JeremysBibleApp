@@ -118,6 +118,7 @@ public partial class MainView : UserControl
     private Button? _colorBlue;
     private Button? _colorDark;
     private Button? _customColorButton;
+    private ToggleButton? _pointerModeButton;
     private Button? _undoButton;
     private Button? _redoButton;
     private Button? _journalsHeaderButton;
@@ -233,6 +234,7 @@ public partial class MainView : UserControl
         _colorBlue         = this.FindControl<Button>("ColorBlue");
         _colorDark         = this.FindControl<Button>("ColorDark");
         _customColorButton = this.FindControl<Button>("CustomColorButton");
+        _pointerModeButton = this.FindControl<ToggleButton>("PointerModeButton");
         _undoButton        = this.FindControl<Button>("UndoButton");
 
         // Build the ColorView flyout for the custom-colour button.
@@ -478,10 +480,16 @@ public partial class MainView : UserControl
 
     // ── Pen press routing ────────────────────────────────────────────────────
 
+    private void OnPointerModeIsCheckedChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_inkOverlay == null) return;
+        _inkOverlay.AllowMouseInput = _pointerModeButton?.IsChecked == true;
+    }
+
     private void OnListBoxPenPressed(object? sender, PointerPressedEventArgs e)
     {
         if (_annotationToggle?.IsChecked != true) return;
-        if (e.Pointer.Type != PointerType.Pen) return;
+        if (e.Pointer.Type != PointerType.Pen && !(_inkOverlay?.AllowMouseInput == true && e.Pointer.Type == PointerType.Mouse)) return;
         if (_inkOverlay == null) return;
 
         // Start a stroke at the pen's viewport position relative to the overlay.
@@ -1974,6 +1982,7 @@ public partial class MainView : UserControl
     {
         // Only handle mouse left or middle button for drag scrolling
         if (e.Pointer.Type != PointerType.Mouse) return;
+        if (_inkOverlay?.AllowMouseInput == true) return;
 
         var properties = e.GetCurrentPoint(this).Properties;
         if (properties.PointerUpdateKind != PointerUpdateKind.LeftButtonPressed &&

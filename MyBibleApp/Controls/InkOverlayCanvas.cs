@@ -96,6 +96,9 @@ public class InkOverlayCanvas : Control
     /// </summary>
     public InkOverlayCanvas? DataSource { get; set; }
 
+    /// <summary>Session-only flag: allow mouse pointer type to draw ink (for tablets where stylus reports as mouse).</summary>
+    public bool AllowMouseInput { get; set; }
+
     private List<InkOverlayCanvas>? _renderSlaves;
 
     /// <summary>Register a slave canvas that should be invalidated whenever this canvas redraws.</summary>
@@ -462,10 +465,13 @@ public class InkOverlayCanvas : Control
 
     // ── Pointer events (fired when MainView gives us pointer capture) ─────────
 
+    private bool IsAcceptedPointerType(PointerType type) =>
+        type == PointerType.Pen || (AllowMouseInput && type == PointerType.Mouse);
+
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (e.Pointer.Type != PointerType.Pen) return;
+        if (!IsAcceptedPointerType(e.Pointer.Type)) return;
 
         if (IsEraserMode)
         {
@@ -482,7 +488,7 @@ public class InkOverlayCanvas : Control
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
-        if (e.Pointer.Type != PointerType.Pen) return;
+        if (!IsAcceptedPointerType(e.Pointer.Type)) return;
 
         EndStroke();              // no-op in eraser mode
         e.Pointer.Capture(null);

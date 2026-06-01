@@ -619,6 +619,14 @@
             <material:MaterialIcon Kind="Palette" Width="20" Height="20" />
           </Button>
 
+          <!-- Pointer input mode -->
+          <ToggleButton x:Name="PointerModeButton"
+                        Classes="tool-btn"
+                        ToolTip.Tip="Use pointer/mouse to draw"
+                        IsCheckedChanged="OnPointerModeIsCheckedChanged">
+            <material:MaterialIcon Kind="CursorDefault" Width="20" Height="20" />
+          </ToggleButton>
+
         </StackPanel>
       </Border>
 
