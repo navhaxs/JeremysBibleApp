@@ -190,6 +190,7 @@ public class JournalStoreMergeTests : IDisposable
         var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
 
         Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-y");
+        Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-y");
     }
 
     [Fact]
@@ -242,5 +243,46 @@ public class JournalStoreMergeTests : IDisposable
         Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-b");
         Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-a");
         Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-b");
+    }
+
+    [Fact]
+    public async Task Merge_BothDevicesHaveTombstoneForSameStroke_KeepsLatestTimestamp()
+    {
+        var journal = await CreateJournalAsync();
+        var id = journal.Id;
+
+        var t1 = new DateTime(2026, 1, 1, 10, 0, 0, DateTimeKind.Utc);
+        var t2 = new DateTime(2026, 1, 1, 11, 0, 0, DateTimeKind.Utc);
+
+        var stroke = MakeStroke("stroke-z");
+
+        // Seed the local store by merging a remote snapshot that contains the stroke and a tombstone at t1.
+        // This gives the local tombstone a controlled timestamp rather than DateTime.UtcNow.
+        var firstRemote = MakeEntry(id, t1, [], [new InkStrokeTombstone
+        {
+            StrokeId = "stroke-z",
+            DeletedAtUtc = t1
+        }]);
+        await _store.MergeRemoteAsync(MakeSnapshot(firstRemote));
+
+        // Second remote has a later tombstone timestamp for the same stroke.
+        var secondRemote = MakeEntry(id, t2, [], [new InkStrokeTombstone
+        {
+            StrokeId = "stroke-z",
+            DeletedAtUtc = t2
+        }]);
+
+        await _store.MergeRemoteAsync(MakeSnapshot(secondRemote));
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == id);
+
+        // Stroke must still be absent
+        var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
+        Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-z");
+
+        // Tombstone must be kept and have the later timestamp
+        var tombstone = entry.DeletedInkStrokes.Single(t => t.StrokeId == "stroke-z");
+        Assert.Equal(t2, tombstone.DeletedAtUtc);
     }
 }

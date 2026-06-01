@@ -186,7 +186,7 @@ public sealed class JournalStore : IJournalStore
             };
 
             var index = entries.IndexOf(entry);
-            entries[index] = new JournalEntry { Metadata = updatedJournal, InkStrokesByChapter = entry.InkStrokesByChapter };
+            entries[index] = new JournalEntry { Metadata = updatedJournal, InkStrokesByChapter = entry.InkStrokesByChapter, DeletedInkStrokes = entry.DeletedInkStrokes };
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
 
             return Result.Success();
@@ -213,7 +213,7 @@ public sealed class JournalStore : IJournalStore
                 return Result.Failure("Journal not found.");
 
             var index = entries.IndexOf(entry);
-            entries[index] = new JournalEntry { Metadata = journal, InkStrokesByChapter = entry.InkStrokesByChapter };
+            entries[index] = new JournalEntry { Metadata = journal, InkStrokesByChapter = entry.InkStrokesByChapter, DeletedInkStrokes = entry.DeletedInkStrokes };
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
             return Result.Success();
         }
@@ -496,7 +496,8 @@ public sealed class JournalStore : IJournalStore
             .Concat(remote.InkStrokesByChapter.Values)
             .SelectMany(list => list)
             .GroupBy(s => s.Id)
-            .Select(g => g.First())
+            // Strokes are immutable after creation; any copy with this Id is equivalent.
+        .Select(g => g.First())
             .Where(s => !tombstonedIds.Contains(s.Id))
             .ToList();
 
