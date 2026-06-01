@@ -1358,16 +1358,19 @@ public partial class MainView : UserControl
         _windowStart--;
         var chapter = _windowStart + 1;     // 1-based
         var newParagraphs = _chapterGroups[_windowStart];
-        var estimatedHeight = EstimateChapterHeight(chapter);
+        var estimatedHeight = _measuredChapterHeights.TryGetValue(chapter, out var cachedHeight)
+            ? cachedHeight
+            : EstimateChapterHeight(chapter);
 
 #if DEBUG
         var offsetBefore = _paragraphScrollViewer.Offset.Y;
         var extentBefore = _paragraphScrollViewer.Extent.Height;
         _dbgLastExtendUpChapter  = chapter;
         _dbgLastExtendUpEstimate = estimatedHeight;
+        var heightSource = _measuredChapterHeights.ContainsKey(chapter) ? "cached" : "estimated";
         Debug.WriteLine(
             $"[WIN] ExtendUp ch={chapter} paras={newParagraphs.Count} " +
-            $"estimate={estimatedHeight:F1}px " +
+            $"height={estimatedHeight:F1}px ({heightSource}) " +
             $"offsetBefore={offsetBefore:F1} extentBefore={extentBefore:F1} " +
             $"window=[{_windowStart}..{_windowEnd})");
 #endif
