@@ -17,6 +17,12 @@ public sealed class DeletedJournalTombstone
     public DateTime DeletedAtUtc { get; init; }
 }
 
+public sealed class InkStrokeTombstone
+{
+    public string StrokeId { get; init; } = string.Empty;
+    public DateTime DeletedAtUtc { get; init; }
+}
+
 public sealed class JournalEntry
 {
     public Journal Metadata { get; set; } = new();
@@ -28,6 +34,8 @@ public sealed class JournalEntry
     // Set to null after migration so it is omitted from all subsequent writes.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<JournalInkStroke>? InkStrokes { get; set; }
+
+    public List<InkStrokeTombstone> DeletedInkStrokes { get; set; } = [];
 }
 
 public sealed class JournalCreateRequest
