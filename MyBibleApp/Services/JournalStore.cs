@@ -351,12 +351,14 @@ public sealed class JournalStore : IJournalStore
                 var removed = bucket.RemoveAll(s => s.Id == strokeId);
                 if (removed > 0)
                 {
-                    entry.DeletedInkStrokes.Add(new InkStrokeTombstone
-                    {
-                        StrokeId = strokeId,
-                        DeletedAtUtc = DateTime.UtcNow
-                    });
-                    entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
+                    var now = DateTime.UtcNow;
+                    if (entry.DeletedInkStrokes.All(t => t.StrokeId != strokeId))
+                        entry.DeletedInkStrokes.Add(new InkStrokeTombstone
+                        {
+                            StrokeId = strokeId,
+                            DeletedAtUtc = now
+                        });
+                    entry.Metadata.LastModifiedUtc = now;
                     await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
                 }
             }
