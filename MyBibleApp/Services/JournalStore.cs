@@ -452,10 +452,7 @@ public sealed class JournalStore : IJournalStore
 
                 if (localById.TryGetValue(id, out var localEntry))
                 {
-                    // Both local and remote have this journal — keep the one with later LastModifiedUtc
-                    merged.Add(remoteEntry.Metadata.LastModifiedUtc > localEntry.Metadata.LastModifiedUtc
-                        ? remoteEntry
-                        : localEntry);
+                    merged.Add(MergeJournalEntries(localEntry, remoteEntry));
                 }
                 else
                 {
@@ -481,6 +478,44 @@ public sealed class JournalStore : IJournalStore
         {
             _semaphore.Release();
         }
+    }
+
+    private static JournalEntry MergeJournalEntries(JournalEntry local, JournalEntry remote)
+    {
+        // 1. Union stroke tombstones — keep latest DeletedAtUtc per StrokeId
+        var mergedStrokeTombstones = local.DeletedInkStrokes.ToDictionary(t => t.StrokeId);
+        foreach (var rt in remote.DeletedInkStrokes)
+        {
+            if (!mergedStrokeTombstones.TryGetValue(rt.StrokeId, out var existing) || rt.DeletedAtUtc > existing.DeletedAtUtc)
+                mergedStrokeTombstones[rt.StrokeId] = rt;
+        }
+        var tombstonedIds = mergedStrokeTombstones.Keys.ToHashSet();
+
+        // 2. Union live strokes from both entries — dedup by Id, exclude tombstoned
+        var mergedStrokes = local.InkStrokesByChapter.Values
+            .Concat(remote.InkStrokesByChapter.Values)
+            .SelectMany(list => list)
+            .GroupBy(s => s.Id)
+            .Select(g => g.First())
+            .Where(s => !tombstonedIds.Contains(s.Id))
+            .ToList();
+
+        // 3. Re-bucket by "{BookCode}:{ChapterNumber}"
+        var mergedByChapter = mergedStrokes
+            .GroupBy(s => $"{s.BookCode}:{s.ChapterNumber}")
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // 4. Keep newer Metadata
+        var winnerMetadata = remote.Metadata.LastModifiedUtc > local.Metadata.LastModifiedUtc
+            ? remote.Metadata
+            : local.Metadata;
+
+        return new JournalEntry
+        {
+            Metadata = winnerMetadata,
+            InkStrokesByChapter = mergedByChapter,
+            DeletedInkStrokes = mergedStrokeTombstones.Values.ToList()
+        };
     }
 
     private async Task<(List<JournalEntry> Entries, List<DeletedJournalTombstone> Tombstones)> LoadEntriesAsync()

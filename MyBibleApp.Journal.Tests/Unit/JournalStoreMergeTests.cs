@@ -114,4 +114,133 @@ public class JournalStoreMergeTests : IDisposable
         var entry = snapshot.Journals.First(e => e.Metadata.Id == journal.Id);
         Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-abc");
     }
+
+    [Fact]
+    public async Task Merge_BothDevicesAddDifferentStrokes_BothSurvive()
+    {
+        var journal = await CreateJournalAsync();
+        var id = journal.Id;
+        var t = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var strokeA = MakeStroke("stroke-a");
+        var strokeB = MakeStroke("stroke-b");
+
+        var localEntry = MakeEntry(id, t, [strokeA]);
+        var remoteEntry = MakeEntry(id, t.AddMinutes(1), [strokeB]);
+
+        // Seed local store with localEntry state
+        await _store.AppendInkStrokeAsync(id, strokeA);
+
+        // Merge remote snapshot
+        await _store.MergeRemoteAsync(MakeSnapshot(remoteEntry));
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == id);
+        var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
+
+        Assert.Contains(allStrokes, s => s.Id == "stroke-a");
+        Assert.Contains(allStrokes, s => s.Id == "stroke-b");
+    }
+
+    [Fact]
+    public async Task Merge_RemoteTombstone_RemovesLocalStroke()
+    {
+        var journal = await CreateJournalAsync();
+        var id = journal.Id;
+        var t = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var stroke = MakeStroke("stroke-x");
+        await _store.AppendInkStrokeAsync(id, stroke);
+
+        // Remote has tombstone for stroke-x
+        var remoteEntry = MakeEntry(id, t.AddMinutes(1), [], [new InkStrokeTombstone
+        {
+            StrokeId = "stroke-x",
+            DeletedAtUtc = t.AddMinutes(1)
+        }]);
+
+        await _store.MergeRemoteAsync(MakeSnapshot(remoteEntry));
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == id);
+        var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
+
+        Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-x");
+        Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-x");
+    }
+
+    [Fact]
+    public async Task Merge_LocalTombstone_ExcludesRemoteStroke()
+    {
+        var journal = await CreateJournalAsync();
+        var id = journal.Id;
+        var t = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var stroke = MakeStroke("stroke-y");
+        await _store.AppendInkStrokeAsync(id, stroke);
+        await _store.RemoveInkStrokeAsync(id, "stroke-y", "GEN", 1);
+
+        // Remote still has stroke-y (hasn't synced the erase)
+        var remoteEntry = MakeEntry(id, t.AddMinutes(1), [stroke]);
+
+        await _store.MergeRemoteAsync(MakeSnapshot(remoteEntry));
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == id);
+        var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
+
+        Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-y");
+    }
+
+    [Fact]
+    public async Task Merge_DuplicateStrokeId_OnlyOneCopySurvives()
+    {
+        var journal = await CreateJournalAsync();
+        var id = journal.Id;
+        var t = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var stroke = MakeStroke("stroke-dup");
+        await _store.AppendInkStrokeAsync(id, stroke);
+
+        var remoteEntry = MakeEntry(id, t.AddMinutes(1), [stroke]);
+
+        await _store.MergeRemoteAsync(MakeSnapshot(remoteEntry));
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == id);
+        var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
+
+        Assert.Single(allStrokes.Where(s => s.Id == "stroke-dup"));
+    }
+
+    [Fact]
+    public async Task Merge_TombstonesFromBothDevices_UnionKeptWithLatestTimestamp()
+    {
+        var journal = await CreateJournalAsync();
+        var id = journal.Id;
+        var t = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        var strokeA = MakeStroke("stroke-a");
+        var strokeB = MakeStroke("stroke-b");
+        await _store.AppendInkStrokeAsync(id, strokeA);
+        await _store.AppendInkStrokeAsync(id, strokeB);
+        await _store.RemoveInkStrokeAsync(id, "stroke-a", "GEN", 1);
+
+        var remoteEntry = MakeEntry(id, t.AddMinutes(2), [strokeA], [new InkStrokeTombstone
+        {
+            StrokeId = "stroke-b",
+            DeletedAtUtc = t.AddMinutes(2)
+        }]);
+
+        await _store.MergeRemoteAsync(MakeSnapshot(remoteEntry));
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == id);
+        var allStrokes = entry.InkStrokesByChapter.Values.SelectMany(x => x).ToList();
+
+        Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-a");
+        Assert.DoesNotContain(allStrokes, s => s.Id == "stroke-b");
+        Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-a");
+        Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-b");
+    }
 }
