@@ -100,4 +100,18 @@ public class JournalStoreMergeTests : IDisposable
         Assert.Single(entry.DeletedInkStrokes);
         Assert.Equal("stroke-1", entry.DeletedInkStrokes[0].StrokeId);
     }
+
+    [Fact]
+    public async Task RemoveInkStroke_WritesTombstone()
+    {
+        var journal = await CreateJournalAsync();
+        var stroke = MakeStroke("stroke-abc");
+        await _store.AppendInkStrokeAsync(journal.Id, stroke);
+
+        await _store.RemoveInkStrokeAsync(journal.Id, "stroke-abc", "GEN", 1);
+
+        var snapshot = await _store.GetSnapshotAsync();
+        var entry = snapshot.Journals.First(e => e.Metadata.Id == journal.Id);
+        Assert.Contains(entry.DeletedInkStrokes, t => t.StrokeId == "stroke-abc");
+    }
 }

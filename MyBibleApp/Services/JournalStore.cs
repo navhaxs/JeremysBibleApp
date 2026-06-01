@@ -351,6 +351,11 @@ public sealed class JournalStore : IJournalStore
                 var removed = bucket.RemoveAll(s => s.Id == strokeId);
                 if (removed > 0)
                 {
+                    entry.DeletedInkStrokes.Add(new InkStrokeTombstone
+                    {
+                        StrokeId = strokeId,
+                        DeletedAtUtc = DateTime.UtcNow
+                    });
                     entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
                     await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
                 }
