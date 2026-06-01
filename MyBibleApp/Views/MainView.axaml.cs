@@ -55,7 +55,6 @@ public partial class MainView : UserControl
     // Debug: track last extend-up so post-layout can compute estimation error.
     private int    _dbgLastExtendUpChapter  = -1;
     private double _dbgLastExtendUpEstimate = 0;
-    private double _dbgPreExtendOffset      = 0;
 #endif
 
     public int WindowStart => _windowStart;   // 0-based index into _chapterGroups
@@ -366,18 +365,24 @@ public partial class MainView : UserControl
         // The delta is the scroll jump magnitude: positive = jumped down, negative = jumped up.
         if (_dbgLastExtendUpChapter >= 1)
         {
-            var actual = MeasureChapterHeight(_dbgLastExtendUpChapter);
+            var chapterToCheck = _dbgLastExtendUpChapter;
+            _dbgLastExtendUpChapter = -1;   // always reset — prevents stale reads on next layout event
+            var actual = MeasureChapterHeight(chapterToCheck);
             if (actual.HasValue)
             {
                 var error = actual.Value - _dbgLastExtendUpEstimate;
                 var currentOffset = _paragraphScrollViewer?.Offset.Y ?? 0;
                 Debug.WriteLine(
-                    $"[WIN] PostLayout ch={_dbgLastExtendUpChapter} " +
+                    $"[WIN] PostLayout ch={chapterToCheck} " +
                     $"estimate={_dbgLastExtendUpEstimate:F1} actual={actual.Value:F1} " +
                     $"error={error:+0.0;-0.0;0.0}px " +
                     $"(positive=underestimated→jumped down, negative=overestimated→jumped up) " +
                     $"currentOffset={currentOffset:F1}");
-                _dbgLastExtendUpChapter = -1;
+            }
+            else
+            {
+                Debug.WriteLine(
+                    $"[WIN] PostLayout ch={chapterToCheck} not yet realized — skipping estimate error check");
             }
         }
 #endif
@@ -1354,7 +1359,6 @@ public partial class MainView : UserControl
         var extentBefore = _paragraphScrollViewer.Extent.Height;
         _dbgLastExtendUpChapter  = chapter;
         _dbgLastExtendUpEstimate = estimatedHeight;
-        _dbgPreExtendOffset      = offsetBefore;
         Debug.WriteLine(
             $"[WIN] ExtendUp ch={chapter} paras={newParagraphs.Count} " +
             $"estimate={estimatedHeight:F1}px " +
