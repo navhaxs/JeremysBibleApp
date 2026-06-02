@@ -148,7 +148,8 @@ public class InkOverlayCanvas : Control
         SKPath? CachedPath = null);      // pre-built Skia path; reused every frame to avoid O(n) rebuild
 
     private readonly List<StrokeCache> _cachedStrokes = new();
-    private readonly Stack<StrokeCache> _redoStack = new();
+    private readonly Stack<(StrokeCache Stroke, bool WasErased)> _undoHistory = new();
+    private readonly Stack<(StrokeCache Stroke, bool WasErased)> _redoHistory = new();
 
     // Active stroke raw points (content-space).
     private List<Point>? _activeStroke;
@@ -256,32 +257,34 @@ public class InkOverlayCanvas : Control
         if (IsEraserMode) return;
         if (_activeStroke != null && _activeStroke.Count > 0)
         {
-            _redoStack.Clear();
             var id = Guid.NewGuid().ToString();
+            _redoHistory.Clear();
             if (_activeStroke.Count == 1)
             {
                 var p = _activeStroke[0];
-                _cachedStrokes.Add(new StrokeCache(
+                var dotStroke = new StrokeCache(
                     p,
                     new Rect(p.X - 2, p.Y - 2, 4, 4),
                     _activeStrokeColor, _activeStrokeWidth, _activeIsHighlight, null,
-                    _activeAnchorChapter, _activeAnchorLocalIndex, _activeAnchorContentTop, id));
+                    _activeAnchorChapter, _activeAnchorLocalIndex, _activeAnchorContentTop, id);
+                _cachedStrokes.Add(dotStroke);
+                _undoHistory.Push((dotStroke, false));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
-                    StrokeId              = id,
-                    Points                = [],
-                    Color                 = _activeStrokeColor,
-                    StrokeWidth           = _activeStrokeWidth,
-                    IsHighlight           = _activeIsHighlight,
-                    AnchorChapter         = _activeAnchorChapter,
-                    AnchorParagraphIndex  = _activeAnchorLocalIndex,
-                    AnchorContentTop      = _activeAnchorContentTop
+                    StrokeId             = id,
+                    Points               = [],
+                    Color                = _activeStrokeColor,
+                    StrokeWidth          = _activeStrokeWidth,
+                    IsHighlight          = _activeIsHighlight,
+                    AnchorChapter        = _activeAnchorChapter,
+                    AnchorParagraphIndex = _activeAnchorLocalIndex,
+                    AnchorContentTop     = _activeAnchorContentTop
                 });
             }
             else
             {
                 var pts = _activeStroke.AsReadOnly();
-                _cachedStrokes.Add(new StrokeCache(
+                var multiStroke = new StrokeCache(
                     default,
                     ComputeBounds(_activeStroke),
                     _activeStrokeColor,
@@ -292,17 +295,19 @@ public class InkOverlayCanvas : Control
                     _activeAnchorLocalIndex,
                     _activeAnchorContentTop,
                     id,
-                    CachedPath: BuildSmoothPath(pts)));
+                    CachedPath: BuildSmoothPath(pts));
+                _cachedStrokes.Add(multiStroke);
+                _undoHistory.Push((multiStroke, false));
                 StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
                 {
-                    StrokeId              = id,
-                    Points                = pts,
-                    Color                 = _activeStrokeColor,
-                    StrokeWidth           = _activeStrokeWidth,
-                    IsHighlight           = _activeIsHighlight,
-                    AnchorChapter         = _activeAnchorChapter,
-                    AnchorParagraphIndex  = _activeAnchorLocalIndex,
-                    AnchorContentTop      = _activeAnchorContentTop
+                    StrokeId             = id,
+                    Points               = pts,
+                    Color                = _activeStrokeColor,
+                    StrokeWidth          = _activeStrokeWidth,
+                    IsHighlight          = _activeIsHighlight,
+                    AnchorChapter        = _activeAnchorChapter,
+                    AnchorParagraphIndex = _activeAnchorLocalIndex,
+                    AnchorContentTop     = _activeAnchorContentTop
                 });
             }
         }
@@ -330,7 +335,8 @@ public class InkOverlayCanvas : Control
     public void RestoreState(InkState? state)
     {
         _cachedStrokes.Clear();
-        _redoStack.Clear();
+        _undoHistory.Clear();
+        _redoHistory.Clear();
         if (state != null)
             _cachedStrokes.AddRange(state.Strokes);
         _activeStroke = null;
@@ -341,7 +347,8 @@ public class InkOverlayCanvas : Control
     public void ClearStrokes()
     {
         _cachedStrokes.Clear();
-        _redoStack.Clear();
+        _undoHistory.Clear();
+        _redoHistory.Clear();
         _activeStroke = null;
         Redraw();
     }
@@ -350,7 +357,8 @@ public class InkOverlayCanvas : Control
     public void LoadJournalStrokes(IReadOnlyList<JournalInkStroke> strokes)
     {
         _cachedStrokes.Clear();
-        _redoStack.Clear();
+        _undoHistory.Clear();
+        _redoHistory.Clear();
         foreach (var stroke in strokes)
         {
             var pts = stroke.Points.Select(p => new Point(p.X, p.Y)).ToList();
@@ -426,40 +434,87 @@ public class InkOverlayCanvas : Control
             Redraw();
     }
 
-    /// <summary>Remove the most recently completed stroke, pushing it onto the redo stack.</summary>
+    /// <summary>Reverses the most recent draw or erase action.</summary>
     public void UndoStroke()
     {
-        if (_cachedStrokes.Count == 0) return;
-        var removed = _cachedStrokes[_cachedStrokes.Count - 1];
-        _cachedStrokes.RemoveAt(_cachedStrokes.Count - 1);
-        _redoStack.Push(removed);
-        Redraw();
-        if (!string.IsNullOrEmpty(removed.StrokeId))
-            StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(
-                [(removed.StrokeId, removed.AnchorChapter)]));
+        if (_undoHistory.Count == 0) return;
+        var (stroke, wasErased) = _undoHistory.Pop();
+        _redoHistory.Push((stroke, wasErased));
+
+        if (wasErased)
+        {
+            // Stroke was erased — restore it.
+            _cachedStrokes.Add(stroke);
+            Redraw();
+            if (!string.IsNullOrEmpty(stroke.StrokeId))
+            {
+                var pts = stroke.Points ?? (IReadOnlyList<Point>)[];
+                StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
+                {
+                    StrokeId             = stroke.StrokeId,
+                    Points               = pts,
+                    Color                = stroke.Color,
+                    StrokeWidth          = stroke.StrokeWidth,
+                    IsHighlight          = stroke.IsHighlight,
+                    AnchorChapter        = stroke.AnchorChapter,
+                    AnchorParagraphIndex = stroke.AnchorParagraphIndex,
+                    AnchorContentTop     = stroke.AnchorContentTop
+                });
+            }
+        }
+        else
+        {
+            // Stroke was drawn — remove it.
+            var idx = string.IsNullOrEmpty(stroke.StrokeId)
+                ? _cachedStrokes.FindIndex(x => x == stroke)
+                : _cachedStrokes.FindIndex(x => x.StrokeId == stroke.StrokeId);
+            if (idx >= 0) _cachedStrokes.RemoveAt(idx);
+            Redraw();
+            if (!string.IsNullOrEmpty(stroke.StrokeId))
+                StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(
+                    [(stroke.StrokeId, stroke.AnchorChapter)]));
+        }
     }
 
-    /// <summary>Re-apply the most recently undone stroke.</summary>
+    /// <summary>Re-applies the most recently undone draw or erase action.</summary>
     public void RedoStroke()
     {
-        if (_redoStack.Count == 0) return;
-        var stroke = _redoStack.Pop();
-        _cachedStrokes.Add(stroke);
-        Redraw();
-        if (!string.IsNullOrEmpty(stroke.StrokeId))
+        if (_redoHistory.Count == 0) return;
+        var (stroke, wasErased) = _redoHistory.Pop();
+        _undoHistory.Push((stroke, wasErased));
+
+        if (wasErased)
         {
-            var pts = stroke.Points ?? (IReadOnlyList<Point>)[];
-            StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
+            // Originally erased — re-erase it.
+            var idx = string.IsNullOrEmpty(stroke.StrokeId)
+                ? _cachedStrokes.FindIndex(x => x == stroke)
+                : _cachedStrokes.FindIndex(x => x.StrokeId == stroke.StrokeId);
+            if (idx >= 0) _cachedStrokes.RemoveAt(idx);
+            Redraw();
+            if (!string.IsNullOrEmpty(stroke.StrokeId))
+                StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(
+                    [(stroke.StrokeId, stroke.AnchorChapter)]));
+        }
+        else
+        {
+            // Originally drawn — re-add it.
+            _cachedStrokes.Add(stroke);
+            Redraw();
+            if (!string.IsNullOrEmpty(stroke.StrokeId))
             {
-                StrokeId             = stroke.StrokeId,
-                Points               = pts,
-                Color                = stroke.Color,
-                StrokeWidth          = stroke.StrokeWidth,
-                IsHighlight          = stroke.IsHighlight,
-                AnchorChapter        = stroke.AnchorChapter,
-                AnchorParagraphIndex = stroke.AnchorParagraphIndex,
-                AnchorContentTop     = stroke.AnchorContentTop
-            });
+                var pts = stroke.Points ?? (IReadOnlyList<Point>)[];
+                StrokeCompleted?.Invoke(this, new InkStrokeEventArgs
+                {
+                    StrokeId             = stroke.StrokeId,
+                    Points               = pts,
+                    Color                = stroke.Color,
+                    StrokeWidth          = stroke.StrokeWidth,
+                    IsHighlight          = stroke.IsHighlight,
+                    AnchorChapter        = stroke.AnchorChapter,
+                    AnchorParagraphIndex = stroke.AnchorParagraphIndex,
+                    AnchorContentTop     = stroke.AnchorContentTop
+                });
+            }
         }
     }
 
@@ -532,6 +587,7 @@ public class InkOverlayCanvas : Control
                 {
                     if (!string.IsNullOrEmpty(s.StrokeId))
                         (removedStrokes ??= []).Add((s.StrokeId, s.AnchorChapter));
+                    _undoHistory.Push((s, true));
                     _cachedStrokes.RemoveAt(i);
                 }
                 continue;
@@ -554,13 +610,14 @@ public class InkOverlayCanvas : Control
             {
                 if (!string.IsNullOrEmpty(s.StrokeId))
                     (removedStrokes ??= []).Add((s.StrokeId, s.AnchorChapter));
+                _undoHistory.Push((s, true));
                 _cachedStrokes.RemoveAt(i);
             }
         }
 
         if (removedStrokes != null)
         {
-            _redoStack.Clear();
+            _redoHistory.Clear();
             Redraw();
             StrokeRemoved?.Invoke(this, new InkStrokeRemovedEventArgs(removedStrokes));
         }
