@@ -471,7 +471,7 @@ public class SyncCoordinator : ISyncCoordinator
             }
 
             var hadChanges = pulledBibleReading != null;
-            RaiseSyncProgress(false, hadChanges ? "Sync complete — remote changes applied." : "Sync complete — already up to date.", 100);
+            RaiseSyncProgress(false, hadChanges ? "Sync complete — remote changes applied." : "Sync complete — up to date.", 100);
 
             return PullResult.Success(hadChanges, bibleReading: pulledBibleReading);
         }

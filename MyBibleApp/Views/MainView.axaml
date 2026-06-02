@@ -1,636 +1,840 @@
-<UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:controls="using:MyBibleApp.Controls"
-             xmlns:model="using:MyBibleApp.Models"
-             xmlns:vm="using:MyBibleApp.ViewModels"
-             xmlns:material="using:Material.Icons.Avalonia"
-             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
-             x:Class="MyBibleApp.Views.MainView"
-             x:DataType="vm:ScriptureViewModel">
-  <UserControl.Styles>
-    <Style Selector="Button.footnote-chip">
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Padding" Value="6,0" />
-      <Setter Property="MinWidth" Value="24" />
-      <Setter Property="Margin" Value="0,0,6,6" />
-    </Style>
+<UserControl
+    d:DesignHeight="450"
+    d:DesignWidth="800"
+    mc:Ignorable="d"
+    x:Class="MyBibleApp.Views.MainView"
+    x:DataType="vm:ScriptureViewModel"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:controls="using:MyBibleApp.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:material="using:Material.Icons.Avalonia"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:model="using:MyBibleApp.Models"
+    xmlns:vm="using:MyBibleApp.ViewModels"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Styles>
+        <Style Selector="Button.footnote-chip">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="MinWidth" Value="24" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Focusable" Value="False" />
-      <Setter Property="IsTabStop" Value="False" />
-      <Setter Property="Padding" Value="0,0,0,80" />
+        <Style Selector="ListBox#ParagraphList">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Padding" Value="0,0,0,80" />
 
-      <Style.Resources>
-        <SolidColorBrush x:Key="ListBoxItemBackgroundPressed" Color="Transparent" />
-        <SolidColorBrush x:Key="ListBoxItemBackgroundPointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ListBoxItemBackgroundSelected" Color="Transparent" />
-        <SolidColorBrush x:Key="ListBoxItemBackgroundSelectedPointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ListBoxItemBackgroundSelectedPressed" Color="Transparent" />
-      </Style.Resources>
-    </Style>
+            <Style.Resources>
+                <SolidColorBrush Color="Transparent" x:Key="ListBoxItemBackgroundPressed" />
+                <SolidColorBrush Color="Transparent" x:Key="ListBoxItemBackgroundPointerOver" />
+                <SolidColorBrush Color="Transparent" x:Key="ListBoxItemBackgroundSelected" />
+                <SolidColorBrush Color="Transparent" x:Key="ListBoxItemBackgroundSelectedPointerOver" />
+                <SolidColorBrush Color="Transparent" x:Key="ListBoxItemBackgroundSelectedPressed" />
+            </Style.Resources>
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem">
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Margin" Value="0" />
-      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Focusable" Value="False" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:selected">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:selected">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:pointerover">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:pointerover">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:pressed">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:pressed">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:focus">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:focus">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
 
-    <!-- Fluent renders state visuals on the item template presenter, so clear those too. -->
-    <Style Selector="ListBox#ParagraphList > ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
+        <!--  Fluent renders state visuals on the item template presenter, so clear those too.  -->
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
 
-    <Style Selector="ListBox#ParagraphList > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
+        <Style Selector="ListBox#ParagraphList &gt; ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
 
-    <!-- ── Navigation bar ────────────────────────────────────────────────── -->
+        <!--  ── Navigation bar ──────────────────────────────────────────────────  -->
 
-    <!-- Header lookup button: transparent default, subtle fill on hover/press -->
-    <Style Selector="Button#HeaderLookupButton">
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Padding" Value="10,6" />
-      <Style.Resources>
-        <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
-        <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#12808080" />
-        <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#22808080" />
-        <SolidColorBrush x:Key="ButtonBorderBrush" Color="Transparent" />
-        <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent" />
-        <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent" />
-      </Style.Resources>
-    </Style>
+        <!--  Header lookup button: transparent default, subtle fill on hover/press  -->
+        <Style Selector="Button#HeaderLookupButton">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,6" />
+            <Style.Resources>
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBackground" />
+                <SolidColorBrush Color="#12808080" x:Key="ButtonBackgroundPointerOver" />
+                <SolidColorBrush Color="#22808080" x:Key="ButtonBackgroundPressed" />
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBorderBrush" />
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBorderBrushPointerOver" />
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBorderBrushPressed" />
+            </Style.Resources>
+        </Style>
 
-    <!-- ── Annotation toolbar styles ──────────────────────────────────────── -->
+        <!--  ── Annotation toolbar styles ────────────────────────────────────────  -->
 
-    <!-- Tool buttons: circular icon buttons (pen / eraser) -->
-    <Style Selector="ToggleButton.tool-btn">
-      <Setter Property="Width" Value="40" />
-      <Setter Property="Height" Value="40" />
-      <Setter Property="CornerRadius" Value="20" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
-    <Style Selector="Button.tool-btn">
-      <Setter Property="Width" Value="40" />
-      <Setter Property="Height" Value="40" />
-      <Setter Property="CornerRadius" Value="20" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="Background" Value="Transparent" />
-    </Style>
-    <Style Selector="Button.tool-btn.flyout-open">
-      <Setter Property="Background" Value="{DynamicResource ToggleButtonBackgroundChecked}" />
-      <Setter Property="Foreground" Value="{DynamicResource ToggleButtonForegroundChecked}" />
-    </Style>
+        <!--  Tool buttons: circular icon buttons (pen / eraser)  -->
+        <Style Selector="ToggleButton.tool-btn">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="{DynamicResource ThemeBackgroundBrush}" />
+        </Style>
+        <Style Selector="Button.tool-btn">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="{DynamicResource ThemeBackgroundBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.tool-btn:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush4}" />
+        </Style>
+        <Style Selector="Button.tool-btn:flyout-open">
+            <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush4}" />
+        </Style>
+        <Style Selector="Button.tool-btn:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="BorderBrush" Value="{DynamicResource HighlightBrush}" />
+        </Style>
+        <Style Selector="ToggleButton.tool-btn:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="BorderBrush" Value="{DynamicResource HighlightBrush}" />
+        </Style>
 
-    <!-- Color swatch buttons: solid-colour circles -->
-    <Style Selector="Button.color-swatch">
-      <Setter Property="Width" Value="32" />
-      <Setter Property="Height" Value="32" />
-      <Setter Property="CornerRadius" Value="16" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Style.Resources>
-        <SolidColorBrush x:Key="ButtonBackground"             Color="Transparent" />
-        <SolidColorBrush x:Key="ButtonBackgroundPointerOver"  Color="Transparent" />
-        <SolidColorBrush x:Key="ButtonBackgroundPressed"      Color="Transparent" />
-      </Style.Resources>
-    </Style>
+        <Style Selector="Button.tool-btn:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush2}" />
+        </Style>
+        <Style Selector="ToggleButton.tool-btn:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush2}" />
+        </Style>
 
-    <!-- Hover: show an outline ring without touching the fill -->
-    <Style Selector="Button.color-swatch:pointerover">
-      <Setter Property="BorderThickness" Value="2.5" />
-      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-    </Style>
+        <!--  Color swatch buttons: solid-colour circles  -->
+        <Style Selector="Button.color-swatch">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Style.Resources>
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBackground" />
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBackgroundPointerOver" />
+                <SolidColorBrush Color="Transparent" x:Key="ButtonBackgroundPressed" />
+            </Style.Resources>
+        </Style>
 
-    <!-- Pressed: slightly thicker accent ring -->
-    <Style Selector="Button.color-swatch:pressed">
-      <Setter Property="BorderThickness" Value="2.5" />
-      <Setter Property="BorderBrush" Value="{DynamicResource ThemeAccentBrush}" />
-    </Style>
+        <!--  Hover: show an outline ring without touching the fill  -->
+        <Style Selector="Button.color-swatch:pointerover">
+            <Setter Property="BorderThickness" Value="2.5" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+        </Style>
 
-    <!-- Selected (active) swatch: white ring -->
-    <Style Selector="Button.color-swatch.selected">
-      <Setter Property="BorderThickness" Value="2.5" />
-      <Setter Property="BorderBrush" Value="White" />
-    </Style>
+        <!--  Pressed: slightly thicker accent ring  -->
+        <Style Selector="Button.color-swatch:pressed">
+            <Setter Property="BorderThickness" Value="2.5" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeAccentBrush}" />
+        </Style>
 
-    <!-- Floating toolbar: tooltips should not capture pointer events -->
-    <Style Selector="#FloatingToolbar Button ToolTip, #FloatingToolbar ToggleButton ToolTip">
-      <Setter Property="IsHitTestVisible" Value="False" />
-    </Style>
-    
-    <Style Selector="FlyoutPresenter">
-      <Setter Property="Margin"
-              Value="0 0 6 6" />
-      <Setter Property="CornerRadius"
-              Value="6" />
-      <Setter Property="Effect">
-        <Setter.Value>
-          <DropShadowEffect
-            BlurRadius="6"
-            OffsetX="0"
-            OffsetY="1"
-            Color="#55000000" />
-        </Setter.Value>
-      </Setter>
-      <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
-      <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
-    </Style>
-    
-    <Style Selector="MenuFlyoutPresenter">
-      <Setter Property="Effect">
-        <Setter.Value>
-          <DropShadowEffect
-            BlurRadius="12"
-            OffsetX="3"
-            OffsetY="3"
-            Color="#66000000" />
-        </Setter.Value>
-      </Setter>
-      <Setter Property="Margin" Value="0 8 12 8" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="BorderBrush" Value="{DynamicResource OutlineBrush}" />
-      <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
-    </Style>
+        <!--  Selected (active) swatch: white ring  -->
+        <Style Selector="Button.color-swatch.selected">
+            <Setter Property="BorderThickness" Value="2.5" />
+            <Setter Property="BorderBrush" Value="White" />
+        </Style>
 
-  </UserControl.Styles>
+        <!--  Floating toolbar: tooltips should not capture pointer events  -->
+        <Style Selector="#FloatingToolbar Button ToolTip, #FloatingToolbar ToggleButton ToolTip">
+            <Setter Property="IsHitTestVisible" Value="False" />
+        </Style>
 
-  <!--<Design.DataContext>
+        <Style Selector="FlyoutPresenter">
+            <Setter Property="Margin" Value="0 0 6 6" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect
+                        BlurRadius="6"
+                        Color="#55000000"
+                        OffsetX="0"
+                        OffsetY="1" />
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled" />
+        </Style>
+
+        <Style Selector="MenuFlyoutPresenter">
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect
+                        BlurRadius="12"
+                        Color="#66000000"
+                        OffsetX="3"
+                        OffsetY="3" />
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Margin" Value="0 8 12 8" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="BorderBrush" Value="{DynamicResource OutlineBrush}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+        </Style>
+
+    </UserControl.Styles>
+
+    <!--<Design.DataContext>
     <vm:ScriptureViewModel />
   </Design.DataContext>-->
 
-  <Panel>
-    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="0">
-      <Border Grid.Row="0"
-              Padding="12,12,12,10"
-              BorderThickness="0,0,0,1"
-              BorderBrush="{DynamicResource ThemeBorderMidBrush}">
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+    <Panel>
+        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="0">
+            <Border
+                BorderBrush="{DynamicResource ThemeBorderMidBrush}"
+                BorderThickness="0,0,0,1"
+                Grid.Row="0"
+                Padding="12,12,12,10">
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
 
-        <!-- Main app menu button -->
-        <Button Grid.Column="0" Classes="tool-btn" VerticalAlignment="Center">
-          <material:MaterialIcon Kind="Menu" Width="20" Height="20" />
-          <Button.Flyout>
-            <Flyout Placement="BottomEdgeAlignedLeft">
-              <StackPanel Spacing="12" Margin="4" MinWidth="200">
-                <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="15" />
-                <Rectangle Height="1" Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Opacity="0.4" />
-                <TextBlock Text="Theme" FontSize="13" Opacity="0.7" Margin="0,0,0,4" />
-                <StackPanel x:Name="ThemeSwatchPanel"
-                            Orientation="Horizontal"
-                            Spacing="8" />
-                <ToggleSwitch OffContent="Debug mode"
-                              OnContent="Debug mode"
-                              IsChecked="{Binding AppVM.IsDebugMode, Mode=TwoWay}" />
-                <ToggleSwitch OffContent="Page pattern"
-                              OnContent="Page pattern"
-                              IsChecked="{Binding AppVM.IsDotPatternEnabled, Mode=TwoWay}" />
+                    <!--  Main app menu button  -->
+                    <Button
+                        Classes="tool-btn"
+                        Grid.Column="0"
+                        VerticalAlignment="Center">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Menu"
+                            Width="20" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedLeft">
+                                <StackPanel
+                                    Margin="4"
+                                    MinWidth="200"
+                                    Spacing="12">
+                                    <TextBlock
+                                        FontSize="15"
+                                        FontWeight="SemiBold"
+                                        Text="Settings" />
+                                    <Rectangle
+                                        Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                                        Height="1"
+                                        Opacity="0.4" />
+                                    <TextBlock
+                                        FontSize="13"
+                                        Margin="0,0,0,4"
+                                        Opacity="0.7"
+                                        Text="Theme" />
+                                    <StackPanel
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        x:Name="ThemeSwatchPanel" />
+                                    <ToggleSwitch
+                                        IsChecked="{Binding AppVM.IsDebugMode, Mode=TwoWay}"
+                                        OffContent="Debug mode"
+                                        OnContent="Debug mode" />
+                                    <ToggleSwitch
+                                        IsChecked="{Binding AppVM.IsDotPatternEnabled, Mode=TwoWay}"
+                                        OffContent="Page pattern"
+                                        OnContent="Page pattern" />
 
-                <Rectangle Height="1" Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" Opacity="0.4" />
-                <TextBlock Text="Sync" FontWeight="SemiBold" FontSize="15" />
+                                    <Rectangle
+                                        Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                                        Height="1"
+                                        Opacity="0.4" />
+                                    <TextBlock
+                                        FontSize="15"
+                                        FontWeight="SemiBold"
+                                        Text="Sync" />
 
-                <!-- Signed-in account -->
-                <Border IsVisible="{Binding AppVM.IsAuthenticated}"
-                        Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
-                        CornerRadius="8"
-                        Padding="10,8">
-                  <StackPanel Spacing="2">
-                    <TextBlock Text="Signed in as"
-                               FontSize="11"
-                               Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-                    <TextBlock Text="{Binding AppVM.CurrentUserEmail}"
-                               FontSize="13"
-                               FontWeight="SemiBold"
-                               TextTrimming="CharacterEllipsis" />
-                  </StackPanel>
+                                    <!--  Signed-in account  -->
+                                    <Border
+                                        Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
+                                        CornerRadius="8"
+                                        IsVisible="{Binding AppVM.IsAuthenticated}"
+                                        Padding="10,8">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock
+                                                FontSize="11"
+                                                Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                                Text="Signed in as" />
+                                            <TextBlock
+                                                FontSize="13"
+                                                FontWeight="SemiBold"
+                                                Text="{Binding AppVM.CurrentUserEmail}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock
+                                            FontSize="12"
+                                            Foreground="{DynamicResource ThemeAccentBrush}"
+                                            IsVisible="{Binding AppVM.IsSyncing}"
+                                            Text="Syncing…"
+                                            VerticalAlignment="Center" />
+                                        <TextBlock
+                                            FontSize="12"
+                                            Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                            Text="{Binding AppVM.SyncStatus}"
+                                            TextWrapping="Wrap"
+                                            VerticalAlignment="Center" />
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button
+                                            Click="OnSyncAuthButtonClick"
+                                            Content="Sign in"
+                                            IsEnabled="{Binding AppVM.CanAuthenticate}"
+                                            Padding="10,6" />
+                                        <Button
+                                            Click="OnSyncSignOutButtonClick"
+                                            Content="Sign out"
+                                            IsEnabled="{Binding AppVM.IsAuthenticated}"
+                                            Padding="10,6" />
+                                        <Button
+                                            Click="OnSyncForceSyncButtonClick"
+                                            Content="Sync now"
+                                            IsEnabled="{Binding AppVM.CanForceSync}"
+                                            Padding="10,6" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+
+                    <Button
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Grid.Column="1"
+                        HorizontalAlignment="Left"
+                        HorizontalContentAlignment="Left"
+                        MinWidth="230"
+                        x:Name="HeaderLookupButton">
+                        <TextBlock
+                            FontSize="20"
+                            FontWeight="SemiBold"
+                            Text="{Binding Header}"
+                            TextAlignment="Left"
+                            VerticalAlignment="Center" />
+                        <Button.Flyout>
+                            <Flyout Placement="BottomEdgeAlignedLeft">
+                                <Border
+                                    MaxHeight="520"
+                                    MaxWidth="500"
+                                    Padding="10">
+                                    <StackPanel Spacing="10">
+                                        <Grid ColumnDefinitions="200,90,90" ColumnSpacing="8">
+                                            <StackPanel Grid.Column="0" Spacing="6">
+                                                <TextBlock FontWeight="SemiBold" Text="Books" />
+                                                <ListBox
+                                                    Height="280"
+                                                    ItemsSource="{Binding LookupBooks}"
+                                                    Name="LookupBooksList"
+                                                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                    SelectedItem="{Binding SelectedLookupBook, Mode=TwoWay}">
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate x:DataType="model:ScriptureLookupBook">
+                                                            <TextBlock Text="{Binding Name}" />
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="1" Spacing="6">
+                                                <TextBlock FontWeight="SemiBold" Text="Chapters" />
+                                                <ListBox
+                                                    Height="280"
+                                                    ItemsSource="{Binding LookupChapters}"
+                                                    Name="LookupChaptersList"
+                                                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                    SelectedItem="{Binding SelectedLookupChapter, Mode=TwoWay}" />
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="2" Spacing="6">
+                                                <TextBlock FontWeight="SemiBold" Text="Verses" />
+                                                <ListBox
+                                                    Height="280"
+                                                    ItemsSource="{Binding LookupVerses}"
+                                                    Name="LookupVersesList"
+                                                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                    SelectedItem="{Binding SelectedLookupVerse, Mode=TwoWay}" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Button
+                                            Click="OnLookupGoButtonClick"
+                                            Content="Go"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,10,0,0"
+                                            MinWidth="96" />
+                                    </StackPanel>
+                                </Border>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                    <ToggleButton
+                        Classes="tool-btn"
+                        Grid.Column="2"
+                        IsCheckedChanged="OnSplitViewToggleIsCheckedChanged"
+                        ToolTip.Tip="Split view"
+                        x:Name="SplitViewToggle">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="ViewSplitVertical"
+                            Width="20" />
+                    </ToggleButton>
+                    <ToggleButton
+                        Classes="tool-btn"
+                        Grid.Column="3"
+                        x:Name="AnnotationToggle">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Pen"
+                            Width="20" />
+                    </ToggleButton>
+                    <Button
+                        Classes="tool-btn"
+                        Click="OnBibleReadingButtonClick"
+                        Grid.Column="4"
+                        ToolTip.Tip="My Bible Reading"
+                        x:Name="BibleReadingButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="BookOpenPageVariant"
+                            Width="20" />
+                    </Button>
+                    <Border
+                        Background="{DynamicResource ThemeAccentBrush4}"
+                        CornerRadius="99"
+                        Grid.Column="5"
+                        Grid.ColumnSpan="2">
+                        <StackPanel Orientation="Horizontal">
+                            <Button
+                                Classes="tool-btn"
+                                Click="OnJournalsButtonClick"
+                                ToolTip.Tip="Journals"
+                                x:Name="JournalsButton">
+                                <material:MaterialIcon
+                                    Height="20"
+                                    Kind="NotebookEdit"
+                                    Width="20" />
+                            </Button>
+                            <TextBlock
+                                FontSize="12"
+                                IsVisible="False"
+                                MaxWidth="120"
+                                Opacity="0.7"
+                                Padding="8,0,12,0"
+                                TextTrimming="CharacterEllipsis"
+                                VerticalAlignment="Center"
+                                x:Name="ActiveJournalLabel" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+            <TextBlock
+                Grid.Row="1"
+                IsVisible="{Binding AppVM.IsDebugMode}"
+                Margin="16,6,16,0"
+                Opacity="0.8"
+                Text="{Binding Status}" />
+
+            <!--  Main content grid (row 2) with overlay  -->
+            <Grid
+                Background="{DynamicResource ThemeDotPatternBrush}"
+                Grid.Row="2"
+                Margin="0,0,0,0"
+                RowDefinitions="*"
+                x:Name="InkAreaGrid">
+                <!--  Pen ink underlay — below the scripture text, SrcOver blend  -->
+                <controls:InkOverlayCanvas
+                    Grid.Row="0"
+                    IsHitTestVisible="False"
+                    ZIndex="-1"
+                    x:Name="PenUnderlay" />
+                <!--  ListBox for Bible content  -->
+                <ListBox
+                    Background="Transparent"
+                    Grid.Row="0"
+                    Name="ParagraphList"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                    SelectionChanged="OnParagraphListSelectionChanged"
+                    SelectionMode="Single">
+                    <!--
+                        Plain StackPanel disables item-container recycling.
+                        VirtualizingStackPanel caches item heights; when a container is recycled
+                        from a short paragraph to a tall one the stale cached height causes items
+                        to overlap. Bible chapters are short enough (≤200 paragraphs) that
+                        full materialisation is fine.
+                    -->
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="model:BibleParagraph">
+                            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto">
+                                <!--  Top spacer — only visible before a chapter drop cap  -->
+                                <Border
+                                    Grid.Column="0"
+                                    Grid.ColumnSpan="2"
+                                    Grid.Row="0"
+                                    Height="32"
+                                    IsVisible="{Binding HasChapterDropCap}" />
+                                <Grid
+                                    ColumnDefinitions="Auto,*,Auto"
+                                    Grid.Column="0"
+                                    Grid.ColumnSpan="2"
+                                    Grid.Row="1"
+                                    Margin="24,0,64,14"
+                                    RowDefinitions="Auto">
+                                    <TextBlock
+                                        FontSize="44"
+                                        FontWeight="Bold"
+                                        Grid.Column="0"
+                                        IsVisible="{Binding HasChapterDropCap}"
+                                        Margin="0,-6,10,0"
+                                        Text="{Binding ChapterDropCapText}"
+                                        VerticalAlignment="Top" />
+                                    <controls:LongPressSelectableTextBlock
+                                        FontSize="19"
+                                        Grid.Column="1"
+                                        Grid.Row="0"
+                                        IsVisible="{Binding IsBodyText}"
+                                        LineHeight="30"
+                                        Text="{Binding Text}"
+                                        TextWrapping="Wrap" />
+
+                                    <controls:LongPressSelectableTextBlock
+                                        FontSize="19"
+                                        FontWeight="Bold"
+                                        Grid.Column="1"
+                                        Grid.Row="0"
+                                        IsVisible="{Binding IsHeading}"
+                                        LineHeight="30"
+                                        Text="{Binding Text}"
+                                        TextWrapping="Wrap" />
+
+                                    <controls:LongPressSelectableTextBlock
+                                        FontSize="15"
+                                        FontStyle="Italic"
+                                        Grid.Column="1"
+                                        Grid.Row="0"
+                                        IsVisible="{Binding IsParallelReference}"
+                                        LineHeight="24"
+                                        Text="{Binding Text}"
+                                        TextWrapping="Wrap" />
+
+                                    <ItemsControl
+                                        Grid.Column="2"
+                                        Grid.Row="0"
+                                        IsVisible="{Binding HasFootnotes}"
+                                        ItemsSource="{Binding Footnotes}"
+                                        Margin="4,0,0,0"
+                                        VerticalAlignment="Bottom">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Orientation="Horizontal" Spacing="2" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="model:BibleFootnote">
+                                                <Button
+                                                    Classes="footnote-chip"
+                                                    Click="OnFootnoteButtonClick"
+                                                    Content="{Binding Marker}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Grid>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!--
+                    Single full-viewport ink overlay (not hittable – touch falls through to ListBox).
+                    MainView routes captured pen events here when annotation mode is on.
+                -->
+                <controls:InkOverlayCanvas
+                    Grid.Row="0"
+                    IsHitTestVisible="False"
+                    ZIndex="10"
+                    x:Name="InkOverlay" />
+
+                <!--  Custom scrollbar — index-based so it stays accurate with virtualization.  -->
+                <Border
+                    Background="#15808080"
+                    Cursor="Arrow"
+                    Grid.Row="0"
+                    HorizontalAlignment="Right"
+                    PointerMoved="OnProgressTrackPointerMoved"
+                    PointerPressed="OnProgressTrackPointerPressed"
+                    PointerReleased="OnProgressTrackPointerReleased"
+                    VerticalAlignment="Stretch"
+                    Width="12"
+                    ZIndex="20"
+                    x:Name="ReaderProgressTrack">
+                    <Canvas>
+                        <Border
+                            Background="{DynamicResource ThemeAccentBrush}"
+                            Canvas.Left="2"
+                            Canvas.Top="0"
+                            CornerRadius="4"
+                            Height="40"
+                            Opacity="0.55"
+                            Width="8"
+                            x:Name="ReaderProgressThumb" />
+                    </Canvas>
                 </Border>
 
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="Syncing…"
-                             IsVisible="{Binding AppVM.IsSyncing}"
-                             FontSize="12"
-                             VerticalAlignment="Center"
-                             Foreground="{DynamicResource ThemeAccentBrush}" />
-                  <TextBlock Text="{Binding AppVM.SyncStatus}"
-                             FontSize="12"
-                             VerticalAlignment="Center"
-                             TextWrapping="Wrap"
-                             Foreground="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
-                </StackPanel>
+                <!--  Chapter markers — shown to the left of the scrollbar while dragging the thumb.  -->
+                <Canvas
+                    Grid.Row="0"
+                    HorizontalAlignment="Right"
+                    IsHitTestVisible="False"
+                    IsVisible="False"
+                    Margin="0,0,14,0"
+                    VerticalAlignment="Stretch"
+                    Width="52"
+                    ZIndex="19"
+                    x:Name="ChapterMarkersCanvas" />
 
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Button Content="Sign in"
-                          IsEnabled="{Binding AppVM.CanAuthenticate}"
-                          Click="OnSyncAuthButtonClick"
-                          Padding="10,6" />
-                  <Button Content="Sign out"
-                          IsEnabled="{Binding AppVM.IsAuthenticated}"
-                          Click="OnSyncSignOutButtonClick"
-                          Padding="10,6" />
-                  <Button Content="Sync now"
-                          IsEnabled="{Binding AppVM.CanForceSync}"
-                          Click="OnSyncForceSyncButtonClick"
-                          Padding="10,6" />
-                </StackPanel>
-              </StackPanel>
-            </Flyout>
-          </Button.Flyout>
-        </Button>
-
-        <Button Grid.Column="1"
-                x:Name="HeaderLookupButton"
-                BorderThickness="0"
-                Background="Transparent"
-                MinWidth="230"
-                HorizontalContentAlignment="Left"
-                HorizontalAlignment="Left">
-          <TextBlock Text="{Binding Header}" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" TextAlignment="Left" />
-          <Button.Flyout>
-            <Flyout Placement="BottomEdgeAlignedLeft">
-              <Border Padding="10" MaxWidth="500" MaxHeight="520">
-                <StackPanel Spacing="10">
-                <Grid ColumnDefinitions="200,90,90" ColumnSpacing="8">
-                  <StackPanel Grid.Column="0" Spacing="6">
-                    <TextBlock Text="Books" FontWeight="SemiBold" />
-                    <ListBox Name="LookupBooksList"
-                             Height="280"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             ItemsSource="{Binding LookupBooks}"
-                             SelectedItem="{Binding SelectedLookupBook, Mode=TwoWay}">
-                      <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="model:ScriptureLookupBook">
-                          <TextBlock Text="{Binding Name}" />
-                        </DataTemplate>
-                      </ListBox.ItemTemplate>
-                    </ListBox>
-                  </StackPanel>
-
-                  <StackPanel Grid.Column="1" Spacing="6">
-                    <TextBlock Text="Chapters" FontWeight="SemiBold" />
-                    <ListBox Name="LookupChaptersList"
-                             Height="280"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             ItemsSource="{Binding LookupChapters}"
-                             SelectedItem="{Binding SelectedLookupChapter, Mode=TwoWay}" />
-                  </StackPanel>
-
-                  <StackPanel Grid.Column="2" Spacing="6">
-                    <TextBlock Text="Verses" FontWeight="SemiBold" />
-                    <ListBox Name="LookupVersesList"
-                             Height="280"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                             ItemsSource="{Binding LookupVerses}"
-                             SelectedItem="{Binding SelectedLookupVerse, Mode=TwoWay}" />
-                  </StackPanel>
-                </Grid>
-                <Button HorizontalAlignment="Right"
-                        Margin="0,10,0,0"
-                        MinWidth="96"
-                        Content="Go"
-                        Click="OnLookupGoButtonClick" />
-                </StackPanel>
-              </Border>
-            </Flyout>
-          </Button.Flyout>
-        </Button>
-        <ToggleButton Grid.Column="2"
-                      x:Name="SplitViewToggle"
-                      Classes="tool-btn"
-                      ToolTip.Tip="Split view"
-                      IsCheckedChanged="OnSplitViewToggleIsCheckedChanged">
-          <material:MaterialIcon Kind="ViewSplitVertical" Width="20" Height="20" />
-        </ToggleButton>
-        <ToggleButton Grid.Column="3" x:Name="AnnotationToggle"
-                      Classes="tool-btn">
-          <material:MaterialIcon Kind="Pen" Width="20" Height="20" />
-        </ToggleButton>
-        <TextBlock x:Name="ActiveJournalLabel"
-                   Grid.Column="4"
-                   VerticalAlignment="Center"
-                   FontSize="12"
-                   Opacity="0.7"
-                   IsVisible="False"
-                   TextTrimming="CharacterEllipsis"
-                   MaxWidth="120" />
-        <Button Grid.Column="5"
-                x:Name="BibleReadingButton"
-                Classes="tool-btn"
-                ToolTip.Tip="My Bible Reading"
-                Click="OnBibleReadingButtonClick">
-          <material:MaterialIcon Kind="BookOpenPageVariant" Width="20" Height="20" />
-        </Button>
-        <Button Grid.Column="6"
-                x:Name="JournalsButton"
-                Classes="tool-btn"
-                ToolTip.Tip="Journals"
-                Click="OnJournalsButtonClick">
-          <material:MaterialIcon Kind="NotebookEdit" Width="20" Height="20" />
-        </Button>
+            </Grid>
         </Grid>
-      </Border>
-      <TextBlock Grid.Row="1"
-                 Margin="16,6,16,0"
-                 Text="{Binding Status}"
-                 IsVisible="{Binding AppVM.IsDebugMode}"
-                 Opacity="0.8" />
-      
-      <!-- Main content grid (row 2) with overlay -->
-      <Grid x:Name="InkAreaGrid" Grid.Row="2" RowDefinitions="*" Margin="0,0,0,0" Background="{DynamicResource ThemeDotPatternBrush}">
-        <!-- Pen ink underlay — below the scripture text, SrcOver blend -->
-        <controls:InkOverlayCanvas Grid.Row="0" x:Name="PenUnderlay" IsHitTestVisible="False" ZIndex="-1" />
-        <!-- ListBox for Bible content -->
-        <ListBox Grid.Row="0"
-                 Background="Transparent"
-                 Name="ParagraphList"
-                 SelectionMode="Single"
-                 SelectionChanged="OnParagraphListSelectionChanged"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 ScrollViewer.VerticalScrollBarVisibility="Hidden">
-          <!-- Plain StackPanel disables item-container recycling.
-               VirtualizingStackPanel caches item heights; when a container is recycled
-               from a short paragraph to a tall one the stale cached height causes items
-               to overlap. Bible chapters are short enough (≤200 paragraphs) that
-               full materialisation is fine. -->
-          <ListBox.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel />
-            </ItemsPanelTemplate>
-          </ListBox.ItemsPanel>
-        <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="model:BibleParagraph">
-              <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto">
-                <!-- Top spacer — only visible before a chapter drop cap -->
-                <Border Grid.Column="0"
-                        Grid.ColumnSpan="2"
-                        Grid.Row="0"
-                        IsVisible="{Binding HasChapterDropCap}"
-                        Height="32" />
-                <Grid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-                      Margin="24,0,64,14"
-                      ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
-                <TextBlock Grid.Column="0"
-                           IsVisible="{Binding HasChapterDropCap}"
-                           Text="{Binding ChapterDropCapText}"
-                           FontSize="44"
-                           FontWeight="Bold"
-                           Margin="0,-6,10,0"
-                           VerticalAlignment="Top" />
-                <controls:LongPressSelectableTextBlock Grid.Column="1"
-                                                     Grid.Row="0"
-                                                     IsVisible="{Binding IsBodyText}"
-                                                     Text="{Binding Text}"
-                                                     TextWrapping="Wrap"
-                                                     FontSize="19"
-                                                     LineHeight="30" />
 
-                <controls:LongPressSelectableTextBlock Grid.Column="1"
-                                                     Grid.Row="0"
-                                                     IsVisible="{Binding IsHeading}"
-                                                     Text="{Binding Text}"
-                                                     TextWrapping="Wrap"
-                                                     FontSize="19"
-                                                     FontWeight="Bold"
-                                                     LineHeight="30" />
+        <!--  ── Floating toolbars: chapter nav pill + annotation pill, side by side ──  -->
+        <StackPanel
+            HorizontalAlignment="Center"
+            Margin="0,0,0,20"
+            Orientation="Horizontal"
+            Spacing="8"
+            VerticalAlignment="Bottom"
+            ZIndex="30"
+            x:Name="FloatingToolbar">
 
-                <controls:LongPressSelectableTextBlock Grid.Column="1"
-                                                     Grid.Row="0"
-                                                     IsVisible="{Binding IsParallelReference}"
-                                                     Text="{Binding Text}"
-                                                     TextWrapping="Wrap"
-                                                     FontSize="15"
-                                                     FontStyle="Italic"
-                                                     LineHeight="24" />
+            <!--  Chapter navigation pill (always visible)  -->
+            <Border
+                Background="{DynamicResource ThemeBackgroundBrush}"
+                BorderBrush="{DynamicResource ThemeControlHighlightMidBrush}"
+                BorderThickness="1"
+                BoxShadow="0 2 8 0 #30000000"
+                CornerRadius="28"
+                Padding="4,4">
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="0"
+                    VerticalAlignment="Center">
+                    <Button
+                        Classes="tool-btn"
+                        Click="OnPrevChapterClick"
+                        IsEnabled="{Binding CanGoToPreviousChapter}"
+                        ToolTip.Tip="Previous chapter"
+                        x:Name="PrevChapterButton">
+                        <material:MaterialIcon
+                            Height="22"
+                            Kind="ChevronLeft"
+                            Width="22" />
+                    </Button>
+                    <TextBlock
+                        FontSize="15"
+                        FontWeight="SemiBold"
+                        Margin="8,0"
+                        Text="{Binding Header}"
+                        TextAlignment="Center"
+                        TextTrimming="CharacterEllipsis"
+                        VerticalAlignment="Center"
+                        Width="160" />
+                    <Button
+                        Classes="tool-btn"
+                        Click="OnNextChapterClick"
+                        IsEnabled="{Binding CanGoToNextChapter}"
+                        ToolTip.Tip="Next chapter"
+                        x:Name="NextChapterButton">
+                        <material:MaterialIcon
+                            Height="22"
+                            Kind="ChevronRight"
+                            Width="22" />
+                    </Button>
+                </StackPanel>
+            </Border>
 
-                <ItemsControl Grid.Column="2"
-                              Grid.Row="0"
-                              IsVisible="{Binding HasFootnotes}"
-                              ItemsSource="{Binding Footnotes}"
-                              VerticalAlignment="Bottom"
-                              Margin="4,0,0,0">
-                  <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                      <StackPanel Orientation="Horizontal" Spacing="2" />
-                    </ItemsPanelTemplate>
-                  </ItemsControl.ItemsPanel>
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="model:BibleFootnote">
-                      <Button Classes="footnote-chip" Content="{Binding Marker}" Click="OnFootnoteButtonClick" />
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </Grid>
-              </Grid>
-            </DataTemplate>
-         </ListBox.ItemTemplate>
-        </ListBox>
-
-        <!-- Single full-viewport ink overlay (not hittable – touch falls through to ListBox).
-             MainView routes captured pen events here when annotation mode is on. -->
-        <controls:InkOverlayCanvas Grid.Row="0" x:Name="InkOverlay" IsHitTestVisible="False" ZIndex="10" />
-
-        <!-- Custom scrollbar — index-based so it stays accurate with virtualization. -->
-        <Border x:Name="ReaderProgressTrack"
-                Grid.Row="0"
-                Width="12"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Stretch"
-                Background="#15808080"
-                ZIndex="20"
-                PointerPressed="OnProgressTrackPointerPressed"
-                PointerMoved="OnProgressTrackPointerMoved"
-                PointerReleased="OnProgressTrackPointerReleased"
-                Cursor="Arrow">
-          <Canvas>
-            <Border x:Name="ReaderProgressThumb"
-                    Width="8"
-                    Canvas.Left="2"
-                    Canvas.Top="0"
-                    CornerRadius="4"
-                    Background="{DynamicResource ThemeAccentBrush}"
-                    Opacity="0.55"
-                    Height="40" />
-          </Canvas>
-        </Border>
-
-        <!-- Chapter markers — shown to the left of the scrollbar while dragging the thumb. -->
-        <Canvas x:Name="ChapterMarkersCanvas"
-                Grid.Row="0"
-                Width="52"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Stretch"
-                Margin="0,0,14,0"
+            <!--  Annotation tools pill (visible only while annotation mode is on)  -->
+            <Border
+                Background="{DynamicResource ThemeBackgroundBrush}"
+                BorderBrush="{DynamicResource ThemeControlHighlightMidBrush}"
+                BorderThickness="1"
+                BoxShadow="0 2 8 0 #30000000"
+                CornerRadius="28"
                 IsVisible="False"
-                IsHitTestVisible="False"
-                ZIndex="19" />
+                Padding="4,4"
+                x:Name="AnnotationSection">
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="4"
+                    VerticalAlignment="Center">
 
-      </Grid>
-    </Grid>
-
-    <!-- ── Floating toolbars: chapter nav pill + annotation pill, side by side ── -->
-    <StackPanel x:Name="FloatingToolbar"
-                Orientation="Horizontal"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Bottom"
-                Margin="0,0,0,20"
-                ZIndex="30"
-                Spacing="8">
-
-      <!-- Chapter navigation pill (always visible) -->
-      <Border CornerRadius="28"
-              BorderThickness="1"
-              BorderBrush="{DynamicResource ThemeControlHighlightMidBrush}"
-              Background="{DynamicResource ThemeBackgroundBrush}"
-              Padding="4,4"
-              BoxShadow="0 2 8 0 #30000000">
-        <StackPanel Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
-          <Button x:Name="PrevChapterButton"
-                  Classes="tool-btn"
-                  IsEnabled="{Binding CanGoToPreviousChapter}"
-                  ToolTip.Tip="Previous chapter"
-                  Click="OnPrevChapterClick">
-            <material:MaterialIcon Kind="ChevronLeft" Width="22" Height="22" />
-          </Button>
-          <TextBlock Text="{Binding Header}"
-                     FontSize="15"
-                     FontWeight="SemiBold"
-                     Width="160"
-                     TextAlignment="Center"
-                     TextTrimming="CharacterEllipsis"
-                     VerticalAlignment="Center"
-                     Margin="8,0" />
-          <Button x:Name="NextChapterButton"
-                  Classes="tool-btn"
-                  IsEnabled="{Binding CanGoToNextChapter}"
-                  ToolTip.Tip="Next chapter"
-                  Click="OnNextChapterClick">
-            <material:MaterialIcon Kind="ChevronRight" Width="22" Height="22" />
-          </Button>
-        </StackPanel>
-      </Border>
-
-      <!-- Annotation tools pill (visible only while annotation mode is on) -->
-      <Border x:Name="AnnotationSection"
-              CornerRadius="28"
-              BorderThickness="1"
-              BorderBrush="{DynamicResource ThemeControlHighlightMidBrush}"
-              Background="{DynamicResource ThemeBackgroundBrush}"
-              Padding="4,4"
-              IsVisible="False"
-              BoxShadow="0 2 8 0 #30000000">
-        <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-
-          <!-- Pen draw mode -->
-          <ToggleButton x:Name="PenModeButton"
+                    <!--  Pen draw mode  -->
+                    <ToggleButton
                         Classes="tool-btn"
                         IsChecked="True"
+                        IsCheckedChanged="OnPenModeIsCheckedChanged"
                         ToolTip.Tip="Draw"
-                        IsCheckedChanged="OnPenModeIsCheckedChanged">
-            <material:MaterialIcon Kind="Pencil" Width="20" Height="20" />
-          </ToggleButton>
+                        x:Name="PenModeButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Pencil"
+                            Width="20" />
+                    </ToggleButton>
 
-          <!-- Highlighter mode -->
-          <ToggleButton x:Name="HighlighterModeButton"
+                    <!--  Highlighter mode  -->
+                    <ToggleButton
                         Classes="tool-btn"
+                        IsCheckedChanged="OnHighlighterModeIsCheckedChanged"
                         ToolTip.Tip="Highlight"
-                        IsCheckedChanged="OnHighlighterModeIsCheckedChanged">
-            <material:MaterialIcon Kind="Marker" Width="20" Height="20" />
-          </ToggleButton>
+                        x:Name="HighlighterModeButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Marker"
+                            Width="20" />
+                    </ToggleButton>
 
-          <!-- Eraser mode -->
-          <ToggleButton x:Name="EraserModeButton"
+                    <!--  Eraser mode  -->
+                    <ToggleButton
                         Classes="tool-btn"
+                        IsCheckedChanged="OnEraserModeIsCheckedChanged"
                         ToolTip.Tip="Erase"
-                        IsCheckedChanged="OnEraserModeIsCheckedChanged">
-            <material:MaterialIcon Kind="Eraser" Width="20" Height="20" />
-          </ToggleButton>
+                        x:Name="EraserModeButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Eraser"
+                            Width="20" />
+                    </ToggleButton>
 
-          <!-- Undo last stroke -->
-          <Button x:Name="UndoButton"
-                  Classes="tool-btn"
-                  ToolTip.Tip="Undo"
-                  Click="OnUndoButtonClick">
-            <material:MaterialIcon Kind="Undo" Width="20" Height="20" />
-          </Button>
-
-          <!-- Redo last undone stroke -->
-          <Button x:Name="RedoButton"
-                  Classes="tool-btn"
-                  ToolTip.Tip="Redo"
-                  Click="OnRedoButtonClick">
-            <material:MaterialIcon Kind="Redo" Width="20" Height="20" />
-          </Button>
-
-          <!-- Preset colour swatches -->
-          <Button x:Name="ColorAmber" Classes="color-swatch" Tag="#D4FFC107" ToolTip.Tip="Amber" Click="OnColorSwatchClick">
-            <Ellipse Width="22" Height="22" Fill="#D4FFC107" />
-          </Button>
-          <Button x:Name="ColorRed"   Classes="color-swatch" Tag="#D4F44336" ToolTip.Tip="Red"   Click="OnColorSwatchClick">
-            <Ellipse Width="22" Height="22" Fill="#D4F44336" />
-          </Button>
-          <Button x:Name="ColorBlue"  Classes="color-swatch" Tag="#D42196F3" ToolTip.Tip="Blue"  Click="OnColorSwatchClick">
-            <Ellipse Width="22" Height="22" Fill="#D42196F3" />
-          </Button>
-          <Button x:Name="ColorDark"  Classes="color-swatch" Tag="#D437474F" ToolTip.Tip="Dark"  Click="OnColorSwatchClick">
-            <Ellipse Width="22" Height="22" Fill="#D437474F" />
-          </Button>
-
-          <!-- Custom colour picker -->
-          <Button x:Name="CustomColorButton"
-                  Classes="tool-btn"
-                  ToolTip.Tip="Custom colour">
-            <material:MaterialIcon Kind="Palette" Width="20" Height="20" />
-          </Button>
-
-          <!-- Pointer input mode -->
-          <ToggleButton x:Name="PointerModeButton"
+                    <!--  Undo last stroke  -->
+                    <Button
                         Classes="tool-btn"
+                        Click="OnUndoButtonClick"
+                        ToolTip.Tip="Undo"
+                        x:Name="UndoButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Undo"
+                            Width="20" />
+                    </Button>
+
+                    <!--  Redo last undone stroke  -->
+                    <Button
+                        Classes="tool-btn"
+                        Click="OnRedoButtonClick"
+                        ToolTip.Tip="Redo"
+                        x:Name="RedoButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Redo"
+                            Width="20" />
+                    </Button>
+
+                    <!--  Preset colour swatches  -->
+                    <Button
+                        Classes="color-swatch"
+                        Click="OnColorSwatchClick"
+                        Tag="#D4FFC107"
+                        ToolTip.Tip="Amber"
+                        x:Name="ColorAmber">
+                        <Ellipse
+                            Fill="#D4FFC107"
+                            Height="22"
+                            Width="22" />
+                    </Button>
+                    <Button
+                        Classes="color-swatch"
+                        Click="OnColorSwatchClick"
+                        Tag="#D4F44336"
+                        ToolTip.Tip="Red"
+                        x:Name="ColorRed">
+                        <Ellipse
+                            Fill="#D4F44336"
+                            Height="22"
+                            Width="22" />
+                    </Button>
+                    <Button
+                        Classes="color-swatch"
+                        Click="OnColorSwatchClick"
+                        Tag="#D42196F3"
+                        ToolTip.Tip="Blue"
+                        x:Name="ColorBlue">
+                        <Ellipse
+                            Fill="#D42196F3"
+                            Height="22"
+                            Width="22" />
+                    </Button>
+                    <Button
+                        Classes="color-swatch"
+                        Click="OnColorSwatchClick"
+                        Tag="#D44CAF50"
+                        ToolTip.Tip="Green"
+                        x:Name="ColorGreen">
+                        <Ellipse
+                            Fill="#D44CAF50"
+                            Height="22"
+                            Width="22" />
+                    </Button>
+
+                    <!--  Custom colour picker  -->
+                    <Button
+                        Classes="tool-btn"
+                        ToolTip.Tip="Custom colour"
+                        x:Name="CustomColorButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="Palette"
+                            Width="20" />
+                    </Button>
+
+                    <!--  Pointer input mode  -->
+                    <ToggleButton
+                        Classes="tool-btn"
+                        IsCheckedChanged="OnPointerModeIsCheckedChanged"
                         ToolTip.Tip="Use pointer/mouse to draw"
-                        IsCheckedChanged="OnPointerModeIsCheckedChanged">
-            <material:MaterialIcon Kind="CursorDefault" Width="20" Height="20" />
-          </ToggleButton>
+                        x:Name="PointerModeButton">
+                        <material:MaterialIcon
+                            Height="20"
+                            Kind="CursorDefault"
+                            Width="20" />
+                    </ToggleButton>
+
+                </StackPanel>
+            </Border>
 
         </StackPanel>
-      </Border>
 
-    </StackPanel>
-
-  </Panel>
+    </Panel>
 </UserControl>

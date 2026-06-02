@@ -116,7 +116,7 @@ public partial class MainView : UserControl
     private Button? _colorAmber;
     private Button? _colorRed;
     private Button? _colorBlue;
-    private Button? _colorDark;
+    private Button? _colorGreen;
     private Button? _customColorButton;
     private ToggleButton? _pointerModeButton;
     private Button? _undoButton;
@@ -168,6 +168,17 @@ public partial class MainView : UserControl
                 _paragraphs = vm.Paragraphs;
                 _subscribedVm = vm;
                 vm.PropertyChanged += OnVmPropertyChanged;
+
+                // Rebuild _windowedItems for the incoming VM. Without this, switching to a tab
+                // whose Paragraphs are already loaded leaves the ListBox showing the previous
+                // tab's content — Paragraphs won't fire PropertyChanged, so OnVmPropertyChanged
+                // never triggers the rebuild. Guard on _paragraphList so initial startup
+                // (DataContext set before OnLoaded) is handled by OnLoaded instead.
+                if (_paragraphList != null)
+                {
+                    RebuildChapterGroups();
+                    ReinitializeWindow();
+                }
             }
 
             RefreshReaderProgress();
@@ -232,7 +243,7 @@ public partial class MainView : UserControl
         _colorAmber        = this.FindControl<Button>("ColorAmber");
         _colorRed          = this.FindControl<Button>("ColorRed");
         _colorBlue         = this.FindControl<Button>("ColorBlue");
-        _colorDark         = this.FindControl<Button>("ColorDark");
+        _colorGreen        = this.FindControl<Button>("ColorGreen");
         _customColorButton = this.FindControl<Button>("CustomColorButton");
         _pointerModeButton = this.FindControl<ToggleButton>("PointerModeButton");
         _undoButton        = this.FindControl<Button>("UndoButton");
@@ -1281,6 +1292,13 @@ public partial class MainView : UserControl
         _isAdjustingWindow = true;
         try
         {
+            // Evict loaded chapters so AppShellView removes their strokes before the
+            // window is rebuilt. Without this, stale strokes from the old window remain
+            // in _cachedStrokes while _chapterStartY is empty, causing them to render
+            // with delta=0 at their old content coordinates over the new viewport.
+            for (var i = _windowStart; i < _windowEnd; i++)
+                ChapterExitedWindow?.Invoke(this, i + 1);   // 1-based
+
             _windowedItems.Clear();
             _windowStart = 0;
             _windowEnd   = 0;
@@ -1344,6 +1362,13 @@ public partial class MainView : UserControl
         var newOffset = _paragraphScrollViewer.Offset.Y + estimatedHeight;
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
 
+        // Shift cached content-Y values to match the new scroll coordinate system.
+        // Without this, the ink drift callback returns stale values between the offset
+        // change and the next LayoutUpdated → RebuildParagraphTopCache cycle, causing
+        // strokes to render shifted by ~estimatedHeight during fast scrolling.
+        foreach (var key in _chapterStartY.Keys.ToList())
+            _chapterStartY[key] += estimatedHeight;
+
         ChapterEnteredWindow?.Invoke(this, chapter);
     }
 
@@ -1369,9 +1394,21 @@ public partial class MainView : UserControl
 
         _windowStart++;
 
+        // Clear stale position cache so orphaned strokes fall back to delta=0.
+        _chapterStartY.Remove(chapter);
+        _chapterLocalTops.Remove(chapter);
+
         // Compensate scroll offset downward.
-        var newOffset = Math.Max(0, _paragraphScrollViewer.Offset.Y - removedHeight);
+        var oldScrollOffset = _paragraphScrollViewer.Offset.Y;
+        var newOffset = Math.Max(0, oldScrollOffset - removedHeight);
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+
+        // Shift cached content-Y values to match the new scroll coordinate system.
+        // Same race as ExtendWindowUp: offset change fires OnParagraphScrollChanged
+        // synchronously, but LayoutUpdated → RebuildParagraphTopCache fires later.
+        var scrollDelta = newOffset - oldScrollOffset;
+        foreach (var key in _chapterStartY.Keys.ToList())
+            _chapterStartY[key] += scrollDelta;
 
         ChapterExitedWindow?.Invoke(this, chapter);
     }
@@ -1391,6 +1428,10 @@ public partial class MainView : UserControl
 
         for (var i = 0; i < removedParagraphs.Count; i++)
             _windowedItems.RemoveAt(_windowedItems.Count - 1);
+
+        // Clear stale position cache so orphaned strokes fall back to delta=0.
+        _chapterStartY.Remove(chapter);
+        _chapterLocalTops.Remove(chapter);
 
         ChapterExitedWindow?.Invoke(this, chapter);
     }
@@ -1623,6 +1664,13 @@ public partial class MainView : UserControl
         _isAdjustingWindow = true;
         try
         {
+            // Evict loaded chapters so AppShellView removes their strokes before
+            // the window is rebuilt. Same race as ReinitializeWindow: without exit
+            // events, stale strokes stay in _cachedStrokes and render at wrong
+            // positions in the new coordinate system while _chapterStartY is empty.
+            for (var i = _windowStart; i < _windowEnd; i++)
+                ChapterExitedWindow?.Invoke(this, i + 1);   // 1-based
+
             // Rebuild window centered on target chapter.
             _windowedItems.Clear();
             _chapterStartY.Clear();

@@ -17,13 +17,13 @@
       <Setter Property="Cursor" Value="Hand" />
     </Style>
     <Style Selector="Button.flyout-item:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource SystemControlHighlightListLowBrush}" />
+      <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush2}" />
     </Style>
   </UserControl.Styles>
 
-  <Border CornerRadius="12"
+  <Border 
           Background="{DynamicResource ThemeBackgroundBrush}"
-          BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+          BorderBrush="{DynamicResource ThemeAccentBrush2}"
           BorderThickness="1"
           BoxShadow="0 4 16 0 #44000000"
           Padding="8">

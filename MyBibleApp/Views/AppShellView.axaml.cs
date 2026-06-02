@@ -43,6 +43,7 @@ public partial class AppShellView : UserControl
     private readonly Dictionary<ScriptureViewModel, (int Chapter, int Verse)> _tabVersePositions = [];
     private readonly Dictionary<ScriptureViewModel, string?> _tabActiveJournalIds = [];
     private readonly Dictionary<ScriptureViewModel, List<JournalInkStroke>> _tabEphemeralStrokes = [];
+    private readonly Dictionary<int, CancellationTokenSource> _pendingChapterLoads = [];
     private JournalFlyoutView? _journalFlyoutView;
     private JournalFlyoutViewModel? _journalFlyoutVm;
     private Border? _journalFlyoutDismissOverlay;
@@ -1030,14 +1031,29 @@ public partial class AppShellView : UserControl
     private async void OnChapterEnteredWindow(object? sender, int chapter)
     {
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
+
+        // Cancel any in-flight load for this chapter (re-entry or stale load).
+        if (_pendingChapterLoads.TryGetValue(chapter, out var stale))
+        {
+            stale.Cancel();
+            stale.Dispose();
+        }
+        var cts = new CancellationTokenSource();
+        _pendingChapterLoads[chapter] = cts;
+
         var vm = _tabs[_activeTabIndex];
         var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
         var bookCode  = _primaryView?.CurrentBookCode ?? vm.BookCode;
-        await OnChapterEnteredWindowAsync(chapter, journalId, bookCode, vm);
+        await OnChapterEnteredWindowAsync(chapter, journalId, bookCode, vm, cts.Token);
+
+        if (_pendingChapterLoads.TryGetValue(chapter, out var current) && ReferenceEquals(current, cts))
+            _pendingChapterLoads.Remove(chapter);
+        cts.Dispose();
     }
 
     private async Task OnChapterEnteredWindowAsync(
-        int chapter, string? journalId, string bookCode, ScriptureViewModel vm)
+        int chapter, string? journalId, string bookCode, ScriptureViewModel vm,
+        CancellationToken ct = default)
     {
         IReadOnlyList<JournalInkStroke> strokes;
 
@@ -1054,11 +1070,21 @@ public partial class AppShellView : UserControl
                 .ToList();
         }
 
+        // If the chapter exited the window while we were loading, discard the result.
+        if (ct.IsCancellationRequested) return;
+
         _primaryView?.AppendChapterStrokes(strokes);
     }
 
     private void OnChapterExitedWindow(object? sender, int chapter)
     {
+        // Cancel any in-flight stroke load for this chapter before removing strokes.
+        if (_pendingChapterLoads.TryGetValue(chapter, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+            _pendingChapterLoads.Remove(chapter);
+        }
         _primaryView?.RemoveChapterStrokes(chapter);
     }
 
@@ -1070,6 +1096,10 @@ public partial class AppShellView : UserControl
     {
         if (_primaryView == null || _activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
         var vm = _tabs[_activeTabIndex];
+
+        // Cancel all in-flight chapter loads before clearing and reloading.
+        foreach (var cts in _pendingChapterLoads.Values) { cts.Cancel(); cts.Dispose(); }
+        _pendingChapterLoads.Clear();
 
         _primaryView.LoadJournalStrokes([]);   // clear
 

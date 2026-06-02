@@ -61,7 +61,7 @@
                     IsVisible="False"
                     ResizeBehavior="PreviousAndNext"
                     ResizeDirection="Columns"
-                    Background="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                    Background="{DynamicResource ThemeAccentBrush2}"
                     HorizontalAlignment="Stretch" />
 
       <views:MainView Grid.Column="2" x:Name="SecondaryView" IsVisible="False" DataContext="{x:Null}" />

@@ -32,6 +32,8 @@ public class AppViewModel : ViewModelBase, IDisposable
     private bool _isAuthenticating;
     private string? _currentUserEmail;
     private string _syncStatus = string.Empty;
+    private DateTimeOffset? _lastUpToDateSyncAt;
+    private DispatcherTimer? _syncStatusTimer;
     private string _syncDebugData = string.Empty;
     private string _syncDebugLastUpdated = "Never";
     private IReadOnlyList<string> _syncDebugLogs = [];
@@ -703,14 +705,50 @@ public class AppViewModel : ViewModelBase, IDisposable
     private void OnSyncProgress(object? sender, SyncProgressEventArgs e)
     {
         IsSyncing = e.IsSyncing;
-        SyncStatus = e.Message;
         AppendSyncDebugLog($"[{e.Progress}%] {e.Message}");
         _ = RefreshSyncDebugDataAsync();
+
+        if (e.IsSyncing)
+            StopSyncStatusTimer();
+
+        if (e.IsCompleted && e.Message.Contains("up to date", StringComparison.OrdinalIgnoreCase))
+        {
+            _lastUpToDateSyncAt = DateTimeOffset.Now;
+            SyncStatus = FormatUpToDateStatus();
+            StartSyncStatusTimer();
+        }
+        else
+        {
+            SyncStatus = e.Message;
+        }
 
         if (e.IsCompleted)
             System.Diagnostics.Debug.WriteLine("Sync completed.");
         else if (e.IsError)
             System.Diagnostics.Debug.WriteLine($"Sync error: {e.Message}");
+    }
+
+    private string FormatUpToDateStatus()
+    {
+        if (_lastUpToDateSyncAt == null) return "Sync complete — up to date";
+        var elapsed = DateTimeOffset.Now - _lastUpToDateSyncAt.Value;
+        return elapsed.TotalMinutes < 1
+            ? "Sync complete — up to date"
+            : $"Sync complete — {(int)elapsed.TotalMinutes} min ago";
+    }
+
+    private void StartSyncStatusTimer()
+    {
+        if (_syncStatusTimer != null) return;
+        _syncStatusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _syncStatusTimer.Tick += (_, _) => SyncStatus = FormatUpToDateStatus();
+        _syncStatusTimer.Start();
+    }
+
+    private void StopSyncStatusTimer()
+    {
+        _syncStatusTimer?.Stop();
+        _syncStatusTimer = null;
     }
 
     private void OnAuthStateChanged(bool isAuthenticated, string? userEmail)
@@ -727,6 +765,8 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        StopSyncStatusTimer();
+
         if (_syncCoordinator != null)
             _syncCoordinator.SyncProgress -= OnSyncProgress;
 
