@@ -57,6 +57,11 @@ public partial class AppShellView : UserControl
     private PropertyChangedEventHandler? _authStateHandler;
     private TaskCompletionSource<bool>? _startupSignInPromptTcs;
 
+    // Delete-confirm overlay
+    private Panel? _deleteConfirmOverlay;
+    private TextBlock? _deleteConfirmMessage;
+    private TaskCompletionSource<bool>? _deleteConfirmTcs;
+
     // Split sizing policy
     private const double PreferredPaneMinWidth = 300;
     private const double AbsolutePaneMinWidth  = 180;
@@ -90,12 +95,20 @@ public partial class AppShellView : UserControl
             _bibleReadingView.ChapterNavigationRequested += OnBibleReadingChapterNavigationRequested;
         }
 
+        _deleteConfirmOverlay = this.FindControl<Panel>("DeleteConfirmOverlay");
+        _deleteConfirmMessage = this.FindControl<TextBlock>("DeleteConfirmMessage");
+        var deleteConfirmOk = this.FindControl<Button>("DeleteConfirmOkButton");
+        var deleteConfirmCancel = this.FindControl<Button>("DeleteConfirmCancelButton");
+        if (deleteConfirmOk != null) deleteConfirmOk.Click += (_, _) => { _deleteConfirmTcs?.TrySetResult(true); HideDeleteConfirmOverlay(); };
+        if (deleteConfirmCancel != null) deleteConfirmCancel.Click += (_, _) => { _deleteConfirmTcs?.TrySetResult(false); HideDeleteConfirmOverlay(); };
+
         _journalFlyoutVm = new JournalFlyoutViewModel(SharedSyncRuntime.Instance.JournalStore);
         _journalFlyoutView = this.FindControl<JournalFlyoutView>("JournalFlyoutView");
         if (_journalFlyoutView != null)
         {
             _journalFlyoutView.DataContext = _journalFlyoutVm;
             _journalFlyoutView.SaveAsRequested += OnSaveAsJournalRequested;
+            _journalFlyoutView.DeleteRequested += OnJournalDeleteRequested;
         }
         _journalFlyoutDismissOverlay = this.FindControl<Border>("JournalFlyoutDismissOverlay");
         if (_journalFlyoutDismissOverlay != null)
@@ -981,6 +994,29 @@ public partial class AppShellView : UserControl
         RequestPersistOpenTabReferences();
 
         await SharedSyncRuntime.Instance.SyncCoordinator.EnqueueJournalSyncAsync();
+    }
+
+    private async void OnJournalDeleteRequested(object? sender, string journalId)
+    {
+        if (_journalFlyoutVm == null) return;
+        var journal = _journalFlyoutVm.Journals.FirstOrDefault(j => j.Id == journalId);
+        if (journal == null) return;
+
+        if (_deleteConfirmMessage != null)
+            _deleteConfirmMessage.Text = $"Delete \"{journal.Name}\"?";
+
+        _deleteConfirmTcs = new TaskCompletionSource<bool>();
+        if (_deleteConfirmOverlay != null) _deleteConfirmOverlay.IsVisible = true;
+
+        var confirmed = await _deleteConfirmTcs.Task;
+        if (confirmed)
+            await _journalFlyoutVm.DeleteJournalAsync(journalId);
+    }
+
+    private void HideDeleteConfirmOverlay()
+    {
+        if (_deleteConfirmOverlay != null) _deleteConfirmOverlay.IsVisible = false;
+        _deleteConfirmTcs = null;
     }
 
     private async void OnStrokeCompleted(object? sender, InkStrokeEventArgs e)

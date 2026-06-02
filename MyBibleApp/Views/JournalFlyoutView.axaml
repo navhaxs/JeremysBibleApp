@@ -19,6 +19,15 @@
     <Style Selector="Button.flyout-item:pointerover /template/ ContentPresenter#PART_ContentPresenter">
       <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush2}" />
     </Style>
+    <Style Selector="Button.flyout-item.active /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush2}" />
+    </Style>
+    <Style Selector="Button.flyout-item.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource ThemeAccentBrush}" />
+    </Style>
+    <Style Selector="Button.flyout-item.active TextBlock">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
   </UserControl.Styles>
 
   <Border 
@@ -48,12 +57,13 @@
         <ItemsControl x:Name="JournalItems"
                       ItemsSource="{Binding Journals}">
           <ItemsControl.ItemTemplate>
-            <DataTemplate>
+            <DataTemplate x:DataType="vm:JournalItem">
               <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,1">
                 <Button Grid.Column="0"
                         HorizontalAlignment="Stretch"
                         HorizontalContentAlignment="Left"
                         Classes="flyout-item"
+                        Classes.active="{Binding IsActive}"
                         Tag="{Binding Id}"
                         x:Name="ActivateButton"
                         Padding="8,6">

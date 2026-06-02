@@ -44,16 +44,6 @@ public sealed class AppTheme
         ForegroundOverride = Color.Parse("#3B3228"),
     };
 
-    public static readonly AppTheme LightRose = new()
-    {
-        Id = "light-rose",
-        Label = "Rose",
-        Variant = ThemeVariant.Light,
-        SwatchColor = Color.Parse("#F8E8E8"),
-        BackgroundOverride = Color.Parse("#F8E8E8"),
-        ForegroundOverride = Color.Parse("#3B2828"),
-    };
-
     public static readonly AppTheme DarkGrey = new()
     {
         Id = "dark-grey",
@@ -76,7 +66,6 @@ public sealed class AppTheme
     [
         LightWhite,
         LightSepia,
-        LightRose,
         DarkGrey,
         DarkBlack,
     ];

@@ -19,7 +19,7 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
         _journalStore = journalStore;
     }
 
-    public ObservableCollection<Journal> Journals { get; } = [];
+    public ObservableCollection<JournalItem> Journals { get; } = [];
 
     public string? ActiveJournalId
     {
@@ -44,7 +44,7 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
         var all = await _journalStore.GetAllJournalsAsync();
         Journals.Clear();
         foreach (var j in all)
-            Journals.Add(j);
+            Journals.Add(new JournalItem(j) { IsActive = j.Id == _activeJournalId });
     }
 
     public async Task CreateJournalAsync(string name, string bookCode, int chapter)
@@ -73,7 +73,7 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
         var result = await _journalStore.CreateJournalAsync(request);
         if (!result.IsSuccess) return;
 
-        Journals.Add(result.Value!);
+        Journals.Add(new JournalItem(result.Value!));
         ActivateJournal(result.Value!.Id);
     }
 
@@ -85,6 +85,7 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
         if (ActiveJournalId == journalId)
         {
             ActiveJournalId = null;
+            SyncActiveState();
             JournalDeactivated?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -98,17 +99,43 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
     public void ActivateJournal(string journalId)
     {
         ActiveJournalId = journalId;
+        SyncActiveState();
         JournalActivated?.Invoke(this, journalId);
     }
 
     public void DeactivateJournal()
     {
         ActiveJournalId = null;
+        SyncActiveState();
         JournalDeactivated?.Invoke(this, EventArgs.Empty);
     }
 
     public void SetActiveJournal(string? journalId)
     {
         ActiveJournalId = journalId;
+        SyncActiveState();
+    }
+
+    private void SyncActiveState()
+    {
+        foreach (var item in Journals)
+            item.IsActive = item.Id == _activeJournalId;
+    }
+}
+
+public sealed class JournalItem : ReactiveObject
+{
+    private bool _isActive;
+
+    public JournalItem(Journal journal) => Journal = journal;
+
+    public Journal Journal { get; }
+    public string Id => Journal.Id;
+    public string Name => Journal.Name;
+
+    public bool IsActive
+    {
+        get => _isActive;
+        set => this.RaiseAndSetIfChanged(ref _isActive, value);
     }
 }

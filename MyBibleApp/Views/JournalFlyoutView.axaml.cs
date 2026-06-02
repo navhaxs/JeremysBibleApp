@@ -11,6 +11,7 @@ namespace MyBibleApp.Views;
 public partial class JournalFlyoutView : UserControl
 {
     public event EventHandler? SaveAsRequested;
+    public event EventHandler<string>? DeleteRequested;
 
     private Grid? _renameBar;
     private Separator? _renameSeparator;
@@ -57,7 +58,7 @@ public partial class JournalFlyoutView : UserControl
         SaveAsRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private async void OnJournalItemButtonClicked(object? sender, RoutedEventArgs e)
+    private void OnJournalItemButtonClicked(object? sender, RoutedEventArgs e)
     {
         if (e.Source is not Button btn) return;
         if (DataContext is not JournalFlyoutViewModel vm) return;
@@ -65,11 +66,16 @@ public partial class JournalFlyoutView : UserControl
         if (journalId == null) return;
 
         if (btn.Name == "ActivateButton")
-            vm.ActivateJournal(journalId);
+        {
+            if (vm.ActiveJournalId == journalId)
+                vm.DeactivateJournal();
+            else
+                vm.ActivateJournal(journalId);
+        }
         else if (btn.Name == "RenameButton")
             BeginRename(journalId, vm);
         else if (btn.Name == "DeleteButton")
-            await vm.DeleteJournalAsync(journalId);
+            DeleteRequested?.Invoke(this, journalId);
     }
 
     private void BeginRename(string journalId, JournalFlyoutViewModel vm)
