@@ -384,14 +384,10 @@ public partial class MainView : UserControl
         UpdateReaderProgress(_paragraphScrollViewer);
         _dotScrollTransform.Y = -(_paragraphScrollViewer.Offset.Y % 24);
 
-        // On mobile, briefly reveal the scrollbar during touch scrolling.
-        if (!PlatformHelper.IsDesktop)
-            ShowScrollbarBriefly();
-
         // Don't interfere while the user is dragging the scrollbar thumb.
         if (_isDraggingProgressBar) return;
 
-        // Track scroll velocity to reveal chapter markers only during fast scrolling.
+        // Track scroll velocity to reveal scrollbar and chapter markers only during fast panning.
         var now = DateTime.UtcNow;
         var elapsed = (now - _lastScrollTime).TotalSeconds;
         var currentOffset = _paragraphScrollViewer.Offset.Y;
@@ -403,6 +399,9 @@ public partial class MainView : UserControl
             if (velocity >= ScrollVelocityThreshold)
             {
                 _fastScrollCount++;
+                // On mobile, reveal scrollbar only during fast panning — not slow drags.
+                if (!PlatformHelper.IsDesktop)
+                    ShowScrollbarBriefly();
                 if (!_chapterMarkersShownByScroll && _fastScrollCount >= FastScrollCountThreshold)
                 {
                     _chapterMarkersShownByScroll = true;
