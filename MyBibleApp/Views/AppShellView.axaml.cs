@@ -124,6 +124,7 @@ public partial class AppShellView : UserControl
         {
             _primaryView.ChapterEnteredWindow += OnChapterEnteredWindow;
             _primaryView.ChapterExitedWindow  += OnChapterExitedWindow;
+            _primaryView.CrossReferenceNavigationRequested += OnCrossReferenceNavigationRequested;
         }
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
         this.SizeChanged += OnShellSizeChanged;
@@ -841,6 +842,21 @@ public partial class AppShellView : UserControl
         var result = await vm.TryLoadBookFromApiAsync(e.BookCode, e.Chapter, 1);
         if (result.Success)
             await _primaryView.NavigateToVerseAsync(e.Chapter, 1);
+    }
+
+    /// <summary>
+    /// Handles a cross-reference tap that targets a different book.
+    /// Loads the target book (fetching from the API if needed) then navigates to the verse.
+    /// </summary>
+    private async void OnCrossReferenceNavigationRequested(
+        object? sender, MyBibleApp.Controls.CrossRefClickedEventArgs e)
+    {
+        if (_primaryView == null) return;
+        var newVm = new ScriptureViewModel(_appVM);
+        AddTabInternal(newVm, makeActive: true);
+        var result = await newVm.TryLoadBookFromApiAsync(e.BookCode, e.Chapter, e.Verse);
+        if (result.Success)
+            await _primaryView.NavigateToVerseAsync(e.Chapter, e.Verse);
     }
 
     // ── Journal flyout and stroke routing ─────────────────────────────────────

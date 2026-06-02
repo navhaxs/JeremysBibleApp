@@ -198,7 +198,12 @@ public partial class MainView : UserControl
     {
         _paragraphList  = this.FindControl<ListBox>("ParagraphList");
         if (_paragraphList != null)
+        {
             _paragraphList.ItemsSource = _windowedItems;
+            _paragraphList.AddHandler(
+                Controls.CrossReferenceBlock.ReferenceClickedEvent,
+                OnCrossReferenceClicked);
+        }
         _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
@@ -1100,6 +1105,18 @@ public partial class MainView : UserControl
 
     /// <summary>Navigates the scroll position to the given chapter and verse.</summary>
     public Task NavigateToVerseAsync(int chapter, int verse) => ScrollToReferenceAsync(chapter, verse);
+
+    /// <summary>
+    /// Fired when the user taps a cross-reference that targets a different book.
+    /// The host (AppShellView) should load the book and navigate to the verse.
+    /// </summary>
+    public event EventHandler<Controls.CrossRefClickedEventArgs>? CrossReferenceNavigationRequested;
+
+    private void OnCrossReferenceClicked(object? sender, Controls.CrossRefClickedEventArgs e)
+    {
+        CrossReferenceNavigationRequested?.Invoke(this, e);
+        e.Handled = true;
+    }
 
     private async Task ScrollToReferenceAsync(int chapter, int verse)
     {

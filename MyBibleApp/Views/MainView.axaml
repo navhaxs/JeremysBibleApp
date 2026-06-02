@@ -13,6 +13,16 @@
     xmlns:vm="using:MyBibleApp.ViewModels"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <UserControl.Styles>
+        <!--  Cross-reference link button: no chrome, hover just dims slightly  -->
+        <Style Selector="Button.cross-ref-link:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Opacity" Value="0.65" />
+        </Style>
+        <Style Selector="Button.cross-ref-link:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Opacity" Value="0.45" />
+        </Style>
+
         <Style Selector="Button.footnote-chip">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Padding" Value="6,0" />
@@ -542,15 +552,12 @@
                                         Text="{Binding Text}"
                                         TextWrapping="Wrap" />
 
-                                    <controls:LongPressSelectableTextBlock
-                                        FontSize="15"
-                                        FontStyle="Italic"
+                                    <controls:CrossReferenceBlock
                                         Grid.Column="1"
                                         Grid.Row="0"
                                         IsVisible="{Binding IsParallelReference}"
-                                        LineHeight="24"
-                                        Text="{Binding Text}"
-                                        TextWrapping="Wrap" />
+                                        Margin="0,0,0,4"
+                                        Text="{Binding Text}" />
 
                                     <ItemsControl
                                         Grid.Column="2"
