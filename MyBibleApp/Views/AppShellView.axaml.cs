@@ -1286,11 +1286,14 @@ public partial class AppShellView : UserControl
 
     private void OnSyncProgress(object? sender, SyncProgressEventArgs e)
     {
-        Dispatcher.UIThread.Post(() =>
+        Dispatcher.UIThread.Post(async () =>
         {
             var startupOverlay = this.FindControl<Panel>("StartupOverlay");
             if (startupOverlay?.IsVisible == true)
                 UpdateStartupOverlay("Loading...", e.Message, e.Progress);
+
+            if (e.IsCompleted && !e.IsError)
+                await ReloadWindowedInkStrokesAsync();
         });
     }
 
