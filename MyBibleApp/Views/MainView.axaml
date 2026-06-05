@@ -475,9 +475,13 @@
                 Text="{Binding Status}" />
 
             <!--  Main content grid (row 2) with overlay  -->
+            <ScrollViewer
+                Grid.Row="2"
+                HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Disabled"
+                x:Name="ContentHScrollContainer">
             <Grid
                 Background="{DynamicResource ThemeDotPatternBrush}"
-                Grid.Row="2"
                 Margin="0,0,0,0"
                 RowDefinitions="*"
                 x:Name="InkAreaGrid">
@@ -635,6 +639,7 @@
                     x:Name="ChapterMarkersCanvas" />
 
             </Grid>
+            </ScrollViewer>
         </Grid>
 
         <!--  ── Floating toolbars: chapter nav pill + annotation pill, side by side ──  -->

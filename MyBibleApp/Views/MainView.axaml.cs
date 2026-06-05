@@ -77,6 +77,7 @@ public partial class MainView : UserControl
     private InkOverlayCanvas? _inkOverlay;
     private InkOverlayCanvas? _penUnderlay;
     private Grid? _inkAreaGrid;
+    private ScrollViewer? _contentHScrollContainer;
     private Border? _readerProgressTrack;
     private Border? _readerProgressThumb;
     private Canvas? _chapterMarkersCanvas;
@@ -211,6 +212,7 @@ public partial class MainView : UserControl
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _penUnderlay    = this.FindControl<InkOverlayCanvas>("PenUnderlay");
         _inkAreaGrid    = this.FindControl<Grid>("InkAreaGrid");
+        _contentHScrollContainer = this.FindControl<ScrollViewer>("ContentHScrollContainer");
 
         // Provide paragraph-position callbacks so ink strokes can anchor to
         // paragraphs and survive virtualizing-panel re-layout.
@@ -2188,11 +2190,19 @@ public partial class MainView : UserControl
             _paragraphList.MaxWidth = double.PositiveInfinity;
             _paragraphList.FontSize = 19;
             _paragraphList.ClearValue(FontFamilyProperty);
+            if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = 0;
+            if (_contentHScrollContainer != null)
+                _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         }
         else
         {
             if (layout.TextColumnWidthDip > 0)
+            {
                 _paragraphList.MaxWidth = layout.TextColumnWidthDip;
+                if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip;
+                if (_contentHScrollContainer != null)
+                    _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+            }
 
             if (layout.FontSizeDip > 0)
                 _paragraphList.FontSize = layout.FontSizeDip;
