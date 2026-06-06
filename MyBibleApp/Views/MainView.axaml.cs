@@ -1183,6 +1183,11 @@ public partial class MainView : UserControl
         desiredY = Math.Clamp(desiredY, 0, maxY);
 
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, desiredY);
+
+        // Reset outer horizontal scroll so navigation always shows the column's left edge.
+        // Without this, a previous horizontal pan leaves the chapter heading off-screen.
+        if (_contentHScrollContainer != null)
+            _contentHScrollContainer.Offset = Vector.Zero;
     }
 
     private (BibleParagraph? Paragraph, double OffsetWithinParagraph) GetTopVisibleParagraph()
