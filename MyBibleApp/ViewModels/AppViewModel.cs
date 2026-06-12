@@ -34,6 +34,8 @@ public class AppViewModel : ViewModelBase, IDisposable
     private string _syncStatus = string.Empty;
     private DateTimeOffset? _lastUpToDateSyncAt;
     private DispatcherTimer? _syncStatusTimer;
+    private EventHandler? _onLifecycleSuspended;
+    private EventHandler? _onLifecycleResumed;
     private string _syncDebugData = string.Empty;
     private string _syncDebugLastUpdated = "Never";
     private IReadOnlyList<string> _syncDebugLogs = [];
@@ -60,13 +62,14 @@ public class AppViewModel : ViewModelBase, IDisposable
             SyncStatus = "Sync initialized";
             AppendSyncDebugLog("Sync services initialized.");
 
-            var lifecycle = AppLifecycleService.Instance;
-            lifecycle.Suspended += (_, _) => StopSyncStatusTimer();
-            lifecycle.Resumed += (_, _) =>
+            _onLifecycleSuspended = (_, _) => StopSyncStatusTimer();
+            _onLifecycleResumed = (_, _) =>
             {
-                if (IsAuthenticated)
+                if (IsAuthenticated && _lastUpToDateSyncAt != null)
                     StartSyncStatusTimer();
             };
+            AppLifecycleService.Instance.Suspended += _onLifecycleSuspended;
+            AppLifecycleService.Instance.Resumed += _onLifecycleResumed;
         }
         catch (Exception ex)
         {
@@ -780,6 +783,11 @@ public class AppViewModel : ViewModelBase, IDisposable
 
         if (_googleDriveAuthService != null)
             _googleDriveAuthService.AuthStateChanged -= OnAuthStateChanged;
+
+        if (_onLifecycleSuspended != null)
+            AppLifecycleService.Instance.Suspended -= _onLifecycleSuspended;
+        if (_onLifecycleResumed != null)
+            AppLifecycleService.Instance.Resumed -= _onLifecycleResumed;
     }
 
     // ── Private Types ────────────────────────────────────────────────────────
