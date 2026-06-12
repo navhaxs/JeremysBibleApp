@@ -3,6 +3,7 @@ using Android.Content;
 using Android.Content.PM;
 using Android.OS;
 using Avalonia.Android;
+using MyBibleApp.Services;
 using MyBibleApp.Services.Sync;
 
 namespace MyBibleApp.Android;
@@ -58,5 +59,17 @@ public class MainActivity : AvaloniaMainActivity
         // Example: com.companyname.mybibleapp:/oauth2redirect?code=4/0A...
         if (intent?.Data != null)
             AndroidOAuthCallbackBridge.TryHandleCallback(intent.Data.ToString()!);
+    }
+
+    protected override void OnPause()
+    {
+        base.OnPause();
+        AppLifecycleService.Instance.Suspend();
+    }
+
+    protected override void OnResume()
+    {
+        base.OnResume();
+        AppLifecycleService.Instance.Resume();
     }
 }
