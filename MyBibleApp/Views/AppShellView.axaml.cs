@@ -141,6 +141,7 @@ public partial class AppShellView : UserControl
         }
         if (_contentGrid != null) _contentGrid.SizeChanged += OnContentGridSizeChanged;
         this.SizeChanged += OnShellSizeChanged;
+        AttachedToVisualTree += OnAttachedToVisualTree;
 
         TrackAuthState();
     }
@@ -808,6 +809,9 @@ public partial class AppShellView : UserControl
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        if (this.VisualRoot is Window window)
+            window.PropertyChanged -= OnWindowPropertyChanged;
+
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress -= OnSyncProgress;
 
         if (_authStateHandler != null)
@@ -817,6 +821,26 @@ public partial class AppShellView : UserControl
         _persistTabsCts?.Cancel();
         _persistTabsCts?.Dispose();
         base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (this.VisualRoot is Window window)
+        {
+            window.PropertyChanged -= OnWindowPropertyChanged;  // unsubscribe first to prevent double-subscribe on reattach
+            window.PropertyChanged += OnWindowPropertyChanged;
+        }
+    }
+
+    private void OnWindowPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property != Window.WindowStateProperty) return;
+        var newState = e.NewValue as WindowState?;
+        var oldState = e.OldValue as WindowState?;
+        if (newState == WindowState.Minimized)
+            AppLifecycleService.Instance.Suspend();
+        else if (oldState == WindowState.Minimized)
+            AppLifecycleService.Instance.Resume();
     }
 
     // ── Bible Reading overlay ─────────────────────────────────────────────────
