@@ -59,6 +59,14 @@ public class AppViewModel : ViewModelBase, IDisposable
 
             SyncStatus = "Sync initialized";
             AppendSyncDebugLog("Sync services initialized.");
+
+            var lifecycle = AppLifecycleService.Instance;
+            lifecycle.Suspended += (_, _) => StopSyncStatusTimer();
+            lifecycle.Resumed += (_, _) =>
+            {
+                if (IsAuthenticated)
+                    StartSyncStatusTimer();
+            };
         }
         catch (Exception ex)
         {
