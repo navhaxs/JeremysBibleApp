@@ -7,7 +7,7 @@ namespace MyBibleApp.Services;
 
 internal sealed class SharedSyncRuntime
 {
-    private const int AutoSyncIntervalMinutes = 2;
+    private const int AutoSyncIntervalMinutes = 15;
     private static readonly Lazy<SharedSyncRuntime> SharedInstance =
         new(Create, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -61,6 +61,18 @@ internal sealed class SharedSyncRuntime
         var journalStore = new JournalStore();
         var journalSyncProvider = new JournalSyncProviderAdapter(journalStore);
         syncCoordinator.SetJournalSyncProvider(journalSyncProvider);
+
+        var lifecycle = AppLifecycleService.Instance;
+        lifecycle.Suspended += (_, _) =>
+        {
+            syncCoordinator.StopAutoSync();
+            networkMonitor.StopMonitoring();
+        };
+        lifecycle.Resumed += (_, _) =>
+        {
+            networkMonitor.StartMonitoring();
+            syncCoordinator.StartAutoSync(TimeSpan.FromMinutes(AutoSyncIntervalMinutes));
+        };
 
         syncCoordinator.StartAutoSync(TimeSpan.FromMinutes(AutoSyncIntervalMinutes));
 
