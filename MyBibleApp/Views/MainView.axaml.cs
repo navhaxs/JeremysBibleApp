@@ -205,6 +205,7 @@ public partial class MainView : UserControl
                 Controls.CrossReferenceBlock.ReferenceClickedEvent,
                 OnCrossReferenceClicked);
         }
+        this.AddHandler(KeyDownEvent, OnReaderKeyDown, RoutingStrategies.Tunnel);
         _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
@@ -2139,6 +2140,34 @@ public partial class MainView : UserControl
 
         _isTouchPanning = false;
         e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    private void OnReaderKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_paragraphScrollViewer == null || _paragraphList == null) return;
+
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() as Control;
+        bool inReader = focused != null &&
+            (focused == _paragraphList ||
+             focused.GetVisualAncestors().Contains(_paragraphList));
+        if (!inReader) return;
+
+        double delta = e.Key switch
+        {
+            Key.Up       => -50.0,
+            Key.Down     => +50.0,
+            Key.PageUp   => -_paragraphScrollViewer.Viewport.Height,
+            Key.PageDown => +_paragraphScrollViewer.Viewport.Height,
+            _            => 0.0,
+        };
+
+        if (delta == 0.0) return;
+
+        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+        _paragraphScrollViewer.Offset = new Vector(
+            _paragraphScrollViewer.Offset.X,
+            Math.Clamp(_paragraphScrollViewer.Offset.Y + delta, 0, maxY));
         e.Handled = true;
     }
 
