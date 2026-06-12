@@ -204,8 +204,8 @@ public partial class MainView : UserControl
             _paragraphList.AddHandler(
                 Controls.CrossReferenceBlock.ReferenceClickedEvent,
                 OnCrossReferenceClicked);
+            this.AddHandler(KeyDownEvent, OnReaderKeyDown, RoutingStrategies.Tunnel);
         }
-        this.AddHandler(KeyDownEvent, OnReaderKeyDown, RoutingStrategies.Tunnel);
         _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
