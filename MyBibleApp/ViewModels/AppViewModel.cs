@@ -146,9 +146,12 @@ public class AppViewModel : ViewModelBase, IDisposable
         try
         {
             var stored = await _localStorageProvider.GetAsync(TabBarVisibleKey).ConfigureAwait(false);
-            if (string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase))
-                await Dispatcher.UIThread.InvokeAsync(() => _isTabBarVisible = false);
-            this.RaisePropertyChanged(nameof(IsTabBarVisible));
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase))
+                    _isTabBarVisible = false;
+                this.RaisePropertyChanged(nameof(IsTabBarVisible));
+            });
         }
         catch { /* best-effort */ }
     }
