@@ -104,11 +104,17 @@
                    FontFamily="Consolas, Menlo, monospace"
                    TextWrapping="Wrap"
                    Opacity="0.85" />
-        <Button Content="Refresh"
-                FontSize="11"
-                Padding="8,3"
-                HorizontalAlignment="Left"
-                Click="OnDebugRefreshClick" />
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Button Content="Refresh"
+                  FontSize="11"
+                  Padding="8,3"
+                  Click="OnDebugRefreshClick" />
+          <Button Content="Sync Now"
+                  FontSize="11"
+                  Padding="8,3"
+                  IsEnabled="{Binding AppVM.CanForceSync}"
+                  Click="OnDebugSyncNowClick" />
+        </StackPanel>
       </StackPanel>
     </Border>
 

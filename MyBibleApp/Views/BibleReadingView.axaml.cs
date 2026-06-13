@@ -141,6 +141,12 @@ public partial class BibleReadingView : UserControl
             _ = vm.RefreshSyncDebugInfoAsync();
     }
 
+    private void OnDebugSyncNowClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is BibleReadingViewModel vm)
+            vm.AppVM.ForceSync();
+    }
+
     // ── Close ─────────────────────────────────────────────────────────────────
 
     private void OnCloseButtonClick(object? sender, RoutedEventArgs e) =>
