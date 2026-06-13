@@ -82,6 +82,8 @@ public partial class MainView : UserControl
     private Border? _readerProgressThumb;
     private Canvas? _chapterMarkersCanvas;
     private bool _isDraggingProgressBar;
+    private bool _isPressedOnTrack;
+    private double _dragStartY;
     private CancellationTokenSource? _scrollbarHideCts;
     private ScrollViewer? _paragraphScrollViewer;
     private bool _isScrollTrackingAttached;
@@ -957,21 +959,27 @@ public partial class MainView : UserControl
     private void OnProgressTrackPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (_readerProgressTrack == null) return;
-        _isDraggingProgressBar = true;
+        _isPressedOnTrack = true;
+        _dragStartY = e.GetPosition(_readerProgressTrack).Y;
         e.Pointer.Capture(_readerProgressTrack);
-        // Keep the scrollbar visible while the thumb is being dragged.
+        // Keep the scrollbar visible while interaction is in progress.
         if (!PlatformHelper.IsDesktop)
             _scrollbarHideCts?.Cancel();
-        BuildChapterMarkers();
-        var y = e.GetPosition(_readerProgressTrack).Y;
-        ScrollToFraction(y / _readerProgressTrack.Bounds.Height);
         e.Handled = true;
     }
 
     private void OnProgressTrackPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (!_isDraggingProgressBar || _readerProgressTrack == null) return;
+        if (!_isPressedOnTrack || _readerProgressTrack == null) return;
         var y = e.GetPosition(_readerProgressTrack).Y;
+
+        if (!_isDraggingProgressBar)
+        {
+            if (Math.Abs(y - _dragStartY) < 8.0) return;
+            _isDraggingProgressBar = true;
+            BuildChapterMarkers();
+        }
+
         ScrollToFraction(y / _readerProgressTrack.Bounds.Height);
 
         // Move thumb immediately for responsive feel while scroll catches up.
@@ -987,14 +995,20 @@ public partial class MainView : UserControl
 
     private void OnProgressTrackPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        if (!_isDraggingProgressBar) return;
-        _isDraggingProgressBar = false;
-        if (_chapterMarkersCanvas != null)
-            _chapterMarkersCanvas.IsVisible = false;
-        // Restart the auto-hide countdown after the thumb is released.
+        if (!_isPressedOnTrack) return;
+        _isPressedOnTrack = false;
+        e.Pointer.Capture(null);
+
+        if (_isDraggingProgressBar)
+        {
+            _isDraggingProgressBar = false;
+            if (_chapterMarkersCanvas != null)
+                _chapterMarkersCanvas.IsVisible = false;
+        }
+
+        // Restart the auto-hide countdown after interaction ends.
         if (!PlatformHelper.IsDesktop)
             ShowScrollbarBriefly();
-        e.Pointer.Capture(null);
         e.Handled = true;
     }
 
