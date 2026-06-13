@@ -15,6 +15,7 @@ public class AppViewModel : ViewModelBase, IDisposable
 {
     private const string LocalTabStateKey = "LocalTabState";
     private const string DebugModeKey = "IsDebugMode";
+    private const string TabBarVisibleKey = "IsTabBarVisible";
     private const string ThemeKey = "SelectedThemeId";
     private const int DebugOverlayMaxLines = 12;
 
@@ -25,6 +26,7 @@ public class AppViewModel : ViewModelBase, IDisposable
     private readonly ILocalStorageProvider? _localStorageProvider;
 
     private bool _isDebugMode;
+    private bool _isTabBarVisible = true;
     private bool _isSyncing;
     private bool _isAuthenticated;
     private bool _isAuthenticating;
@@ -110,6 +112,43 @@ public class AppViewModel : ViewModelBase, IDisposable
             if (string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
                 await Dispatcher.UIThread.InvokeAsync(() => _isDebugMode = true);
             this.RaisePropertyChanged(nameof(IsDebugMode));
+        }
+        catch { /* best-effort */ }
+    }
+
+    // ── Tab Bar Visible ──────────────────────────────────────────────────────
+
+    public bool IsTabBarVisible
+    {
+        get => _isTabBarVisible;
+        set
+        {
+            var old = _isTabBarVisible;
+            this.RaiseAndSetIfChanged(ref _isTabBarVisible, value);
+            if (old != _isTabBarVisible)
+                _ = PersistTabBarVisibleAsync(_isTabBarVisible);
+        }
+    }
+
+    private async Task PersistTabBarVisibleAsync(bool value)
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            await _localStorageProvider.SaveAsync(TabBarVisibleKey, value ? "true" : "false").ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
+    }
+
+    public async Task LoadTabBarVisibleFromStorageAsync()
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            var stored = await _localStorageProvider.GetAsync(TabBarVisibleKey).ConfigureAwait(false);
+            if (string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase))
+                await Dispatcher.UIThread.InvokeAsync(() => _isTabBarVisible = false);
+            this.RaisePropertyChanged(nameof(IsTabBarVisible));
         }
         catch { /* best-effort */ }
     }
