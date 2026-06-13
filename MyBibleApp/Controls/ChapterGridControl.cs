@@ -26,10 +26,32 @@ public class ChapterGridControl : Control
 
     private const double TouchTapThreshold = 24;
 
+    // Static — never change, no theme dependency
+    private static readonly SolidColorBrush HoverBrush = new(Color.FromArgb(0x18, 0x80, 0x80, 0x80));
+    private static readonly SolidColorBrush PressedBrush = new(Color.FromArgb(0x30, 0x80, 0x80, 0x80));
+    private static readonly Typeface DefaultTypeface = new(FontFamily.Default);
+
     private int _hoverIndex = -1;
     private int _pressedIndex = -1;
     private Point _pressedPosition;
     private IReadOnlyList<BibleReadingChapterCell>? _chapters;
+
+    // Theme-dependent cached resources — rebuilt in RebuildRenderResources()
+    private Avalonia.Styling.ThemeVariant? _cachedThemeVariant;
+    private IBrush? _cachedAccentBrush;
+    private IBrush? _cachedAccentBorderBrush;
+    private IBrush? _cachedCellBorderBrush;
+    private Pen? _cachedBorderPen;
+    private Pen? _cachedCurrentBorderPen;
+    private SolidColorBrush? _cachedUnreadTextBrush;
+
+    // BookCellColor cached brush — rebuilt when BookCellColorProperty changes
+    private SolidColorBrush? _cachedCellBrush;
+
+    // FormattedText caches — lazy-built, nulled on theme/chapters change
+    private FormattedText?[]? _cachedReadTexts;
+    private FormattedText?[]? _cachedUnreadTexts;
+    private int _cachedTextCount;
 
     public static readonly StyledProperty<IReadOnlyList<BibleReadingChapterCell>?> ChaptersProperty =
         AvaloniaProperty.Register<ChapterGridControl, IReadOnlyList<BibleReadingChapterCell>?>(nameof(Chapters));
@@ -48,10 +70,6 @@ public class ChapterGridControl : Control
         get => GetValue(BookCellColorProperty);
         set => SetValue(BookCellColorProperty, value);
     }
-
-    private SolidColorBrush? _cachedCellBrush;
-    private SolidColorBrush? _cachedUnreadTextBrush;
-    private Avalonia.Styling.ThemeVariant? _cachedThemeVariant;
 
     /// <summary>Raised when a chapter cell is tapped. The sender provides the clicked cell.</summary>
     public event EventHandler<BibleReadingChapterCell>? CellClicked;
@@ -79,6 +97,12 @@ public class ChapterGridControl : Control
         ClipToBounds = true;
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        RebuildRenderResources();
+    }
+
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
@@ -88,6 +112,9 @@ public class ChapterGridControl : Control
             UnsubscribeAll();
             _chapters = Chapters;
             SubscribeAll();
+            _cachedReadTexts = null;
+            _cachedUnreadTexts = null;
+            _cachedTextCount = 0;
             InvalidateMeasure();
             InvalidateVisual();
         }
@@ -97,6 +124,23 @@ public class ChapterGridControl : Control
             _cachedCellBrush = new SolidColorBrush(BookCellColor);
             InvalidateVisual();
         }
+    }
+
+    private void RebuildRenderResources()
+    {
+        _cachedThemeVariant = ActualThemeVariant;
+        _cachedAccentBrush = GetResourceBrush("ThemeAccentColor") ?? Brushes.DodgerBlue;
+        _cachedAccentBorderBrush = GetResourceBrush("ThemeAccentBrush") ?? _cachedAccentBrush;
+        _cachedCellBorderBrush = GetResourceBrush("SystemControlForegroundBaseMediumLowBrush") ?? Brushes.Gray;
+        _cachedBorderPen = new Pen(_cachedCellBorderBrush, BorderThickness);
+        _cachedCurrentBorderPen = new Pen(_cachedAccentBorderBrush, 2);
+        var isDark = ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+        _cachedUnreadTextBrush = isDark
+            ? new SolidColorBrush(Color.FromRgb(200, 200, 200))
+            : new SolidColorBrush(Color.FromRgb(60, 60, 60));
+        // Unread texts embed the foreground brush — must lazy-rebuild with new color
+        if (_cachedUnreadTexts != null)
+            Array.Clear(_cachedUnreadTexts, 0, _cachedUnreadTexts.Length);
     }
 
     private readonly List<PropertyChangedEventHandler> _handlers = [];
@@ -149,24 +193,16 @@ public class ChapterGridControl : Control
 
         if (_chapters == null || _chapters.Count == 0) return;
 
-        var accentBrush = GetResourceBrush("ThemeAccentColor") ?? Brushes.DodgerBlue;
-        var accentBorderBrush = GetResourceBrush("ThemeAccentBrush") ?? accentBrush;
-        var cellBorderBrush = GetResourceBrush("SystemControlForegroundBaseMediumLowBrush") ?? Brushes.Gray;
-        if (_cachedThemeVariant != ActualThemeVariant)
-        {
-            _cachedThemeVariant = ActualThemeVariant;
-            var isDark = ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
-            _cachedUnreadTextBrush = isDark
-                ? new SolidColorBrush(Color.FromRgb(200, 200, 200))
-                : new SolidColorBrush(Color.FromRgb(60, 60, 60));
-        }
-        IBrush normalForeground = _cachedUnreadTextBrush ?? new SolidColorBrush(Color.FromRgb(105, 105, 105));
-        var borderPen = new Pen(cellBorderBrush, BorderThickness);
-        var currentBorderPen = new Pen(accentBorderBrush, 2);
-        var hoverBrush = new SolidColorBrush(Color.FromArgb(0x18, 0x80, 0x80, 0x80));
-        var pressedBrush = new SolidColorBrush(Color.FromArgb(0x30, 0x80, 0x80, 0x80));
+        // Rebuild cached resources on theme change or first render
+        if (_cachedThemeVariant != ActualThemeVariant || _cachedBorderPen == null)
+            RebuildRenderResources();
 
-        var typeface = new Typeface(FontFamily.Default);
+        var borderPen = _cachedBorderPen!;
+        var currentBorderPen = _cachedCurrentBorderPen!;
+        IBrush normalForeground = _cachedUnreadTextBrush!;
+        var cellBrush = (IBrush?)_cachedCellBrush ?? _cachedAccentBrush ?? Brushes.DodgerBlue;
+
+        EnsureTextCacheSize(_chapters.Count);
 
         for (var i = 0; i < _chapters.Count; i++)
         {
@@ -177,18 +213,11 @@ public class ChapterGridControl : Control
 
             // Background
             if (cell.IsRead)
-            {
-                var brush = _cachedCellBrush ?? accentBrush;
-                context.DrawRectangle(brush, null, rect);
-            }
+                context.DrawRectangle(cellBrush, null, rect);
             else if (i == _pressedIndex)
-            {
-                context.DrawRectangle(pressedBrush, null, rect);
-            }
+                context.DrawRectangle(PressedBrush, null, rect);
             else if (i == _hoverIndex)
-            {
-                context.DrawRectangle(hoverBrush, null, rect);
-            }
+                context.DrawRectangle(HoverBrush, null, rect);
 
             // Border
             if (cell.IsCurrentChapter)
@@ -201,20 +230,28 @@ public class ChapterGridControl : Control
                 context.DrawRectangle(null, borderPen, rect);
             }
 
-            // Text
-            var text = new FormattedText(
-                cell.Number.ToString(),
-                CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight,
-                typeface,
-                9,
-                cell.IsRead ? Brushes.White : normalForeground);
+            // Text — lazy-built once per cell per display state, reused every frame
+            var text = cell.IsRead
+                ? (_cachedReadTexts![i] ??= CreateText(_chapters[i].Number, Brushes.White))
+                : (_cachedUnreadTexts![i] ??= CreateText(_chapters[i].Number, normalForeground));
 
             var textX = rect.X + (rect.Width - text.Width) / 2;
             var textY = rect.Y + (rect.Height - text.Height) / 2;
             context.DrawText(text, new Point(textX, textY));
         }
     }
+
+    private void EnsureTextCacheSize(int count)
+    {
+        if (_cachedTextCount == count) return;
+        _cachedReadTexts = new FormattedText?[count];
+        _cachedUnreadTexts = new FormattedText?[count];
+        _cachedTextCount = count;
+    }
+
+    private static FormattedText CreateText(int number, IBrush foreground) =>
+        new(number.ToString(), CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, DefaultTypeface, 9, foreground);
 
     private IBrush? GetResourceBrush(string key)
     {
