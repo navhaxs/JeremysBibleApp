@@ -142,7 +142,11 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     public async Task LoadTabBarVisibleFromStorageAsync()
     {
-        if (_localStorageProvider == null) return;
+        if (_localStorageProvider == null)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => this.RaisePropertyChanged(nameof(IsTabBarVisible)));
+            return;
+        }
         try
         {
             var stored = await _localStorageProvider.GetAsync(TabBarVisibleKey).ConfigureAwait(false);
