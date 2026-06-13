@@ -145,7 +145,6 @@ public partial class AppShellView : UserControl
         AttachedToVisualTree += OnAttachedToVisualTree;
 
         TrackAuthState();
-        UpdateTabBarVisibility();
     }
 
     private void AddTabInternal(ScriptureViewModel vm, bool makeActive)
@@ -355,7 +354,7 @@ public partial class AppShellView : UserControl
             if (args.PropertyName == nameof(AppViewModel.IsAuthenticating))
                 Dispatcher.UIThread.Post(UpdateSignInOverlayVisibility);
             if (args.PropertyName == nameof(AppViewModel.IsTabBarVisible))
-                Dispatcher.UIThread.Post(UpdateTabBarVisibility);
+                Dispatcher.UIThread.Post(() => UpdateTabBarVisibility());
         };
 
         _appVM.PropertyChanged += _authStateHandler;
@@ -1269,15 +1268,15 @@ public partial class AppShellView : UserControl
             ApplySplitSizing();
     }
 
-    private void UpdateTabBarVisibility()
+    private void UpdateTabBarVisibility(double? width = null)
     {
         if (_tabBar == null) return;
-        _tabBar.IsVisible = _appVM.IsTabBarVisible && Bounds.Width >= TabBarMinWidth;
+        _tabBar.IsVisible = _appVM.IsTabBarVisible && (width ?? Bounds.Width) >= TabBarMinWidth;
     }
 
     private void OnShellSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        UpdateTabBarVisibility();
+        UpdateTabBarVisibility(e.NewSize.Width);
     }
 
     private void ApplySplitSizing()
