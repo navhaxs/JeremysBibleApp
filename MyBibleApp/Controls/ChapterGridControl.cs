@@ -22,7 +22,9 @@ public class ChapterGridControl : Control
     private const double CellWidth = 26;
     private const double CellHeight = 22;
     private const double BorderThickness = 0.5;
-    private const int ColumnsPerRow = 10;
+    private const int FallbackColumnsPerRow = 10;
+
+    private int _columnsPerRow = FallbackColumnsPerRow;
 
     private const double TouchTapThreshold = 24;
 
@@ -179,8 +181,12 @@ public class ChapterGridControl : Control
         var count = _chapters?.Count ?? 0;
         if (count == 0) return default;
 
-        var rows = (int)Math.Ceiling((double)count / ColumnsPerRow);
-        var cols = Math.Min(count, ColumnsPerRow);
+        _columnsPerRow = double.IsInfinity(availableSize.Width) || availableSize.Width <= 0
+            ? FallbackColumnsPerRow
+            : Math.Max(1, (int)(availableSize.Width / CellWidth));
+
+        var rows = (int)Math.Ceiling((double)count / _columnsPerRow);
+        var cols = Math.Min(count, _columnsPerRow);
         return new Size(cols * CellWidth, rows * CellHeight);
     }
 
@@ -207,8 +213,8 @@ public class ChapterGridControl : Control
         for (var i = 0; i < _chapters.Count; i++)
         {
             var cell = _chapters[i];
-            var col = i % ColumnsPerRow;
-            var row = i / ColumnsPerRow;
+            var col = i % _columnsPerRow;
+            var row = i / _columnsPerRow;
             var rect = new Rect(col * CellWidth, row * CellHeight, CellWidth, CellHeight);
 
             // Background
@@ -272,9 +278,9 @@ public class ChapterGridControl : Control
         var col = (int)(position.X / CellWidth);
         var row = (int)(position.Y / CellHeight);
 
-        if (col < 0 || col >= ColumnsPerRow || row < 0) return -1;
+        if (col < 0 || col >= _columnsPerRow || row < 0) return -1;
 
-        var index = row * ColumnsPerRow + col;
+        var index = row * _columnsPerRow + col;
         return index >= 0 && index < _chapters.Count ? index : -1;
     }
 
@@ -329,8 +335,8 @@ public class ChapterGridControl : Control
                 if (releaseIndex == _pressedIndex && releaseIndex < _chapters.Count)
                 {
                     var cell = _chapters[releaseIndex];
-                    var col = releaseIndex % ColumnsPerRow;
-                    var row = releaseIndex / ColumnsPerRow;
+                    var col = releaseIndex % _columnsPerRow;
+                    var row = releaseIndex / _columnsPerRow;
                     var cellRect = new Rect(col * CellWidth, row * CellHeight, CellWidth, CellHeight);
                     CellClicked?.Invoke(this, cell);
                     RaiseEvent(new ChapterCellClickedEventArgs(cell, this, cellRect));

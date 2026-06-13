@@ -112,18 +112,17 @@
       </StackPanel>
     </Border>
 
-    <!-- ── Horizontally scrolling, vertically wrapping book cards ──────── -->
+    <!-- ── Two-column (OT | NT) vertically scrolling book cards ────────── -->
     <ScrollViewer Grid.Row="2"
                   x:Name="PanScrollViewer"
-                  HorizontalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto"
                   AllowAutoHide="True">
 
-      <StackPanel Orientation="Horizontal" Margin="16,12" Spacing="24"
-                  Background="Transparent">
+      <Grid ColumnDefinitions="*,*" Margin="16,12" ColumnSpacing="24">
 
         <!-- ── Old Testament ──────────────────────────────────────────── -->
-        <StackPanel Spacing="0" Background="Transparent">
+        <StackPanel Grid.Column="0" Spacing="0" Background="Transparent">
           <TextBlock Text="Old Testament"
                      FontSize="11"
                      FontWeight="SemiBold"
@@ -133,7 +132,7 @@
           <ItemsControl ItemsSource="{Binding OtBooks}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
-                <WrapPanel Orientation="Vertical" />
+                <StackPanel Orientation="Vertical" />
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
@@ -143,7 +142,7 @@
         </StackPanel>
 
         <!-- ── New Testament ──────────────────────────────────────────── -->
-        <StackPanel Spacing="0" Background="Transparent">
+        <StackPanel Grid.Column="1" Spacing="0" Background="Transparent">
           <TextBlock Text="New Testament"
                      FontSize="11"
                      FontWeight="SemiBold"
@@ -153,7 +152,7 @@
           <ItemsControl ItemsSource="{Binding NtBooks}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
-                <WrapPanel Orientation="Vertical" />
+                <StackPanel Orientation="Vertical" />
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
@@ -162,7 +161,7 @@
           </ItemsControl>
         </StackPanel>
 
-      </StackPanel>
+      </Grid>
 
     </ScrollViewer>
 
