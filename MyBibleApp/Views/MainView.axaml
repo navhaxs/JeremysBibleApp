@@ -266,6 +266,10 @@
                                         IsChecked="{Binding AppVM.IsDebugMode, Mode=TwoWay}"
                                         OffContent="Debug mode"
                                         OnContent="Debug mode" />
+                                    <ToggleSwitch
+                                        IsChecked="{Binding AppVM.IsTabBarVisible, Mode=TwoWay}"
+                                        OffContent="Show tab sidebar"
+                                        OnContent="Show tab sidebar" />
                                     <Rectangle
                                         Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
                                         Height="1"
