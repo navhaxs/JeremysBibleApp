@@ -1767,6 +1767,13 @@ public partial class MainView : UserControl
     public void RemoveChapterStrokes(int chapter) =>
         _inkOverlay?.RemoveChapterStrokes(chapter);
 
+    /// <summary>Atomically replaces strokes for one chapter (with legacy anchor migration). No global clear.</summary>
+    public void ReplaceChapterStrokes(int chapter, IReadOnlyList<JournalInkStroke> strokes)
+    {
+        var migrated = InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
+        _inkOverlay?.ReplaceChapterStrokes(chapter, migrated);
+    }
+
     private IReadOnlyList<JournalInkStroke> MigrateStrokeAnchors(IReadOnlyList<JournalInkStroke> strokes) =>
         InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
 
@@ -1951,6 +1958,27 @@ public partial class MainView : UserControl
         vm.AppVM.SelectedThemeId = themeId;
         var theme = Models.AppTheme.GetById(themeId);
         ApplyTheme(theme);
+
+        // If the flyout is currently open, force the FlyoutPresenter background to update
+        // immediately — DynamicResource propagation from a theme-variant change doesn't
+        // reach the PopupRoot's presenter while it's open.
+        // if (_appMenuButton?.Flyout is Flyout { IsOpen: true } openFlyout)
+        // {
+        //     var newBg = new SolidColorBrush(theme.BackgroundOverride ?? theme.SwatchColor);
+        //     if (openFlyout.Content is Visual contentRoot)
+        //     {
+        //         Visual? node = contentRoot;
+        //         while (node != null)
+        //         {
+        //             if (node is FlyoutPresenter presenter)
+        //             {
+        //                 presenter.Background = newBg;
+        //                 break;
+        //             }
+        //             node = node.VisualParent;
+        //         }
+        //     }
+        // }
 
         // Update swatch borders to highlight the active one.
         if (_themeSwatchPanel == null) return;

@@ -18,6 +18,7 @@ public class SyncProgressEventArgs : EventArgs
     public int Progress { get; set; }
     public bool IsCompleted { get; set; }
     public bool IsError { get; set; }
+    public bool JournalChanged { get; set; }
 }
 
 /// <summary>
@@ -526,7 +527,7 @@ public class SyncCoordinator : ISyncCoordinator
             }
 
             var hadChanges = pulledBibleReading != null || hadJournalChanges;
-            RaiseSyncProgress(false, hadChanges ? "Sync complete — remote changes applied." : "Sync complete — up to date.", 100);
+            RaiseSyncProgress(false, hadChanges ? "Sync complete — remote changes applied." : "Sync complete — up to date.", 100, hadJournalChanges);
 
             return PullResult.Success(pulledBibleReading != null, bibleReading: pulledBibleReading, hadJournalChanges: hadJournalChanges);
         }
@@ -684,7 +685,7 @@ public class SyncCoordinator : ISyncCoordinator
         RaiseSyncProgress(status.IsSyncing, status.StatusMessage, status.ProgressPercentage);
     }
 
-    private void RaiseSyncProgress(bool isSyncing, string message, int progress)
+    private void RaiseSyncProgress(bool isSyncing, string message, int progress, bool journalChanged = false)
     {
         SyncProgress?.Invoke(this, new SyncProgressEventArgs
         {
@@ -692,7 +693,8 @@ public class SyncCoordinator : ISyncCoordinator
             Message = message,
             Progress = progress,
             IsCompleted = !isSyncing && progress == 100,
-            IsError = message.Contains("error", StringComparison.OrdinalIgnoreCase)
+            IsError = message.Contains("error", StringComparison.OrdinalIgnoreCase),
+            JournalChanged = journalChanged
         });
     }
 

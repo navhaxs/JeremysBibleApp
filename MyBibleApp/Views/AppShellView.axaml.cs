@@ -1199,6 +1199,32 @@ public partial class AppShellView : UserControl
         }
     }
 
+    /// <summary>
+    /// Reloads ink strokes after a sync pull, replacing each chapter atomically so strokes
+    /// never flash blank between the clear and the async re-fill.
+    /// </summary>
+    private async Task SyncReloadWindowedInkStrokesAsync()
+    {
+        if (_primaryView == null || _activeTabIndex < 0 || _activeTabIndex >= _tabs.Count) return;
+        var vm = _tabs[_activeTabIndex];
+
+        foreach (var cts in _pendingChapterLoads.Values) { cts.Cancel(); cts.Dispose(); }
+        _pendingChapterLoads.Clear();
+
+        var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
+        var bookCode  = _primaryView.CurrentBookCode.Length > 0 ? _primaryView.CurrentBookCode : vm.BookCode;
+
+        for (var ch = _primaryView.WindowStart + 1; ch <= _primaryView.WindowEnd; ch++)
+        {
+            if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm)
+                return;
+            var strokes = journalId != null
+                ? await SharedSyncRuntime.Instance.JournalStore.GetInkStrokesAsync(journalId, bookCode, ch)
+                : (IReadOnlyList<JournalInkStroke>)[];
+            _primaryView.ReplaceChapterStrokes(ch, strokes);
+        }
+    }
+
     // ── Split management ──────────────────────────────────────────────────────
 
     private void OnSplitToggled(object? sender, bool turnOn)
@@ -1332,8 +1358,8 @@ public partial class AppShellView : UserControl
             if (startupOverlay?.IsVisible == true)
                 UpdateStartupOverlay("Loading...", e.Message, e.Progress);
 
-            if (e.IsCompleted && !e.IsError)
-                await ReloadWindowedInkStrokesAsync();
+            if (e.IsCompleted && !e.IsError && e.JournalChanged)
+                await SyncReloadWindowedInkStrokesAsync();
         });
     }
 

@@ -434,6 +434,39 @@ public class InkOverlayCanvas : Control
             Redraw();
     }
 
+    /// <summary>
+    /// Atomically replaces strokes for one chapter without clearing other chapters.
+    /// Avoids the flash caused by a global clear followed by an async chapter reload.
+    /// </summary>
+    public void ReplaceChapterStrokes(int chapter, IReadOnlyList<JournalInkStroke> strokes)
+    {
+        _cachedStrokes.RemoveAll(s => s.AnchorChapter == chapter);
+        foreach (var stroke in strokes)
+        {
+            var pts = stroke.Points.Select(p => new Point(p.X, p.Y)).ToList();
+            var color = Color.Parse(stroke.Color.Length > 0 ? stroke.Color : "#FF000000");
+            if (pts.Count == 0) continue;
+
+            if (pts.Count == 1)
+            {
+                var p = pts[0];
+                _cachedStrokes.Add(new StrokeCache(
+                    p, new Rect(p.X - 2, p.Y - 2, 4, 4),
+                    color, stroke.StrokeWidth, stroke.IsHighlight, null,
+                    stroke.AnchorChapter, stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id));
+            }
+            else
+            {
+                _cachedStrokes.Add(new StrokeCache(
+                    default, ComputeBounds(pts),
+                    color, stroke.StrokeWidth, stroke.IsHighlight, pts,
+                    stroke.AnchorChapter, stroke.AnchorParagraphIndex, stroke.AnchorContentTop, stroke.Id,
+                    CachedPath: BuildSmoothPath(pts)));
+            }
+        }
+        Redraw();
+    }
+
     /// <summary>Reverses the most recent draw or erase action.</summary>
     public void UndoStroke()
     {
