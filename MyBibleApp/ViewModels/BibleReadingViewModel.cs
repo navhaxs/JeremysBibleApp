@@ -134,11 +134,15 @@ public class BibleReadingViewModel : ViewModelBase
         }
         catch { yield break; }
 
+        var index = 0;
         foreach (var code in orderedCodes)
         {
             var name     = names.TryGetValue(code, out var n) ? n : code;
             var chapters = chapterCounts.TryGetValue(code, out var c) ? c : 1;
-            yield return new BibleReadingBookEntry(code, name, chapters);
+            var isOt     = index < 39;
+            var bookIndex = isOt ? index : index - 39;
+            yield return new BibleReadingBookEntry(code, name, chapters, isOt, bookIndex);
+            index++;
         }
     }
 
