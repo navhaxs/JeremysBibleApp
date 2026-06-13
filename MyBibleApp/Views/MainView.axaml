@@ -231,6 +231,7 @@
 
                     <!--  Main app menu button  -->
                     <Button
+                        x:Name="AppMenuButton"
                         Classes="tool-btn"
                         Grid.Column="0"
                         VerticalAlignment="Center">

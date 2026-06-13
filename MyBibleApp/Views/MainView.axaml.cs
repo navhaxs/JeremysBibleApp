@@ -31,6 +31,7 @@ public partial class MainView : UserControl
     private readonly SelectableTextBlock _footnoteTextBlock;
     private ListBox? _paragraphList;
     private ToggleButton? _annotationToggle;
+    private Button? _appMenuButton;
     private StackPanel? _themeSwatchPanel;
     private ToggleButton? _splitViewToggle;
     private Button? _headerLookupButton;
@@ -207,6 +208,7 @@ public partial class MainView : UserControl
             this.AddHandler(KeyDownEvent, OnReaderKeyDown, RoutingStrategies.Tunnel);
         }
         _annotationToggle = this.FindControl<ToggleButton>("AnnotationToggle");
+        _appMenuButton    = this.FindControl<Button>("AppMenuButton");
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
@@ -1970,11 +1972,10 @@ public partial class MainView : UserControl
         if (Application.Current == null) return;
         Application.Current.RequestedThemeVariant = theme.Variant;
 
-        // Apply or clear background/foreground overrides on the application resources.
-        if (theme.BackgroundOverride is { } bg)
-            Application.Current.Resources["ThemeBackgroundBrush"] = new SolidColorBrush(bg);
-        else
-            Application.Current.Resources.Remove("ThemeBackgroundBrush");
+        // Always set ThemeBackgroundBrush so open DynamicResource bindings (e.g. Flyout PopupRoot)
+        // update immediately — Application resource changes propagate; variant-fallback removal does not.
+        Application.Current.Resources["ThemeBackgroundBrush"] =
+            new SolidColorBrush(theme.BackgroundOverride ?? theme.SwatchColor);
 
         if (theme.ForegroundOverride is { } fg)
             Application.Current.Resources["ThemeForegroundBrush"] = new SolidColorBrush(fg);
