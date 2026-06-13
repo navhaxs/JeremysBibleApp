@@ -606,6 +606,7 @@
                     Cursor="Arrow"
                     Grid.Row="0"
                     HorizontalAlignment="Right"
+                    PointerCaptureLost="OnProgressTrackPointerCaptureLost"
                     PointerMoved="OnProgressTrackPointerMoved"
                     PointerPressed="OnProgressTrackPointerPressed"
                     PointerReleased="OnProgressTrackPointerReleased"

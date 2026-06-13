@@ -1012,6 +1012,17 @@ public partial class MainView : UserControl
         e.Handled = true;
     }
 
+    private void OnProgressTrackPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (!_isPressedOnTrack) return;
+        _isPressedOnTrack = false;
+        _isDraggingProgressBar = false;
+        if (_chapterMarkersCanvas != null)
+            _chapterMarkersCanvas.IsVisible = false;
+        if (!PlatformHelper.IsDesktop)
+            ShowScrollbarBriefly();
+    }
+
     // ── Mobile scrollbar auto-hide ────────────────────────────────────────────
 
     private void OnListBoxTapped(object? sender, TappedEventArgs e) =>
