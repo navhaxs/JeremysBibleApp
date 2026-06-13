@@ -8,12 +8,12 @@ public static class BibleBookGroups
 
     private static readonly GroupColors Pentateuch    = new(Color.Parse("#4A5E2E"), Color.Parse("#B8CE80"), Color.Parse("#6A8A4A"));
     private static readonly GroupColors Historical    = new(Color.Parse("#7A8A2E"), Color.Parse("#D8E880"), Color.Parse("#9AAA4A"));
-    private static readonly GroupColors Poetry        = new(Color.Parse("#5A4A8A"), Color.Parse("#C8BEFF"), Color.Parse("#7A6AAA"));
-    private static readonly GroupColors MajorProphets = new(Color.Parse("#2A4A7A"), Color.Parse("#A0C0F0"), Color.Parse("#4A6A9A"));
-    private static readonly GroupColors MinorProphets = new(Color.Parse("#5A6A2E"), Color.Parse("#C0D070"), Color.Parse("#7A8A4A"));
-    private static readonly GroupColors GospelsActs   = new(Color.Parse("#8A2A6A"), Color.Parse("#FFB0E0"), Color.Parse("#AA4A8A"));
-    private static readonly GroupColors PaulsLetters  = new(Color.Parse("#8A5A18"), Color.Parse("#FFD080"), Color.Parse("#C07A28"));
-    private static readonly GroupColors GeneralRev    = new(Color.Parse("#6A7A28"), Color.Parse("#D0E060"), Color.Parse("#8A9A48"));
+    private static readonly GroupColors Poetry        = new(Color.Parse("#4E3C82"), Color.Parse("#C8BEFF"), Color.Parse("#6E5CA8"));
+    private static readonly GroupColors MajorProphets = new(Color.Parse("#1E3A6E"), Color.Parse("#9AB8F0"), Color.Parse("#3A5A90"));
+    private static readonly GroupColors MinorProphets = new(Color.Parse("#4E5E22"), Color.Parse("#C0D070"), Color.Parse("#6E7E38"));
+    private static readonly GroupColors GospelsActs   = new(Color.Parse("#921870"), Color.Parse("#FFB0E8"), Color.Parse("#C03898"));
+    private static readonly GroupColors PaulsLetters  = new(Color.Parse("#9A4A08"), Color.Parse("#FFD080"), Color.Parse("#CC6A20"));
+    private static readonly GroupColors GeneralRev    = new(Color.Parse("#8A6A00"), Color.Parse("#F0D060"), Color.Parse("#B89010"));
 
     public static (Color LabelBg, Color LabelFg, Color CellColor) GetGroupColors(bool isOt, int bookIndex)
     {
