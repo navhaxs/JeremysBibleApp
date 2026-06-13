@@ -303,26 +303,53 @@ public class SyncCoordinator : ISyncCoordinator
         await PullFromDriveAsync().ConfigureAwait(false);
     }
 
+    private const int DrainItemTimeoutSeconds = 30;
+
     /// <summary>
-    /// Drains the pending queue without emitting its own progress events.
-    /// Used by PullFromDriveAsync so the caller controls progress messaging.
+    /// Drains the pending queue. Each item is given <see cref="DrainItemTimeoutSeconds"/> seconds
+    /// before it is skipped and an error is logged, preventing an indefinite UI hang when a Drive
+    /// call stalls. Pass a cancellation token to abort the whole drain early (e.g. on lifecycle
+    /// suspend or auto-sync cancellation).
     /// </summary>
-    private async Task<int> DrainQueueAsync(List<SyncQueueItem>? pendingOps = null, bool reportProgress = false)
+    private async Task<int> DrainQueueAsync(
+        List<SyncQueueItem>? pendingOps = null,
+        bool reportProgress = false,
+        CancellationToken cancellationToken = default)
     {
         pendingOps ??= await _queueManager.GetPendingOperationsAsync().ConfigureAwait(false);
 
         var processedCount = 0;
         foreach (var op in pendingOps)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
                 if (reportProgress)
                     RaiseSyncProgress(
                         true,
-                        $"Saving {processedCount + 1} of {pendingOps.Count}: {DescribeOperation(op.OperationType)}...",
+                        $"Uploading {processedCount + 1} of {pendingOps.Count}: {DescribeOperation(op.OperationType)}...",
                         CalculateProgress(processedCount, pendingOps.Count));
 
-                var result = await ProcessQueuedOperationAsync(op).ConfigureAwait(false);
+                using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                itemCts.CancelAfter(TimeSpan.FromSeconds(DrainItemTimeoutSeconds));
+
+                var operationTask = ProcessQueuedOperationAsync(op);
+                var completedTask = await Task.WhenAny(operationTask, Task.Delay(Timeout.Infinite, itemCts.Token))
+                    .ConfigureAwait(false);
+
+                if (completedTask != operationTask)
+                {
+                    // Per-item timeout fired (or caller CT cancelled — let ThrowIfCancellationRequested handle caller CT next iteration)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var msg = $"Upload timed out after {DrainItemTimeoutSeconds}s: {DescribeOperation(op.OperationType)}";
+                    System.Diagnostics.Debug.WriteLine(msg);
+                    if (reportProgress)
+                        RaiseSyncProgress(true, msg, CalculateProgress(processedCount, pendingOps.Count));
+                    continue;
+                }
+
+                var result = await operationTask.ConfigureAwait(false);
                 if (result.IsSuccess)
                     await _queueManager.MarkAsSyncedAsync(op.Id).ConfigureAwait(false);
 
@@ -331,8 +358,12 @@ public class SyncCoordinator : ISyncCoordinator
                 if (reportProgress)
                     RaiseSyncProgress(
                         true,
-                        $"Saved {processedCount} of {pendingOps.Count}: {DescribeOperation(op.OperationType)}.",
+                        $"Uploaded {processedCount} of {pendingOps.Count}: {DescribeOperation(op.OperationType)}.",
                         CalculateProgress(processedCount, pendingOps.Count));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -462,12 +493,12 @@ public class SyncCoordinator : ISyncCoordinator
                 }
             }
 
-            // ── Push any locally-pending changes (silently — PullFromDriveAsync owns progress) ──
+            // ── Push any locally-pending changes ──
             var pendingOps = await _queueManager.GetPendingOperationsAsync().ConfigureAwait(false);
             if (pendingOps.Count > 0)
             {
-                RaiseSyncProgress(true, "Uploading local changes to Drive...", 80);
-                await DrainQueueAsync(pendingOps).ConfigureAwait(false);
+                RaiseSyncProgress(true, $"Uploading {pendingOps.Count} local change(s) to Drive...", 80);
+                await DrainQueueAsync(pendingOps, reportProgress: true, cancellationToken: _autoSyncCts?.Token ?? CancellationToken.None).ConfigureAwait(false);
             }
 
             var hadChanges = pulledBibleReading != null;
