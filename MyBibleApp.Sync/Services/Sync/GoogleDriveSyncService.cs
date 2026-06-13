@@ -197,28 +197,31 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
         if (DriveService == null)
             throw new InvalidOperationException("Drive service not available");
 
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
         var fileId = await FindFileByNameAsync(fileName).ConfigureAwait(false);
 
+        Google.Apis.Upload.IUploadProgress progress;
         if (string.IsNullOrEmpty(fileId))
         {
-            // Create new file
             var fileMetadata = new Google.Apis.Drive.v3.Data.File()
             {
                 Name = fileName,
                 Parents = new List<string> { AppDataFolderParent }
             };
-
-            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+            using var stream = new MemoryStream(bytes);
             var request = DriveService.Files.Create(fileMetadata, stream, "application/json");
-            await request.UploadAsync().ConfigureAwait(false);
+            progress = await request.UploadAsync().ConfigureAwait(false);
         }
         else
         {
-            // Update existing file
-            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
+            using var stream = new MemoryStream(bytes);
             var request = DriveService.Files.Update(new Google.Apis.Drive.v3.Data.File(), fileId, stream, "application/json");
-            await request.UploadAsync().ConfigureAwait(false);
+            progress = await request.UploadAsync().ConfigureAwait(false);
         }
+
+        if (progress.Status == Google.Apis.Upload.UploadStatus.Failed)
+            throw new InvalidOperationException(
+                $"Drive upload failed ({fileName}): {progress.Exception?.Message ?? "Unknown error"}");
     }
 
     private async Task<string?> GetFileContentAsync(string fileName)
@@ -248,7 +251,10 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
     public async Task<Dictionary<string, DateTime?>> GetFileModifiedTimesAsync()
     {
         if (DriveService == null)
+        {
+            System.Diagnostics.Debug.WriteLine("[Sync] GetFileModifiedTimesAsync: DriveService is null");
             return [];
+        }
 
         try
         {
@@ -260,11 +266,13 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
             var result = await request.ExecuteAsync().ConfigureAwait(false);
             return result.Files?
                 .Where(f => f.Name != null)
-                .ToDictionary(f => f.Name, f => f.ModifiedTimeDateTimeOffset?.UtcDateTime as DateTime?)
+                .GroupBy(f => f.Name)
+                .ToDictionary(g => g.Key, g => g.First().ModifiedTimeDateTimeOffset?.UtcDateTime as DateTime?)
                 ?? [];
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[Sync] GetFileModifiedTimesAsync failed: {ex.Message}");
             return [];
         }
     }
@@ -320,8 +328,9 @@ public class GoogleDriveSyncService : IGoogleDriveSyncService
             var result = await request.ExecuteAsync().ConfigureAwait(false);
             return result.Files?.Count > 0 ? result.Files[0].Id : null;
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[Sync] FindFileByNameAsync({fileName}) failed: {ex.Message}");
             return null;
         }
     }

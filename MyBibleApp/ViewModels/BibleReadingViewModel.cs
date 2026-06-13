@@ -107,6 +107,7 @@ public class BibleReadingViewModel : ViewModelBase
             foreach (var cell in book.Chapters)
                 cell.IsRead = readSet.Contains(cell.Number);
         }
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => LastUpdated = DateTime.Now);
         // Persist the applied state locally so it survives restart without re-pulling.
         _ = SaveReadStateAsync(BuildReadChaptersDict());
         if (AppVM.IsDebugMode) _ = RefreshSyncDebugInfoAsync();
