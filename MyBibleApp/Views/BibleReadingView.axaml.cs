@@ -32,6 +32,8 @@ public partial class BibleReadingView : UserControl
     public event EventHandler<ChapterNavigationEventArgs>? ChapterNavigationRequested;
 
     private TextBlock? _progressSummary;
+    private Grid? _booksGrid;
+    private ScrollViewer? _panScrollViewer;
 
     public BibleReadingView()
     {
@@ -42,6 +44,11 @@ public partial class BibleReadingView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _progressSummary = this.FindControl<TextBlock>("ProgressSummary");
+        _booksGrid = this.FindControl<Grid>("BooksGrid");
+        _panScrollViewer = this.FindControl<ScrollViewer>("PanScrollViewer");
+
+        _panScrollViewer!.LayoutUpdated += (_, _) => UpdateBooksGridWidth();
+
         UpdateProgressSummary();
 
         // Refresh the summary when LastUpdated is set by the async load.
@@ -145,6 +152,19 @@ public partial class BibleReadingView : UserControl
     {
         if (DataContext is BibleReadingViewModel vm)
             vm.AppVM.ForceSync();
+    }
+
+    // ── Responsive width ──────────────────────────────────────────────────────
+
+    private const double MinBooksGridWidth = 600;
+
+    private void UpdateBooksGridWidth()
+    {
+        if (_booksGrid == null || _panScrollViewer == null) return;
+        var viewportWidth = _panScrollViewer.Viewport.Width;
+        if (viewportWidth <= 0) return;
+        var hMargin = _booksGrid.Margin.Left + _booksGrid.Margin.Right;
+        _booksGrid.Width = Math.Max(MinBooksGridWidth, viewportWidth - hMargin);
     }
 
     // ── Close ─────────────────────────────────────────────────────────────────

@@ -481,6 +481,7 @@
                 VerticalScrollBarVisibility="Disabled"
                 x:Name="ContentHScrollContainer">
             <Grid
+                Background="Transparent"
                 Margin="0,0,0,0"
                 RowDefinitions="*"
                 x:Name="InkAreaGrid">
@@ -637,6 +638,28 @@
                     Width="52"
                     ZIndex="19"
                     x:Name="ChapterMarkersCanvas" />
+
+                <!--  Margin touch zones — transparent hit targets that capture finger scroll
+                      in the left/right margins where the ListBox has no hittable content.
+                      ZIndex=5: above ListBox (0) but below InkOverlay (10, IsHitTestVisible=False). -->
+                <Border
+                    Grid.Row="0"
+                    Background="Transparent"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Stretch"
+                    Width="24"
+                    ZIndex="5"
+                    IsHitTestVisible="False"
+                    x:Name="LeftMarginTouchZone" />
+                <Border
+                    Grid.Row="0"
+                    Background="Transparent"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Stretch"
+                    Width="64"
+                    ZIndex="5"
+                    IsHitTestVisible="False"
+                    x:Name="RightMarginTouchZone" />
 
             </Grid>
             </ScrollViewer>

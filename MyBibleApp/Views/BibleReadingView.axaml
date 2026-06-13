@@ -121,11 +121,11 @@
     <!-- ── Two-column (OT | NT) vertically scrolling book cards ────────── -->
     <ScrollViewer Grid.Row="2"
                   x:Name="PanScrollViewer"
-                  HorizontalScrollBarVisibility="Disabled"
+                  HorizontalScrollBarVisibility="Auto"
                   VerticalScrollBarVisibility="Auto"
                   AllowAutoHide="True">
 
-      <Grid ColumnDefinitions="*,*" Margin="16,12" ColumnSpacing="24">
+      <Grid x:Name="BooksGrid" ColumnDefinitions="*,*" Margin="16,12" ColumnSpacing="24">
 
         <!-- ── Old Testament ──────────────────────────────────────────── -->
         <StackPanel Grid.Column="0" Spacing="0" Background="Transparent">

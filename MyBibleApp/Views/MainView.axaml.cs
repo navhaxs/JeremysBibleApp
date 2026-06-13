@@ -134,6 +134,13 @@ public partial class MainView : UserControl
     private Point _lastMousePosition;
     private bool _isTouchPanning;
     private Point _lastTouchPosition;
+    private readonly List<(double Y, long Ticks)> _touchVelocitySamples = [];
+    private readonly List<(double Y, long Ticks)> _textScrollVelocitySamples = [];
+    private CancellationTokenSource? _textInertiaDebounceCts;
+    private DispatcherTimer? _inertiaTimer;
+    private double _inertiaVelocity;
+    private Border? _leftMarginTouchZone;
+    private Border? _rightMarginTouchZone;
     private bool _suppressReaderProgressSync;
     private bool _suppressScrollEventsForTabSwitch;
     private double? _pendingScrollRestoreY;
@@ -311,12 +318,20 @@ public partial class MainView : UserControl
         _paragraphList.AddHandler(PointerReleasedEvent, OnListBoxMouseReleased,
             handledEventsToo: true);
 
-        // ── Margin touch panning (journal mode: finger drag outside text column) ──
+        // ── Margin touch panning ────────────────────────────────────────────────
+        _leftMarginTouchZone  = this.FindControl<Border>("LeftMarginTouchZone");
+        _rightMarginTouchZone = this.FindControl<Border>("RightMarginTouchZone");
+
+        // Tunnel fires on this UserControl BEFORE any child (ListBox, ScrollViewer, etc.)
+        // can claim the event. This is the most reliable way to intercept margin touches
+        // on Android where child event routing is unpredictable.
+        this.AddHandler(PointerPressedEvent, OnMarginTouchPressed,
+            routes: RoutingStrategies.Tunnel, handledEventsToo: true);
+
         if (_inkAreaGrid != null)
         {
-            _inkAreaGrid.AddHandler(PointerPressedEvent, OnMarginTouchPressed, handledEventsToo: false);
-            _inkAreaGrid.AddHandler(PointerMovedEvent, OnMarginTouchMoved, handledEventsToo: false);
-            _inkAreaGrid.AddHandler(PointerReleasedEvent, OnMarginTouchReleased, handledEventsToo: false);
+            _inkAreaGrid.AddHandler(PointerMovedEvent, OnMarginTouchMoved, handledEventsToo: true);
+            _inkAreaGrid.AddHandler(PointerReleasedEvent, OnMarginTouchReleased, handledEventsToo: true);
             // Forward unhandled wheel events from the margins to the scroll viewer.
             // When the pointer is over the ListBox, its internal ScrollViewer marks
             // the event handled; handledEventsToo:false means we only see margin hits.
@@ -364,6 +379,13 @@ public partial class MainView : UserControl
         _paragraphScrollViewer = sv;
         _paragraphScrollViewer.ScrollChanged += OnParagraphScrollChanged;
         _isScrollTrackingAttached = true;
+
+        var scp = sv.GetVisualDescendants().OfType<ScrollContentPresenter>().FirstOrDefault();
+        if (scp != null)
+        {
+            foreach (var r in scp.GestureRecognizers.OfType<ScrollGestureRecognizer>())
+                r.IsScrollInertiaEnabled = false;
+        }
 
         // Keep the paragraph-position cache fresh for as long as the view lives.
         // The cache (_chapterStartY / _chapterLocalTops) must be rebuilt after
@@ -426,6 +448,31 @@ public partial class MainView : UserControl
 
         _lastScrollOffset = currentOffset;
         _lastScrollTime = now;
+
+        // Track velocity for custom text-area inertia (skip when inertia is self-driving offsets)
+        if (!_isTouchPanning && !_isDraggingProgressBar && _inertiaTimer == null)
+        {
+            var prevY = _textScrollVelocitySamples.Count > 0 ? _textScrollVelocitySamples[^1].Y : currentOffset;
+            if (Math.Abs(currentOffset - prevY) < 200)
+            {
+                _textScrollVelocitySamples.Add((currentOffset, DateTime.UtcNow.Ticks));
+                if (_textScrollVelocitySamples.Count > 5)
+                    _textScrollVelocitySamples.RemoveAt(0);
+            }
+
+            _textInertiaDebounceCts?.Cancel();
+            _textInertiaDebounceCts = new CancellationTokenSource();
+            var debounceCts = _textInertiaDebounceCts;
+            _ = Task.Delay(40, debounceCts.Token).ContinueWith(t =>
+            {
+                if (t.IsCanceled) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (!_isTouchPanning && _inertiaTimer == null)
+                        StartTextInertiaFromSamples();
+                });
+            }, TaskScheduler.Default);
+        }
 
         // Reset the "scroll stopped" timer — hide markers after scrolling stops.
         _scrollStopCts?.Cancel();
@@ -2121,25 +2168,72 @@ public partial class MainView : UserControl
 
     // ── Margin touch panning ─────────────────────────────────────────────────
 
+    private void MarginLog(string msg)
+    {
+        if (DataContext is ScriptureViewModel vm)
+            Dispatcher.UIThread.Post(() => vm.AppVM.AppendSyncDebugLog($"[Margin] {msg}"));
+    }
+
     private void OnMarginTouchPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.Pointer.Type != PointerType.Touch) return;
-        if (_inkAreaGrid == null || _paragraphList == null) return;
+        MarginLog($"Pressed type={e.Pointer.Type} inkGrid={_inkAreaGrid != null} sv={_paragraphScrollViewer != null}");
 
-        // Only activate when the touch lands outside the text column.
+        // Any pointer press stops custom inertia — mirrors native recognizer behavior.
+        StopInertia();
+
+        if (e.Pointer.Type != PointerType.Touch) return;
+        if (_inkAreaGrid == null) return;
+
         var pos = e.GetPosition(_inkAreaGrid);
-        if (_paragraphList.Bounds.Contains(pos)) return;
+        var h = _inkAreaGrid.Bounds.Height;
+
+        // Use the ListBox's actual bounds in InkAreaGrid coordinates.
+        // When a journal layout sets MaxWidth, the ListBox is centered and its
+        // Bounds.Left > 0, so the visual left margin is wider than the template's 24px.
+        var listLeft  = _paragraphList?.Bounds.Left  ?? 0;
+        var listRight = _paragraphList?.Bounds.Right ?? _inkAreaGrid.Bounds.Width;
+        var textLeft  = listLeft  + 24;
+        var textRight = listRight - 64;
+
+        MarginLog($"pos=({pos.X:F0},{pos.Y:F0}) listL={listLeft:F0} listR={listRight:F0} textL={textLeft:F0} textR={textRight:F0}");
+
+        // Only activate in the left/right margin columns (not the text body).
+        if (pos.X >= textLeft && pos.X <= textRight)
+        {
+            MarginLog("SKIP: in text body");
+            return;
+        }
+
+        // Also ignore touches above or below the InkAreaGrid (header row, etc.)
+        if (pos.Y < 0 || pos.Y > h)
+        {
+            MarginLog("SKIP: outside grid Y");
+            return;
+        }
+
+        MarginLog("ACTIVATE margin pan");
+        StopInertia();
+        _touchVelocitySamples.Clear();
+        _touchVelocitySamples.Add((pos.Y, DateTime.UtcNow.Ticks));
 
         _isTouchPanning = true;
-        _lastTouchPosition = e.GetPosition(_inkAreaGrid);
+        _lastTouchPosition = pos;
         e.Pointer.Capture(_inkAreaGrid);
         e.Handled = true;
     }
 
+    private bool _loggedFirstMove;
+
     private void OnMarginTouchMoved(object? sender, PointerEventArgs e)
     {
-        if (!_isTouchPanning || _paragraphScrollViewer == null) return;
+        if (!_isTouchPanning)
+        {
+            if (!_loggedFirstMove) { MarginLog($"Moved but _isTouchPanning=false type={e.Pointer.Type}"); _loggedFirstMove = true; }
+            return;
+        }
+        _loggedFirstMove = false;
         if (e.Pointer.Type != PointerType.Touch) return;
+        if (_paragraphScrollViewer == null) { MarginLog("Moved: sv null"); return; }
 
         var currentPos = e.GetPosition(_inkAreaGrid);
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
@@ -2148,17 +2242,85 @@ public partial class MainView : UserControl
         var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + deltaY, 0, maxY);
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
 
+        _touchVelocitySamples.Add((currentPos.Y, DateTime.UtcNow.Ticks));
+        if (_touchVelocitySamples.Count > 5)
+            _touchVelocitySamples.RemoveAt(0);
+
         _lastTouchPosition = currentPos;
         e.Handled = true;
     }
 
     private void OnMarginTouchReleased(object? sender, PointerReleasedEventArgs e)
     {
+        MarginLog($"Released _isTouchPanning={_isTouchPanning} type={e.Pointer.Type}");
         if (!_isTouchPanning || e.Pointer.Type != PointerType.Touch) return;
 
         _isTouchPanning = false;
         e.Pointer.Capture(null);
         e.Handled = true;
+
+        StartInertiaFromSamples();
+    }
+
+    private void StartInertiaFromSamples()
+    {
+        if (_touchVelocitySamples.Count < 2 || _paragraphScrollViewer == null) return;
+
+        var first = _touchVelocitySamples[0];
+        var last  = _touchVelocitySamples[^1];
+        var dtSec = (last.Ticks - first.Ticks) / (double)TimeSpan.TicksPerSecond;
+        if (dtSec <= 0) return;
+
+        // px/frame at 60fps; positive = scrolling down
+        var pxPerSec = (first.Y - last.Y) / dtSec;
+        _inertiaVelocity = pxPerSec / 60.0;
+
+        if (Math.Abs(_inertiaVelocity) < 1.0) return;
+
+        _inertiaTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _inertiaTimer.Tick += OnInertiaTick;
+        _inertiaTimer.Start();
+    }
+
+    private void OnInertiaTick(object? sender, EventArgs e)
+    {
+        if (_paragraphScrollViewer == null) { StopInertia(); return; }
+
+        _inertiaVelocity *= 0.88; // friction
+        if (Math.Abs(_inertiaVelocity) < 0.5) { StopInertia(); return; }
+
+        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+        var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + _inertiaVelocity, 0, maxY);
+        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+
+        if (newOffset <= 0 || newOffset >= maxY) StopInertia();
+    }
+
+    private void StartTextInertiaFromSamples()
+    {
+        if (_textScrollVelocitySamples.Count < 2 || _paragraphScrollViewer == null) return;
+        StopInertia();
+        var first = _textScrollVelocitySamples[0];
+        var last  = _textScrollVelocitySamples[^1];
+        var dtSec = (last.Ticks - first.Ticks) / (double)TimeSpan.TicksPerSecond;
+        if (dtSec <= 0) return;
+        var pxPerSec = (last.Y - first.Y) / dtSec;
+        _inertiaVelocity = pxPerSec / 60.0;
+        if (Math.Abs(_inertiaVelocity) < 1.0) return;
+        _inertiaTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _inertiaTimer.Tick += OnInertiaTick;
+        _inertiaTimer.Start();
+    }
+
+    private void StopInertia()
+    {
+        if (_inertiaTimer == null) return;
+        _inertiaTimer.Stop();
+        _inertiaTimer.Tick -= OnInertiaTick;
+        _inertiaTimer = null;
+        _inertiaVelocity = 0;
+        _textInertiaDebounceCts?.Cancel();
+        _textScrollVelocitySamples.Clear();
     }
 
     private void OnReaderKeyDown(object? sender, KeyEventArgs e)
