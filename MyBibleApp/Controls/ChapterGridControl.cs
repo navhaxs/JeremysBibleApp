@@ -50,6 +50,8 @@ public class ChapterGridControl : Control
     }
 
     private SolidColorBrush? _cachedCellBrush;
+    private SolidColorBrush? _cachedUnreadTextBrush;
+    private Avalonia.Styling.ThemeVariant? _cachedThemeVariant;
 
     /// <summary>Raised when a chapter cell is tapped. The sender provides the clicked cell.</summary>
     public event EventHandler<BibleReadingChapterCell>? CellClicked;
@@ -150,8 +152,15 @@ public class ChapterGridControl : Control
         var accentBrush = GetResourceBrush("ThemeAccentColor") ?? Brushes.DodgerBlue;
         var accentBorderBrush = GetResourceBrush("ThemeAccentBrush") ?? accentBrush;
         var cellBorderBrush = GetResourceBrush("SystemControlForegroundBaseMediumLowBrush") ?? Brushes.Gray;
-        var foreground = GetResourceBrush("ThemeForegroundBrush") ?? Brushes.White;
-        var normalForeground = GetResourceBrush("ThemeForegroundBrush") ?? Brushes.Black;
+        if (_cachedThemeVariant != ActualThemeVariant)
+        {
+            _cachedThemeVariant = ActualThemeVariant;
+            var isDark = ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+            _cachedUnreadTextBrush = isDark
+                ? new SolidColorBrush(Color.FromRgb(200, 200, 200))
+                : new SolidColorBrush(Color.FromRgb(60, 60, 60));
+        }
+        IBrush normalForeground = _cachedUnreadTextBrush ?? new SolidColorBrush(Color.FromRgb(105, 105, 105));
         var borderPen = new Pen(cellBorderBrush, BorderThickness);
         var currentBorderPen = new Pen(accentBorderBrush, 2);
         var hoverBrush = new SolidColorBrush(Color.FromArgb(0x18, 0x80, 0x80, 0x80));
