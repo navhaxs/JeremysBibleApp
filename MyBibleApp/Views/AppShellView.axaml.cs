@@ -35,7 +35,6 @@ public partial class AppShellView : UserControl
     private LocalStorageDebugView? _localStorageDebugView;
     private DebugLogsView? _debugLogsView;
     private BibleReadingView? _bibleReadingView;
-    private System.ComponentModel.PropertyChangedEventHandler? _brDebugModeHandler;
     private readonly AppViewModel _appVM = new();
     private readonly List<ScriptureViewModel> _tabs = [];
     private readonly Dictionary<ScriptureViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
@@ -91,19 +90,9 @@ public partial class AppShellView : UserControl
 
         if (_bibleReadingView != null)
         {
-            var brVm = new BibleReadingViewModel { IsDebugMode = _appVM.IsDebugMode };
-            _bibleReadingView.DataContext    = brVm;
+            _bibleReadingView.DataContext = new BibleReadingViewModel(_appVM);
             _bibleReadingView.CloseRequested += OnBibleReadingCloseRequested;
             _bibleReadingView.ChapterNavigationRequested += OnBibleReadingChapterNavigationRequested;
-
-            // Keep BibleReadingViewModel.IsDebugMode in sync with AppViewModel.IsDebugMode.
-            _brDebugModeHandler = (_, e) =>
-            {
-                if (e.PropertyName == nameof(AppViewModel.IsDebugMode)
-                    && _bibleReadingView.DataContext is BibleReadingViewModel vm)
-                    vm.IsDebugMode = _appVM.IsDebugMode;
-            };
-            _appVM.PropertyChanged += _brDebugModeHandler;
         }
 
         _deleteConfirmOverlay = this.FindControl<Panel>("DeleteConfirmOverlay");
@@ -834,8 +823,6 @@ public partial class AppShellView : UserControl
 
         if (_authStateHandler != null)
             _appVM.PropertyChanged -= _authStateHandler;
-        if (_brDebugModeHandler != null)
-            _appVM.PropertyChanged -= _brDebugModeHandler;
 
         _appVM.Dispose();
         _persistTabsCts?.Cancel();

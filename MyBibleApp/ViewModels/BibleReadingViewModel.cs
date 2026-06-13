@@ -23,6 +23,8 @@ public class BibleReadingViewModel : ViewModelBase
     private readonly ISyncCoordinator?           _syncCoordinator;
     private readonly Task                        _initialLoadTask;
 
+    public AppViewModel AppVM { get; }
+
     public IReadOnlyList<BibleReadingBookEntry> OtBooks { get; }
     public IReadOnlyList<BibleReadingBookEntry> NtBooks { get; }
     public IReadOnlyList<BibleReadingBookEntry> AllBooks => _allBooks;
@@ -35,16 +37,7 @@ public class BibleReadingViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _lastUpdated, value);
     }
 
-    private bool _isDebugMode;
-    public bool IsDebugMode
-    {
-        get => _isDebugMode;
-        set
-        {
-            this.RaiseAndSetIfChanged(ref _isDebugMode, value);
-            if (value) _ = RefreshSyncDebugInfoAsync();
-        }
-    }
+    public bool IsDebugMode => AppVM.IsDebugMode;
 
     private string _syncDebugInfo = string.Empty;
     public string SyncDebugInfo
@@ -64,8 +57,16 @@ public class BibleReadingViewModel : ViewModelBase
         }
     }
 
-    public BibleReadingViewModel()
+    public BibleReadingViewModel(AppViewModel appVM)
     {
+        AppVM = appVM;
+        AppVM.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(AppViewModel.IsDebugMode)) return;
+            this.RaisePropertyChanged(nameof(IsDebugMode));
+            if (AppVM.IsDebugMode) _ = RefreshSyncDebugInfoAsync();
+        };
+
         try
         {
             var runtime = SharedSyncRuntime.Instance;
@@ -90,7 +91,7 @@ public class BibleReadingViewModel : ViewModelBase
         await SaveReadStateAsync(data).ConfigureAwait(false);
         _ = PushToSyncAsync(data);
         await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => LastUpdated = DateTime.Now);
-        if (_isDebugMode) _ = RefreshSyncDebugInfoAsync();
+        if (AppVM.IsDebugMode) _ = RefreshSyncDebugInfoAsync();
     }
 
     /// <summary>Apply a snapshot pulled from Google Drive (last-write-wins is handled by SyncCoordinator).</summary>
@@ -108,7 +109,7 @@ public class BibleReadingViewModel : ViewModelBase
         }
         // Persist the applied state locally so it survives restart without re-pulling.
         _ = SaveReadStateAsync(BuildReadChaptersDict());
-        if (_isDebugMode) _ = RefreshSyncDebugInfoAsync();
+        if (AppVM.IsDebugMode) _ = RefreshSyncDebugInfoAsync();
     }
 
     public async Task RefreshSyncDebugInfoAsync()
