@@ -145,6 +145,7 @@ public partial class AppShellView : UserControl
         AttachedToVisualTree += OnAttachedToVisualTree;
 
         TrackAuthState();
+        UpdateTabBarVisibility();
     }
 
     private void AddTabInternal(ScriptureViewModel vm, bool makeActive)
@@ -353,6 +354,8 @@ public partial class AppShellView : UserControl
         {
             if (args.PropertyName == nameof(AppViewModel.IsAuthenticating))
                 Dispatcher.UIThread.Post(UpdateSignInOverlayVisibility);
+            if (args.PropertyName == nameof(AppViewModel.IsTabBarVisible))
+                Dispatcher.UIThread.Post(UpdateTabBarVisibility);
         };
 
         _appVM.PropertyChanged += _authStateHandler;
@@ -585,6 +588,7 @@ public partial class AppShellView : UserControl
     {
         // Load persisted debug mode state early so the overlay is visible during restore.
         await _appVM.LoadDebugModeFromStorageAsync();
+        await _appVM.LoadTabBarVisibleFromStorageAsync();
 
         // Load persisted theme and apply it.
         await _appVM.LoadThemeFromStorageAsync();
@@ -1265,10 +1269,15 @@ public partial class AppShellView : UserControl
             ApplySplitSizing();
     }
 
+    private void UpdateTabBarVisibility()
+    {
+        if (_tabBar == null) return;
+        _tabBar.IsVisible = _appVM.IsTabBarVisible && Bounds.Width >= TabBarMinWidth;
+    }
+
     private void OnShellSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        if (_tabBar != null)
-            _tabBar.IsVisible = e.NewSize.Width >= TabBarMinWidth;
+        UpdateTabBarVisibility();
     }
 
     private void ApplySplitSizing()
