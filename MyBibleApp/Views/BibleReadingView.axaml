@@ -8,6 +8,28 @@
              x:Class="MyBibleApp.Views.BibleReadingView"
              x:DataType="vm:BibleReadingViewModel">
 
+  <UserControl.Resources>
+    <DataTemplate x:Key="BookEntryTemplate" x:DataType="vm:BibleReadingBookEntry">
+      <Border Classes="book-card">
+        <Grid ColumnDefinitions="110,Auto" ColumnSpacing="8">
+          <Border Grid.Column="0"
+                  Background="{Binding LabelBackground}"
+                  CornerRadius="2"
+                  Padding="4,2"
+                  VerticalAlignment="Top">
+            <TextBlock Text="{Binding Name}"
+                       Foreground="{Binding LabelForeground}"
+                       FontSize="12"
+                       TextWrapping="Wrap" />
+          </Border>
+          <controls:ChapterGridControl Grid.Column="1"
+                                        Chapters="{Binding Chapters}"
+                                        BookCellColor="{Binding ReadCellColor}" />
+        </Grid>
+      </Border>
+    </DataTemplate>
+  </UserControl.Resources>
+
   <UserControl.Styles>
 
     <!-- Book card container -->
@@ -89,25 +111,7 @@
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:BibleReadingBookEntry">
-                <Border Classes="book-card">
-                  <Grid ColumnDefinitions="110,Auto" ColumnSpacing="8">
-                    <Border Grid.Column="0"
-                            Background="{Binding LabelBackground}"
-                            CornerRadius="2"
-                            Padding="4,2"
-                            VerticalAlignment="Top">
-                      <TextBlock Text="{Binding Name}"
-                                 Foreground="{Binding LabelForeground}"
-                                 FontSize="12"
-                                 TextWrapping="Wrap" />
-                    </Border>
-                    <controls:ChapterGridControl Grid.Column="1"
-                                                  Chapters="{Binding Chapters}"
-                                                  BookCellColor="{Binding ReadCellColor}" />
-                  </Grid>
-                </Border>
-              </DataTemplate>
+              <StaticResource ResourceKey="BookEntryTemplate" />
             </ItemsControl.ItemTemplate>
           </ItemsControl>
         </StackPanel>
@@ -127,25 +131,7 @@
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:BibleReadingBookEntry">
-                <Border Classes="book-card">
-                  <Grid ColumnDefinitions="110,Auto" ColumnSpacing="8">
-                    <Border Grid.Column="0"
-                            Background="{Binding LabelBackground}"
-                            CornerRadius="2"
-                            Padding="4,2"
-                            VerticalAlignment="Top">
-                      <TextBlock Text="{Binding Name}"
-                                 Foreground="{Binding LabelForeground}"
-                                 FontSize="12"
-                                 TextWrapping="Wrap" />
-                    </Border>
-                    <controls:ChapterGridControl Grid.Column="1"
-                                                  Chapters="{Binding Chapters}"
-                                                  BookCellColor="{Binding ReadCellColor}" />
-                  </Grid>
-                </Border>
-              </DataTemplate>
+              <StaticResource ResourceKey="BookEntryTemplate" />
             </ItemsControl.ItemTemplate>
           </ItemsControl>
         </StackPanel>

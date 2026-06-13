@@ -140,7 +140,7 @@ public class BibleReadingViewModel : ViewModelBase
             var name     = names.TryGetValue(code, out var n) ? n : code;
             var chapters = chapterCounts.TryGetValue(code, out var c) ? c : 1;
             var isOt     = index < 39;
-            var bookIndex = isOt ? index : index - 39;
+            var bookIndex = isOt ? index : Math.Max(0, index - 39);
             yield return new BibleReadingBookEntry(code, name, chapters, isOt, bookIndex);
             index++;
         }
