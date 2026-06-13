@@ -40,6 +40,17 @@ public class ChapterGridControl : Control
         set => SetValue(ChaptersProperty, value);
     }
 
+    public static readonly StyledProperty<Color> BookCellColorProperty =
+        AvaloniaProperty.Register<ChapterGridControl, Color>(nameof(BookCellColor));
+
+    public Color BookCellColor
+    {
+        get => GetValue(BookCellColorProperty);
+        set => SetValue(BookCellColorProperty, value);
+    }
+
+    private SolidColorBrush? _cachedCellBrush;
+
     /// <summary>Raised when a chapter cell is tapped. The sender provides the clicked cell.</summary>
     public event EventHandler<BibleReadingChapterCell>? CellClicked;
 
@@ -58,6 +69,7 @@ public class ChapterGridControl : Control
     {
         AffectsRender<ChapterGridControl>(ChaptersProperty);
         AffectsMeasure<ChapterGridControl>(ChaptersProperty);
+        AffectsRender<ChapterGridControl>(BookCellColorProperty);
     }
 
     public ChapterGridControl()
@@ -75,6 +87,12 @@ public class ChapterGridControl : Control
             _chapters = Chapters;
             SubscribeAll();
             InvalidateMeasure();
+            InvalidateVisual();
+        }
+
+        if (change.Property == BookCellColorProperty)
+        {
+            _cachedCellBrush = new SolidColorBrush(BookCellColor);
             InvalidateVisual();
         }
     }
@@ -151,7 +169,8 @@ public class ChapterGridControl : Control
             // Background
             if (cell.IsRead)
             {
-                context.DrawRectangle(accentBrush, null, rect);
+                var brush = _cachedCellBrush ?? accentBrush;
+                context.DrawRectangle(brush, null, rect);
             }
             else if (i == _pressedIndex)
             {
