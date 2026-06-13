@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media;
 
 namespace MyBibleApp.Services;
 
@@ -69,6 +70,11 @@ public static class PlatformHelper
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return "macOS";
         return "Unknown";
     }
+
+    /// <summary>
+    /// Set by Android MainActivity to update the system navigation bar color when the app theme changes.
+    /// </summary>
+    public static Action<Color>? OnNavigationBarColorChanged { get; set; }
 }
 
 

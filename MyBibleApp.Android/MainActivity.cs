@@ -2,9 +2,12 @@ using Android.App;
 using Android.Content;
 using Android.Content.PM;
 using Android.OS;
+using Android.Views;
 using Avalonia.Android;
+using Avalonia.Media;
 using MyBibleApp.Services;
 using MyBibleApp.Services.Sync;
+using AndroidColor = Android.Graphics.Color;
 
 namespace MyBibleApp.Android;
 
@@ -36,6 +39,8 @@ public class MainActivity : AvaloniaMainActivity
     {
         base.OnCreate(savedInstanceState);
 
+        PlatformHelper.OnNavigationBarColorChanged = ApplyNavigationBarColor;
+
         // Register the URI launcher so AndroidGoogleDriveAuthService can open
         // the Google consent page using an Android ACTION_VIEW Intent.
         AndroidOAuthCallbackBridge.LaunchUri = uri =>
@@ -59,6 +64,24 @@ public class MainActivity : AvaloniaMainActivity
         // Example: com.companyname.mybibleapp:/oauth2redirect?code=4/0A...
         if (intent?.Data != null)
             AndroidOAuthCallbackBridge.TryHandleCallback(intent.Data.ToString()!);
+    }
+
+    private void ApplyNavigationBarColor(Color color)
+    {
+        if (Window == null) return;
+
+        Window.SetNavigationBarColor(AndroidColor.Argb(color.A, color.R, color.G, color.B));
+
+        // Adjust nav bar icon color: dark icons on light backgrounds (API 26+).
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.O)
+        {
+            var isLight = color.R * 0.299 + color.G * 0.587 + color.B * 0.114 > 128;
+            const SystemUiFlags lightNavBarFlag = SystemUiFlags.LightNavigationBar;
+            var current = Window.DecorView.SystemUiFlags;
+            Window.DecorView.SystemUiFlags = isLight
+                ? current | lightNavBarFlag
+                : current & ~lightNavBarFlag;
+        }
     }
 
     protected override void OnPause()

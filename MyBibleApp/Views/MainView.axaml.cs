@@ -1985,6 +1985,9 @@ public partial class MainView : UserControl
             Application.Current.Resources.Remove("ThemeForegroundBrush");
 
         UpdateDotPatternResource(theme, dotPatternEnabled);
+
+        var navBarColor = theme.BackgroundOverride ?? theme.SwatchColor;
+        PlatformHelper.OnNavigationBarColorChanged?.Invoke(navBarColor);
     }
 
     protected override void OnDataContextChanged(EventArgs e)

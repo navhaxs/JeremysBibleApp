@@ -715,28 +715,31 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     private void OnSyncProgress(object? sender, SyncProgressEventArgs e)
     {
-        IsSyncing = e.IsSyncing;
-        AppendSyncDebugLog($"[{e.Progress}%] {e.Message}");
-        _ = RefreshSyncDebugDataAsync();
-
-        if (e.IsSyncing)
-            StopSyncStatusTimer();
-
-        if (e.IsCompleted && e.Message.Contains("up to date", StringComparison.OrdinalIgnoreCase))
+        Dispatcher.UIThread.Post(() =>
         {
-            _lastUpToDateSyncAt = DateTimeOffset.Now;
-            SyncStatus = FormatUpToDateStatus();
-            StartSyncStatusTimer();
-        }
-        else
-        {
-            SyncStatus = e.Message;
-        }
+            IsSyncing = e.IsSyncing;
+            AppendSyncDebugLog($"[{e.Progress}%] {e.Message}");
+            _ = RefreshSyncDebugDataAsync();
 
-        if (e.IsCompleted)
-            System.Diagnostics.Debug.WriteLine("Sync completed.");
-        else if (e.IsError)
-            System.Diagnostics.Debug.WriteLine($"Sync error: {e.Message}");
+            if (e.IsSyncing)
+                StopSyncStatusTimer();
+
+            if (e.IsCompleted && e.Message.Contains("up to date", StringComparison.OrdinalIgnoreCase))
+            {
+                _lastUpToDateSyncAt = DateTimeOffset.Now;
+                SyncStatus = FormatUpToDateStatus();
+                StartSyncStatusTimer();
+            }
+            else
+            {
+                SyncStatus = e.Message;
+            }
+
+            if (e.IsCompleted)
+                System.Diagnostics.Debug.WriteLine("Sync completed.");
+            else if (e.IsError)
+                System.Diagnostics.Debug.WriteLine($"Sync error: {e.Message}");
+        });
     }
 
     private string FormatUpToDateStatus()
