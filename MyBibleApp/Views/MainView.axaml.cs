@@ -330,6 +330,7 @@ public partial class MainView : UserControl
         if (!PlatformHelper.IsDesktop && _readerProgressTrack != null)
         {
             _readerProgressTrack.Opacity = 0;
+            _readerProgressTrack.IsHitTestVisible = false;
             _paragraphList.AddHandler(TappedEvent, OnListBoxTapped, handledEventsToo: false);
         }
     }
@@ -1006,6 +1007,8 @@ public partial class MainView : UserControl
     {
         if (_readerProgressTrack == null) return;
         _readerProgressTrack.Opacity = 1;
+        if (!PlatformHelper.IsDesktop)
+            _readerProgressTrack.IsHitTestVisible = true;
 
         _scrollbarHideCts?.Cancel();
         _scrollbarHideCts = new CancellationTokenSource();
@@ -1017,7 +1020,11 @@ public partial class MainView : UserControl
             Dispatcher.UIThread.Post(() =>
             {
                 if (!_isDraggingProgressBar && _readerProgressTrack != null)
+                {
                     _readerProgressTrack.Opacity = 0;
+                    if (!PlatformHelper.IsDesktop)
+                        _readerProgressTrack.IsHitTestVisible = false;
+                }
             });
         }, TaskScheduler.Default);
     }
