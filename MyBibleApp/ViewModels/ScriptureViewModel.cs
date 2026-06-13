@@ -19,9 +19,19 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
     private const string BooksJsonUri = "avares://MyBibleApp/Assets/books.json";
     private const string LastVerseJsonUri = "avares://MyBibleApp/Assets/last_verse.json";
 
+    // Lookup metadata is identical for every VM — load once, share across all instances.
+    private static readonly Lazy<LookupMetadataCache> SharedLookupMetadata =
+        new(LoadLookupMetadataOnce, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private sealed class LookupMetadataCache
+    {
+        public IReadOnlyList<ScriptureLookupBook> Books { get; init; } = [];
+        public Dictionary<string, int[]> ChapterVerseIndex { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     private readonly IBookNameProvider _bookNameProvider;
     private readonly BibleContentService _bibleContent;
-    private readonly Dictionary<string, int[]> _chapterVerseIndex = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int[]> _chapterVerseIndex;
 
     private string _header = string.Empty;
     private string _bookTitle = string.Empty;
@@ -39,6 +49,7 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
     private bool _preserveChapterOnBookChange;
 
     private CancellationTokenSource? _readingProgressSyncCts;
+    private CancellationTokenSource? _sampleLoadCts;
 
     public AppViewModel AppVM { get; }
 
@@ -48,20 +59,40 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
         _bookNameProvider = new JsonBookNameProvider(BooksJsonUri);
         _bibleContent = BibleContentService.Instance;
 
-        LoadLookupMetadata();
+        // Apply from static cache — no file I/O on UI thread after first VM.
+        var cache = SharedLookupMetadata.Value;
+        _chapterVerseIndex = cache.ChapterVerseIndex;
+        LookupBooks = cache.Books;
 
-        try
+        // Load sample content on a thread pool thread so the UI thread is never blocked.
+        // Cancelled as soon as real content begins loading (TryLoadBookFromApiAsync).
+        _sampleLoadCts = new CancellationTokenSource();
+        var ct = _sampleLoadCts.Token;
+        _ = Task.Run(() =>
         {
-            var loader = new UsxBibleAssetLoader(new UsxBibleParser());
-            var book = loader.LoadFromAsset(SampleUsxUri);
-            ApplyLoadedBook(book, "Loaded from local USX asset.", initialSelectionChapter: 1, initialSelectionVerse: 1);
-        }
-        catch (Exception ex)
-        {
-            Header = "Bible content unavailable";
-            Status = $"Failed to load USX asset: {ex.Message}";
-            Paragraphs = [];
-        }
+            if (ct.IsCancellationRequested) return;
+            try
+            {
+                var loader = new UsxBibleAssetLoader(new UsxBibleParser());
+                var book = loader.LoadFromAsset(SampleUsxUri);
+                if (ct.IsCancellationRequested) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (!ct.IsCancellationRequested)
+                        ApplyLoadedBook(book, "Loaded from local USX asset.", 1, 1);
+                });
+            }
+            catch (Exception ex)
+            {
+                if (ct.IsCancellationRequested) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    Header = "Bible content unavailable";
+                    Status = $"Failed to load USX asset: {ex.Message}";
+                    Paragraphs = [];
+                });
+            }
+        }, ct);
     }
 
     // ── Passage State ────────────────────────────────────────────────────────
@@ -225,6 +256,11 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
 
     public async Task<(bool Success, string? Error)> TryLoadBookFromApiAsync(string bookCode, int chapter, int verse)
     {
+        // Cancel the background sample load so it can't overwrite real content.
+        _sampleLoadCts?.Cancel();
+        _sampleLoadCts?.Dispose();
+        _sampleLoadCts = null;
+
         try
         {
             var book = await _bibleContent.LoadBookAsync(bookCode).ConfigureAwait(false);
@@ -244,6 +280,9 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        _sampleLoadCts?.Cancel();
+        _sampleLoadCts?.Dispose();
+        _sampleLoadCts = null;
         _readingProgressSyncCts?.Cancel();
         _readingProgressSyncCts?.Dispose();
     }
@@ -306,7 +345,7 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
         return Math.Max(1, versesByChapter[chapterIndex]);
     }
 
-    private void LoadLookupMetadata()
+    private static LookupMetadataCache LoadLookupMetadataOnce()
     {
         try
         {
@@ -331,12 +370,13 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
                     nameLookup[property.Name] = property.Value.GetString() ?? property.Name;
             }
 
+            var chapterVerseIndex = new Dictionary<string, int[]>(StringComparer.OrdinalIgnoreCase);
             foreach (var property in lastVerseDocument.RootElement.EnumerateObject())
             {
                 var verses = property.Value.EnumerateArray()
                     .Select(v => v.TryGetInt32(out var n) ? n : 1)
                     .ToArray();
-                _chapterVerseIndex[property.Name] = verses;
+                chapterVerseIndex[property.Name] = verses;
             }
 
             var books = new List<ScriptureLookupBook>();
@@ -346,11 +386,11 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
                 books.Add(new ScriptureLookupBook(code, name));
             }
 
-            LookupBooks = books;
+            return new LookupMetadataCache { Books = books, ChapterVerseIndex = chapterVerseIndex };
         }
         catch
         {
-            LookupBooks = [];
+            return new LookupMetadataCache();
         }
     }
 

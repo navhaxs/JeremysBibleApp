@@ -77,6 +77,7 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
     private string?         _currentUserEmail;
     private string?         _currentAccessToken;
     private CancellationTokenSource? _interactiveCts;
+    private string?         _lastAuthUrl;
 
     // ─── IGoogleDriveAuthService ───────────────────────────────────────────────
     /// <summary>
@@ -98,11 +99,16 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
 
     public void CancelAuthentication()
     {
+        _lastAuthUrl = null;
         _interactiveCts?.Cancel();
         AndroidOAuthCallbackBridge.TryHandleCallback(string.Empty);
     }
 
-    public void ReopenBrowser() { } // Android uses system browser via intent; reopen is not supported
+    public void ReopenBrowser()
+    {
+        if (_lastAuthUrl != null && AndroidOAuthCallbackBridge.LaunchUri != null)
+            _ = AndroidOAuthCallbackBridge.LaunchUri(_lastAuthUrl);
+    }
 
     private async Task<AuthenticationResult> AuthenticateInternalAsync(bool silentOnly)
     {
@@ -194,6 +200,7 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
             var (codeVerifier, codeChallenge) = GeneratePkce();
             var authUrl = BuildAuthorizationUrl(clientSecrets.ClientId, redirectUri, codeChallenge);
             System.Diagnostics.Debug.WriteLine($"[AndroidAuth] Opening consent page (PKCE): {authUrl}");
+            _lastAuthUrl = authUrl;
 
             _interactiveCts?.Cancel();
             _interactiveCts?.Dispose();
@@ -231,6 +238,7 @@ public class AndroidGoogleDriveAuthService : IGoogleDriveAuthService
             // Persist token via the flow's data store so it survives app restarts.
             await flow.DataStore.StoreAsync("user", tokenResponse).ConfigureAwait(false);
 
+            _lastAuthUrl = null;
             _credential = new UserCredential(flow, "user", tokenResponse);
             System.Diagnostics.Debug.WriteLine("[AndroidAuth] Interactive PKCE OAuth completed successfully.");
             return CompleteAuthentication();

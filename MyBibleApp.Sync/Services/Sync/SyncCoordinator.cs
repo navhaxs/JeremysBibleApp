@@ -74,7 +74,7 @@ public interface ISyncCoordinator : IDisposable
     /// <summary>
     /// Forces a sync operation and awaits its completion
     /// </summary>
-    Task ForceSyncAsync();
+    Task<PullResult> ForceSyncAsync();
 
     /// <summary>
     /// Pulls data from Google Drive, applies last-write-wins conflict resolution against local
@@ -119,6 +119,12 @@ public interface ISyncCoordinator : IDisposable
     /// Event for sync progress updates
     /// </summary>
     event EventHandler<SyncProgressEventArgs>? SyncProgress;
+
+    /// <summary>
+    /// Raised whenever PullFromDriveAsync pulls Bible reading progress that is newer than local.
+    /// Fired on every pull (auto-sync and manual), not just ForceSyncAsync.
+    /// </summary>
+    event EventHandler<BibleReadingProgressSnapshot>? BibleReadingProgressSynced;
 }
 
 /// <summary>
@@ -135,11 +141,13 @@ public class SyncCoordinator : ISyncCoordinator
     private IJournalSyncProvider? _journalSyncProvider;
     private const int MaxJournalRetries = 5;
 
+    private readonly SemaphoreSlim _syncLock = new SemaphoreSlim(1, 1);
     private CancellationTokenSource? _autoSyncCts;
     private bool _isOffline;
     private bool _disposed;
 
     public event EventHandler<SyncProgressEventArgs>? SyncProgress;
+    public event EventHandler<BibleReadingProgressSnapshot>? BibleReadingProgressSynced;
 
     public SyncCoordinator(
         IGoogleDriveAuthService authService,
@@ -199,6 +207,7 @@ public class SyncCoordinator : ISyncCoordinator
 
             if (pushResult.IsSuccess)
             {
+                _journalSyncProvider.NotifySyncSucceeded();
                 var updatedTimes = await _syncService.GetFileModifiedTimesAsync().ConfigureAwait(false);
                 if (updatedTimes.TryGetValue("journals.json", out var newModTime) && newModTime.HasValue)
                     await SaveCachedModifiedTimeAsync("journals.json", newModTime.Value).ConfigureAwait(false);
@@ -292,15 +301,15 @@ public class SyncCoordinator : ISyncCoordinator
         _ = ForceSyncAsync();
     }
 
-    public async Task ForceSyncAsync()
+    public async Task<PullResult> ForceSyncAsync()
     {
         if (_isOffline || !_authService.IsAuthenticated)
         {
             RaiseSyncProgress(false, "Cannot sync: not authenticated or offline", 0);
-            return;
+            return PullResult.Failure("Not authenticated or offline");
         }
 
-        await PullFromDriveAsync().ConfigureAwait(false);
+        return await PullFromDriveAsync().ConfigureAwait(false);
     }
 
     private const int DrainItemTimeoutSeconds = 30;
@@ -433,6 +442,10 @@ public class SyncCoordinator : ISyncCoordinator
         if (_isOffline || !_authService.IsAuthenticated)
             return PullResult.Failure("Not authenticated or offline");
 
+        // Skip if a sync is already in flight — the concurrent caller will drain all pending data.
+        if (!await _syncLock.WaitAsync(0).ConfigureAwait(false))
+            return PullResult.NoChanges();
+
         try
         {
             RaiseSyncProgress(true, "Checking Google Drive for updates...", 10);
@@ -461,6 +474,7 @@ public class SyncCoordinator : ISyncCoordinator
                     {
                         await _localStorage.SaveObjectAsync("BibleReadingProgress", remoteBibleReading).ConfigureAwait(false);
                         pulledBibleReading = remoteBibleReading;
+                        BibleReadingProgressSynced?.Invoke(this, remoteBibleReading);
                     }
                 }
 
@@ -468,6 +482,7 @@ public class SyncCoordinator : ISyncCoordinator
             }
 
             // ── Sync journal data if provider is configured ──
+            var hadJournalChanges = false;
             if (_journalSyncProvider != null)
             {
                 var journalRemoteTime = remoteTimes.GetValueOrDefault("journals.json");
@@ -481,11 +496,14 @@ public class SyncCoordinator : ISyncCoordinator
                     if (!string.IsNullOrEmpty(remoteJournalJson))
                     {
                         await _journalSyncProvider.MergeRemoteJsonAsync(remoteJournalJson).ConfigureAwait(false);
+                        hadJournalChanges = true;
                     }
 
                     // Push merged local snapshot back
                     var localJournalJson = await _journalSyncProvider.GetSnapshotJsonAsync().ConfigureAwait(false);
-                    await _syncService.SaveJournalDataAsync(localJournalJson).ConfigureAwait(false);
+                    var journalPushResult = await _syncService.SaveJournalDataAsync(localJournalJson).ConfigureAwait(false);
+                    if (journalPushResult.IsSuccess)
+                        _journalSyncProvider.NotifySyncSucceeded();
 
                     var updatedJournalTimes = await _syncService.GetFileModifiedTimesAsync().ConfigureAwait(false);
                     var actualJournalModTime = updatedJournalTimes.GetValueOrDefault("journals.json") ?? journalRemoteTime;
@@ -499,17 +517,27 @@ public class SyncCoordinator : ISyncCoordinator
             {
                 RaiseSyncProgress(true, $"Uploading {pendingOps.Count} local change(s) to Drive...", 80);
                 await DrainQueueAsync(pendingOps, reportProgress: true, cancellationToken: _autoSyncCts?.Token ?? CancellationToken.None).ConfigureAwait(false);
+
+                // Refresh the cached modifiedTime for user_data.json so the next pull doesn't
+                // re-download the file we just uploaded.
+                var postDrainTimes = await _syncService.GetFileModifiedTimesAsync().ConfigureAwait(false);
+                if (postDrainTimes.TryGetValue("user_data.json", out var postDrainUserDataTime) && postDrainUserDataTime.HasValue)
+                    await SaveCachedModifiedTimeAsync("user_data.json", postDrainUserDataTime.Value).ConfigureAwait(false);
             }
 
-            var hadChanges = pulledBibleReading != null;
+            var hadChanges = pulledBibleReading != null || hadJournalChanges;
             RaiseSyncProgress(false, hadChanges ? "Sync complete — remote changes applied." : "Sync complete — up to date.", 100);
 
-            return PullResult.Success(hadChanges, bibleReading: pulledBibleReading);
+            return PullResult.Success(pulledBibleReading != null, bibleReading: pulledBibleReading, hadJournalChanges: hadJournalChanges);
         }
         catch (Exception ex)
         {
             RaiseSyncProgress(false, $"Sync error: {ex.Message}", 0);
             return PullResult.Failure(ex.Message);
+        }
+        finally
+        {
+            _syncLock.Release();
         }
     }
 
@@ -538,6 +566,7 @@ public class SyncCoordinator : ISyncCoordinator
         _networkMonitor.StopMonitoring();
         _networkMonitor.ConnectivityChanged -= OnNetworkConnectivityChanged;
         _syncService.SyncProgress -= OnSyncServiceProgress;
+        _syncLock.Dispose();
     }
 
     private async Task AutoSyncLoop(TimeSpan interval, CancellationToken cancellationToken)

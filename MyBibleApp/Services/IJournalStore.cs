@@ -47,4 +47,10 @@ public interface IJournalStore
 
     /// <summary>Merges remote journal data using last-write-wins per journal.</summary>
     Task MergeRemoteAsync(JournalDataSnapshot remote);
+
+    /// <summary>
+    /// Called by the sync layer after a successful push to Drive. Clears the in-memory
+    /// set of local-only stroke IDs so subsequent removals produce tombstones correctly.
+    /// </summary>
+    void NotifySyncSucceeded();
 }

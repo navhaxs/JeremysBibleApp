@@ -17,4 +17,10 @@ public interface IJournalSyncProvider
     /// Merges remote journal data (JSON) using last-write-wins per journal.
     /// </summary>
     Task MergeRemoteJsonAsync(string remoteJson);
+
+    /// <summary>
+    /// Called after a successful push to Drive so the store can clear its local-only
+    /// stroke tracking set, enabling correct tombstone decisions on future removals.
+    /// </summary>
+    void NotifySyncSucceeded();
 }

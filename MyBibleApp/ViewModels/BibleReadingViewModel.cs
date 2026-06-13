@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Avalonia.Platform;
@@ -20,6 +21,7 @@ public class BibleReadingViewModel : ViewModelBase
     private readonly List<BibleReadingBookEntry> _allBooks = [];
     private readonly ILocalStorageProvider?      _localStorageProvider;
     private readonly ISyncCoordinator?           _syncCoordinator;
+    private readonly Task                        _initialLoadTask;
 
     public IReadOnlyList<BibleReadingBookEntry> OtBooks { get; }
     public IReadOnlyList<BibleReadingBookEntry> NtBooks { get; }
@@ -31,6 +33,24 @@ public class BibleReadingViewModel : ViewModelBase
     {
         get => _lastUpdated;
         private set => this.RaiseAndSetIfChanged(ref _lastUpdated, value);
+    }
+
+    private bool _isDebugMode;
+    public bool IsDebugMode
+    {
+        get => _isDebugMode;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isDebugMode, value);
+            if (value) _ = RefreshSyncDebugInfoAsync();
+        }
+    }
+
+    private string _syncDebugInfo = string.Empty;
+    public string SyncDebugInfo
+    {
+        get => _syncDebugInfo;
+        private set => this.RaiseAndSetIfChanged(ref _syncDebugInfo, value);
     }
 
     /// <summary>Highlights the specified book/chapter as the currently viewed chapter.</summary>
@@ -60,7 +80,7 @@ public class BibleReadingViewModel : ViewModelBase
         OtBooks = _allBooks.Take(39).ToList();
         NtBooks = _allBooks.Skip(39).ToList();
 
-        _ = LoadReadStateAsync();
+        _initialLoadTask = LoadReadStateAsync();
     }
 
     /// <summary>Persist current read state locally and push to cloud sync queue.</summary>
@@ -70,11 +90,15 @@ public class BibleReadingViewModel : ViewModelBase
         await SaveReadStateAsync(data).ConfigureAwait(false);
         _ = PushToSyncAsync(data);
         await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => LastUpdated = DateTime.Now);
+        if (_isDebugMode) _ = RefreshSyncDebugInfoAsync();
     }
 
     /// <summary>Apply a snapshot pulled from Google Drive (last-write-wins is handled by SyncCoordinator).</summary>
-    public void ApplyRemoteSnapshot(BibleReadingProgressSnapshot snapshot)
+    public async Task ApplyRemoteSnapshotAsync(BibleReadingProgressSnapshot snapshot)
     {
+        // Wait for local load to finish first — avoids race where LoadReadStateAsync stomps remote data.
+        await _initialLoadTask.ConfigureAwait(false);
+
         foreach (var book in _allBooks)
         {
             if (!snapshot.ReadChapters.TryGetValue(book.Code, out var readChapters)) continue;
@@ -84,6 +108,69 @@ public class BibleReadingViewModel : ViewModelBase
         }
         // Persist the applied state locally so it survives restart without re-pulling.
         _ = SaveReadStateAsync(BuildReadChaptersDict());
+        if (_isDebugMode) _ = RefreshSyncDebugInfoAsync();
+    }
+
+    public async Task RefreshSyncDebugInfoAsync()
+    {
+        try
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("── Bible Reading Sync Debug ─────────────");
+
+            if (_localStorageProvider == null)
+            {
+                sb.Append("Storage: unavailable");
+                SyncDebugInfo = sb.ToString();
+                return;
+            }
+
+            // Local snapshot
+            var local = await _localStorageProvider
+                .GetObjectAsync<BibleReadingProgressSnapshot>(StorageKey)
+                .ConfigureAwait(false);
+            if (local != null)
+            {
+                var count = local.ReadChapters?.Values.Sum(v => v.Length) ?? 0;
+                sb.AppendLine($"Local snapshot: {count} chapters read");
+                sb.AppendLine($"Local LastModified: {local.LastModified:u}");
+            }
+            else
+            {
+                sb.AppendLine("Local snapshot: null");
+            }
+
+            // Cached Drive modifiedTime
+            var driveModTime = await _localStorageProvider
+                .GetAsync("DriveModTime_user_data.json")
+                .ConfigureAwait(false);
+            sb.AppendLine($"Drive mod time (cached): {driveModTime ?? "null — user_data.json never synced"}");
+
+            // Pending queue items
+            try
+            {
+                var ops = await SharedSyncRuntime.Instance.SyncQueueManager
+                    .GetPendingOperationsAsync()
+                    .ConfigureAwait(false);
+                var brCount = ops.Count(o => o.OperationType == "BibleReadingProgress");
+                var totalCount = ops.Count;
+                sb.AppendLine($"Queue: {brCount} BibleReadingProgress pending ({totalCount} total)");
+            }
+            catch
+            {
+                sb.AppendLine("Queue: unavailable");
+            }
+
+            // Auth state
+            var authenticated = _syncCoordinator != null;
+            sb.Append($"Sync coordinator: {(authenticated ? "available" : "null")}");
+
+            SyncDebugInfo = sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            SyncDebugInfo = $"Debug info error: {ex.Message}";
+        }
     }
 
     private Dictionary<string, int[]> BuildReadChaptersDict() =>

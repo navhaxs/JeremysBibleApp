@@ -253,6 +253,10 @@ public class FileSyncQueueManager : ISyncQueueManager
         changed |= CompactLatestPendingOperation(queue, "UserData");
         changed |= CompactLatestPendingOperation(queue, "Preferences");
         changed |= CompactLatestPendingOperation(queue, "ReadingProgress");
+        changed |= CompactLatestPendingOperation(queue, "BibleReadingProgress");
+        // Journal sync is idempotent (always pull-latest + push-latest), so N pending
+        // Journal entries collapse to 1 — avoids N×3 Drive API calls per stroke drawn offline.
+        changed |= CompactLatestPendingOperation(queue, "Journal");
         return changed;
     }
 

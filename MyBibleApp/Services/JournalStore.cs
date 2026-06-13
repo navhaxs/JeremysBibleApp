@@ -17,6 +17,12 @@ public sealed class JournalStore : IJournalStore
     // Tracks journals whose ink stroke save failed and need retry on next save
     private readonly Dictionary<(string JournalId, string ChapterKey), IReadOnlyList<JournalInkStroke>> _pendingRetry = new();
 
+    // Stroke IDs added in this session that have never been pushed to Drive.
+    // When such a stroke is removed, we skip the tombstone — the server never saw it.
+    // Cleared by NotifySyncSucceeded() after each successful push.
+    private readonly HashSet<string> _localOnlyStrokeIds = new();
+    private readonly object _localOnlyLock = new();
+
     private static string ChapterKey(string bookCode, int chapter) => $"{bookCode}:{chapter}";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -293,6 +299,8 @@ public sealed class JournalStore : IJournalStore
 
             entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+            lock (_localOnlyLock)
+                foreach (var s in strokes) _localOnlyStrokeIds.Add(s.Id);
             return Result.Success();
         }
         catch (Exception ex)
@@ -322,6 +330,7 @@ public sealed class JournalStore : IJournalStore
             bucket.Add(stroke);
             entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+            lock (_localOnlyLock) _localOnlyStrokeIds.Add(stroke.Id);
             return Result.Success();
         }
         catch (Exception ex)
@@ -351,8 +360,13 @@ public sealed class JournalStore : IJournalStore
                 var removed = bucket.RemoveAll(s => s.Id == strokeId);
                 if (removed > 0)
                 {
+                    bool wasLocalOnly;
+                    lock (_localOnlyLock) wasLocalOnly = _localOnlyStrokeIds.Remove(strokeId);
+
                     var now = DateTime.UtcNow;
-                    if (entry.DeletedInkStrokes.All(t => t.StrokeId != strokeId))
+                    // Skip tombstone for strokes the server never saw — no need to tell
+                    // other devices to delete something they don't have.
+                    if (!wasLocalOnly && entry.DeletedInkStrokes.All(t => t.StrokeId != strokeId))
                         entry.DeletedInkStrokes.Add(new InkStrokeTombstone
                         {
                             StrokeId = strokeId,
@@ -517,6 +531,12 @@ public sealed class JournalStore : IJournalStore
             InkStrokesByChapter = mergedByChapter,
             DeletedInkStrokes = mergedStrokeTombstones.Values.ToList()
         };
+    }
+
+    /// <inheritdoc />
+    public void NotifySyncSucceeded()
+    {
+        lock (_localOnlyLock) _localOnlyStrokeIds.Clear();
     }
 
     private async Task<(List<JournalEntry> Entries, List<DeletedJournalTombstone> Tombstones)> LoadEntriesAsync()

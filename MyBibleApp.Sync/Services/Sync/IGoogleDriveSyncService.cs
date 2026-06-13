@@ -87,8 +87,8 @@ public sealed class PullResult
     public BibleReadingProgressSnapshot? BibleReadingProgress { get; set; }
     public string? ErrorMessage { get; set; }
 
-    public static PullResult Success(bool hadChanges, BibleReadingProgressSnapshot? bibleReading = null)
-        => new() { IsSuccess = true, HadChanges = hadChanges, BibleReadingProgress = bibleReading };
+    public static PullResult Success(bool hadChanges, BibleReadingProgressSnapshot? bibleReading = null, bool hadJournalChanges = false)
+        => new() { IsSuccess = true, HadChanges = hadChanges || hadJournalChanges, BibleReadingProgress = bibleReading };
 
     public static PullResult NoChanges()
         => new() { IsSuccess = true, HadChanges = false };

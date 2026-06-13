@@ -38,8 +38,6 @@ public partial class MainView : UserControl
     private bool _isApplyingLookupSelection;
     private Models.AppTheme _currentTheme = Models.AppTheme.LightWhite;
     private AppViewModel? _watchedAppVM;
-    private readonly TranslateTransform _dotScrollTransform = new();
-
     // Windowed paragraph loading.
     private readonly ObservableCollection<BibleParagraph>
         _windowedItems = [];
@@ -393,7 +391,6 @@ public partial class MainView : UserControl
 
         _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
         UpdateReaderProgress(_paragraphScrollViewer);
-        _dotScrollTransform.Y = -(_paragraphScrollViewer.Offset.Y % 24);
 
         // Don't interfere while the user is dragging the scrollbar thumb.
         if (_isDraggingProgressBar) return;
@@ -1951,7 +1948,7 @@ public partial class MainView : UserControl
 
         vm.AppVM.SelectedThemeId = themeId;
         var theme = Models.AppTheme.GetById(themeId);
-        ApplyTheme(theme, vm.AppVM.IsDotPatternEnabled);
+        ApplyTheme(theme);
 
         // Update swatch borders to highlight the active one.
         if (_themeSwatchPanel == null) return;
@@ -1967,7 +1964,7 @@ public partial class MainView : UserControl
     }
 
     /// <summary>Apply the given theme: set variant + resource overrides.</summary>
-    public void ApplyTheme(Models.AppTheme theme, bool dotPatternEnabled = false)
+    public void ApplyTheme(Models.AppTheme theme)
     {
         _currentTheme = theme;
         if (Application.Current == null) return;
@@ -1983,8 +1980,6 @@ public partial class MainView : UserControl
             Application.Current.Resources["ThemeForegroundBrush"] = new SolidColorBrush(fg);
         else
             Application.Current.Resources.Remove("ThemeForegroundBrush");
-
-        UpdateDotPatternResource(theme, dotPatternEnabled);
 
         var navBarColor = theme.BackgroundOverride ?? theme.SwatchColor;
         PlatformHelper.OnNavigationBarColorChanged?.Invoke(navBarColor);
@@ -2007,47 +2002,6 @@ public partial class MainView : UserControl
 
     private void OnAppVMPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(AppViewModel.IsDotPatternEnabled) && sender is AppViewModel appVM)
-            UpdateDotPatternResource(_currentTheme, appVM.IsDotPatternEnabled);
-    }
-
-    private void UpdateDotPatternResource(Models.AppTheme theme, bool enabled)
-    {
-        if (Application.Current == null) return;
-        Application.Current.Resources["ThemeDotPatternBrush"] = enabled
-            ? BuildDotPatternBrush(theme)
-            : Brushes.Transparent;
-    }
-
-    private DrawingBrush BuildDotPatternBrush(Models.AppTheme theme)
-    {
-        var dotColor = theme.Variant == ThemeVariant.Dark
-            ? Color.FromArgb(45, 255, 255, 255)
-            : Color.FromArgb(45, 0, 0, 0);
-
-        const double tileSize = 24;
-        const double dotRadius = 1.0;
-
-        return new DrawingBrush
-        {
-            TileMode = TileMode.Tile,
-            // SourceRect anchors the drawing coordinate space so the ellipse renders at
-            // its stated size rather than being scaled to fill the tile bounds.
-            SourceRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
-            DestinationRect = new RelativeRect(0, 0, tileSize, tileSize, RelativeUnit.Absolute),
-            // Transform synced to scroll offset so dots move with scrolling content.
-            Transform = _dotScrollTransform,
-            Drawing = new GeometryDrawing
-            {
-                Brush = new SolidColorBrush(dotColor),
-                Geometry = new EllipseGeometry
-                {
-                    Center = new Point(tileSize / 2, tileSize / 2),
-                    RadiusX = dotRadius,
-                    RadiusY = dotRadius
-                }
-            }
-        };
     }
 
     private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)

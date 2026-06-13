@@ -16,7 +16,6 @@ public class AppViewModel : ViewModelBase, IDisposable
     private const string LocalTabStateKey = "LocalTabState";
     private const string DebugModeKey = "IsDebugMode";
     private const string ThemeKey = "SelectedThemeId";
-    private const string DotPatternKey = "IsDotPatternEnabled";
     private const int DebugOverlayMaxLines = 12;
 
     private readonly ISyncCoordinator? _syncCoordinator;
@@ -26,7 +25,6 @@ public class AppViewModel : ViewModelBase, IDisposable
     private readonly ILocalStorageProvider? _localStorageProvider;
 
     private bool _isDebugMode;
-    private bool _isDotPatternEnabled;
     private bool _isSyncing;
     private bool _isAuthenticated;
     private bool _isAuthenticating;
@@ -55,6 +53,7 @@ public class AppViewModel : ViewModelBase, IDisposable
             _syncCoordinator = sharedSyncRuntime.SyncCoordinator;
 
             _syncCoordinator.SyncProgress += OnSyncProgress;
+            _syncCoordinator.BibleReadingProgressSynced += OnBibleReadingProgressSynced;
             _googleDriveAuthService.AuthStateChanged += OnAuthStateChanged;
             IsAuthenticated = _googleDriveAuthService.IsAuthenticated;
             CurrentUserEmail = _googleDriveAuthService.CurrentUserEmail;
@@ -111,43 +110,6 @@ public class AppViewModel : ViewModelBase, IDisposable
             if (string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
                 await Dispatcher.UIThread.InvokeAsync(() => _isDebugMode = true);
             this.RaisePropertyChanged(nameof(IsDebugMode));
-        }
-        catch { /* best-effort */ }
-    }
-
-    // ── Dot Pattern ──────────────────────────────────────────────────────────
-
-    public bool IsDotPatternEnabled
-    {
-        get => _isDotPatternEnabled;
-        set
-        {
-            var old = _isDotPatternEnabled;
-            this.RaiseAndSetIfChanged(ref _isDotPatternEnabled, value);
-            if (old != _isDotPatternEnabled)
-                _ = PersistDotPatternAsync(_isDotPatternEnabled);
-        }
-    }
-
-    private async Task PersistDotPatternAsync(bool value)
-    {
-        if (_localStorageProvider == null) return;
-        try
-        {
-            await _localStorageProvider.SaveAsync(DotPatternKey, value ? "true" : "false").ConfigureAwait(false);
-        }
-        catch { /* best-effort */ }
-    }
-
-    public async Task LoadDotPatternFromStorageAsync()
-    {
-        if (_localStorageProvider == null) return;
-        try
-        {
-            var stored = await _localStorageProvider.GetAsync(DotPatternKey).ConfigureAwait(false);
-            if (string.Equals(stored, "true", StringComparison.OrdinalIgnoreCase))
-                await Dispatcher.UIThread.InvokeAsync(() => _isDotPatternEnabled = true);
-            this.RaisePropertyChanged(nameof(IsDotPatternEnabled));
         }
         catch { /* best-effort */ }
     }
@@ -382,6 +344,9 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     // ── Sync Methods ─────────────────────────────────────────────────────────
 
+    /// <summary>Raised when a force sync pull returns updated Bible reading progress for the UI to apply.</summary>
+    public event EventHandler<BibleReadingProgressSnapshot>? BibleReadingProgressPulled;
+
     public void ForceSync()
     {
         _syncCoordinator?.ForceSync();
@@ -395,6 +360,7 @@ public class AppViewModel : ViewModelBase, IDisposable
             return;
 
         // General sync: pull from Drive + drain local queue.
+        // BibleReadingProgressSynced event on the coordinator fires automatically when data is pulled.
         await _syncCoordinator.ForceSyncAsync().ConfigureAwait(false);
 
         // Explicit journal sync: push/pull journal data regardless of remote
@@ -594,7 +560,7 @@ public class AppViewModel : ViewModelBase, IDisposable
             }
         }
 
-        if (_googleDriveSyncService != null && IsAuthenticated)
+        if (_googleDriveSyncService != null && IsAuthenticated && !IsSyncing)
         {
             try
             {
@@ -603,6 +569,8 @@ public class AppViewModel : ViewModelBase, IDisposable
 
                 lines.Add("--- Remote Sync Data (Google Drive appDataFolder) ---");
                 lines.Add($"Remote Reading Progress: {(remoteData?.ReadingProgress != null ? $"{remoteData.ReadingProgress.BookCode} {remoteData.ReadingProgress.Chapter}:{remoteData.ReadingProgress.Verse}" : "none")}");
+                var brSnap = remoteData?.BibleReadingProgress;
+                lines.Add($"Remote Bible Reading Progress: {(brSnap != null ? $"{brSnap.ReadChapters?.Values.Sum(v => v.Length) ?? 0} chapters read, LastModified {brSnap.LastModified:u}" : "none")}");
                 lines.Add($"Remote Annotations Entries: {remoteAnnotations.Count}");
                 lines.Add($"Remote Preferences Exists: {remoteData?.Preferences != null}");
             }
@@ -613,7 +581,7 @@ public class AppViewModel : ViewModelBase, IDisposable
 
             try
             {
-                var journalJson = await _googleDriveSyncService.GetJournalDataAsync().ConfigureAwait(false);
+                var journalJson = IsSyncing ? null : await _googleDriveSyncService.GetJournalDataAsync().ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(journalJson))
                 {
                     using var doc = System.Text.Json.JsonDocument.Parse(journalJson);
@@ -713,13 +681,23 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     // ── Event Handlers ───────────────────────────────────────────────────────
 
+    private void OnBibleReadingProgressSynced(object? sender, BibleReadingProgressSnapshot snapshot)
+    {
+        BibleReadingProgressPulled?.Invoke(this, snapshot);
+    }
+
     private void OnSyncProgress(object? sender, SyncProgressEventArgs e)
     {
         Dispatcher.UIThread.Post(() =>
         {
             IsSyncing = e.IsSyncing;
             AppendSyncDebugLog($"[{e.Progress}%] {e.Message}");
-            _ = RefreshSyncDebugDataAsync();
+
+            // Only refresh the full debug panel (which makes remote Drive calls) when sync
+            // completes. Calling it on every progress event floods the thread pool with
+            // concurrent network requests and causes ANR on Android.
+            if (e.IsCompleted || e.IsError)
+                _ = RefreshSyncDebugDataAsync();
 
             if (e.IsSyncing)
                 StopSyncStatusTimer();
@@ -782,7 +760,10 @@ public class AppViewModel : ViewModelBase, IDisposable
         StopSyncStatusTimer();
 
         if (_syncCoordinator != null)
+        {
             _syncCoordinator.SyncProgress -= OnSyncProgress;
+            _syncCoordinator.BibleReadingProgressSynced -= OnBibleReadingProgressSynced;
+        }
 
         if (_googleDriveAuthService != null)
             _googleDriveAuthService.AuthStateChanged -= OnAuthStateChanged;

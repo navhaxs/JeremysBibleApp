@@ -133,6 +133,14 @@ public partial class BibleReadingView : UserControl
         flyout.ShowAt(grid);
     }
 
+    // ── Debug refresh ─────────────────────────────────────────────────────────
+
+    private void OnDebugRefreshClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is BibleReadingViewModel vm)
+            _ = vm.RefreshSyncDebugInfoAsync();
+    }
+
     // ── Close ─────────────────────────────────────────────────────────────────
 
     private void OnCloseButtonClick(object? sender, RoutedEventArgs e) =>

@@ -35,6 +35,7 @@ public partial class AppShellView : UserControl
     private LocalStorageDebugView? _localStorageDebugView;
     private DebugLogsView? _debugLogsView;
     private BibleReadingView? _bibleReadingView;
+    private System.ComponentModel.PropertyChangedEventHandler? _brDebugModeHandler;
     private readonly AppViewModel _appVM = new();
     private readonly List<ScriptureViewModel> _tabs = [];
     private readonly Dictionary<ScriptureViewModel, PropertyChangedEventHandler> _tabHeaderHandlers = [];
@@ -90,9 +91,19 @@ public partial class AppShellView : UserControl
 
         if (_bibleReadingView != null)
         {
-            _bibleReadingView.DataContext    = new BibleReadingViewModel();
+            var brVm = new BibleReadingViewModel { IsDebugMode = _appVM.IsDebugMode };
+            _bibleReadingView.DataContext    = brVm;
             _bibleReadingView.CloseRequested += OnBibleReadingCloseRequested;
             _bibleReadingView.ChapterNavigationRequested += OnBibleReadingChapterNavigationRequested;
+
+            // Keep BibleReadingViewModel.IsDebugMode in sync with AppViewModel.IsDebugMode.
+            _brDebugModeHandler = (_, e) =>
+            {
+                if (e.PropertyName == nameof(AppViewModel.IsDebugMode)
+                    && _bibleReadingView.DataContext is BibleReadingViewModel vm)
+                    vm.IsDebugMode = _appVM.IsDebugMode;
+            };
+            _appVM.PropertyChanged += _brDebugModeHandler;
         }
 
         _deleteConfirmOverlay = this.FindControl<Panel>("DeleteConfirmOverlay");
@@ -117,6 +128,7 @@ public partial class AppShellView : UserControl
         _journalFlyoutVm.JournalDeactivated += OnJournalDeactivated;
 
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress += OnSyncProgress;
+        _appVM.BibleReadingProgressPulled += OnBibleReadingProgressPulled;
 
         DataContext = _appVM;
 
@@ -379,9 +391,15 @@ public partial class AppShellView : UserControl
 
     private void OnStartupSignInAgainButtonClick(object? sender, RoutedEventArgs e)
     {
-        var panel = this.FindControl<StackPanel>("StartupReSignInPanel");
-        if (panel != null) panel.IsVisible = false;
+        this.FindControl<Button>("StartupSignInAgainButton")!.IsVisible = false;
+        this.FindControl<Button>("StartupContinueWithoutSignInButton")!.IsVisible = false;
+        this.FindControl<Button>("StartupReopenBrowserButton")!.IsVisible = true;
         _startupSignInPromptTcs?.TrySetResult(true);
+    }
+
+    private void OnStartupReopenBrowserButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _appVM.ReopenAuthBrowser();
     }
 
     private void OnStartupContinueWithoutSignInButtonClick(object? sender, RoutedEventArgs e)
@@ -578,12 +596,11 @@ public partial class AppShellView : UserControl
     {
         // Load persisted debug mode state early so the overlay is visible during restore.
         await _appVM.LoadDebugModeFromStorageAsync();
-        await _appVM.LoadDotPatternFromStorageAsync();
 
         // Load persisted theme and apply it.
         await _appVM.LoadThemeFromStorageAsync();
         var theme = Models.AppTheme.GetById(_appVM.SelectedThemeId);
-        _primaryView?.ApplyTheme(theme, _appVM.IsDotPatternEnabled);
+        _primaryView?.ApplyTheme(theme);
 
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
@@ -719,7 +736,7 @@ public partial class AppShellView : UserControl
                 if (pullResult.BibleReadingProgress != null
                     && _bibleReadingView?.DataContext is BibleReadingViewModel brVm)
                 {
-                    brVm.ApplyRemoteSnapshot(pullResult.BibleReadingProgress);
+                    await brVm.ApplyRemoteSnapshotAsync(pullResult.BibleReadingProgress).ConfigureAwait(false);
                 }
             }
         }
@@ -813,9 +830,12 @@ public partial class AppShellView : UserControl
             window.PropertyChanged -= OnWindowPropertyChanged;
 
         SharedSyncRuntime.Instance.SyncCoordinator.SyncProgress -= OnSyncProgress;
+        _appVM.BibleReadingProgressPulled -= OnBibleReadingProgressPulled;
 
         if (_authStateHandler != null)
             _appVM.PropertyChanged -= _authStateHandler;
+        if (_brDebugModeHandler != null)
+            _appVM.PropertyChanged -= _brDebugModeHandler;
 
         _appVM.Dispose();
         _persistTabsCts?.Cancel();
@@ -1306,6 +1326,15 @@ public partial class AppShellView : UserControl
                 SetDebugSurface(showPointer: false, showDrawing: false, showSync: false);
                 break;
         }
+    }
+
+    private void OnBibleReadingProgressPulled(object? sender, BibleReadingProgressSnapshot snapshot)
+    {
+        Dispatcher.UIThread.Post(async () =>
+        {
+            if (_bibleReadingView?.DataContext is BibleReadingViewModel brVm)
+                await brVm.ApplyRemoteSnapshotAsync(snapshot).ConfigureAwait(false);
+        });
     }
 
     private void OnSyncProgress(object? sender, SyncProgressEventArgs e)

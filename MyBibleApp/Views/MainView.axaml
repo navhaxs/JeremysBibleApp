@@ -265,11 +265,6 @@
                                         IsChecked="{Binding AppVM.IsDebugMode, Mode=TwoWay}"
                                         OffContent="Debug mode"
                                         OnContent="Debug mode" />
-                                    <ToggleSwitch
-                                        IsChecked="{Binding AppVM.IsDotPatternEnabled, Mode=TwoWay}"
-                                        OffContent="Page pattern"
-                                        OnContent="Page pattern" />
-
                                     <Rectangle
                                         Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
                                         Height="1"
@@ -481,7 +476,6 @@
                 VerticalScrollBarVisibility="Disabled"
                 x:Name="ContentHScrollContainer">
             <Grid
-                Background="{DynamicResource ThemeDotPatternBrush}"
                 Margin="0,0,0,0"
                 RowDefinitions="*"
                 x:Name="InkAreaGrid">

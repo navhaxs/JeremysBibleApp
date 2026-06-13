@@ -204,6 +204,12 @@
                   HorizontalAlignment="Center"
                   Padding="24,8"
                   Click="OnStartupContinueWithoutSignInButtonClick" />
+          <Button x:Name="StartupReopenBrowserButton"
+                  Content="Open browser again"
+                  HorizontalAlignment="Center"
+                  Padding="24,8"
+                  IsVisible="False"
+                  Click="OnStartupReopenBrowserButtonClick" />
         </StackPanel>
       </StackPanel>
     </Panel>

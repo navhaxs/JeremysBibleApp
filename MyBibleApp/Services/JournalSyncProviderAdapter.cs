@@ -39,4 +39,6 @@ internal sealed class JournalSyncProviderAdapter : IJournalSyncProvider
             await _journalStore.MergeRemoteAsync(remote).ConfigureAwait(false);
         }
     }
+
+    public void NotifySyncSucceeded() => _journalStore.NotifySyncSucceeded();
 }
