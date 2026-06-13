@@ -102,7 +102,14 @@ public class ChapterGridControl : Control
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        ActualThemeVariantChanged += OnThemeVariantChanged;
         RebuildRenderResources();
+    }
+
+    private void OnThemeVariantChanged(object? sender, EventArgs e)
+    {
+        RebuildRenderResources();
+        InvalidateVisual();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -360,6 +367,7 @@ public class ChapterGridControl : Control
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        ActualThemeVariantChanged -= OnThemeVariantChanged;
         UnsubscribeAll();
         base.OnDetachedFromVisualTree(e);
     }
