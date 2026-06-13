@@ -1044,7 +1044,7 @@ public partial class MainView : UserControl
             if (t.IsCanceled) return;
             Dispatcher.UIThread.Post(() =>
             {
-                if (!_isDraggingProgressBar && _readerProgressTrack != null)
+                if (!_isDraggingProgressBar && !_isPressedOnTrack && _readerProgressTrack != null)
                 {
                     _readerProgressTrack.Opacity = 0;
                     if (!PlatformHelper.IsDesktop)
