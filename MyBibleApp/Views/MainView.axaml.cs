@@ -104,7 +104,7 @@ public partial class MainView : UserControl
     private DateTime _lastScrollTime;
     private int _fastScrollCount;
     private bool _chapterMarkersShownByScroll;
-    private CancellationTokenSource? _scrollStopCts;
+    private int _scrollStopVersion;
     private const double ScrollVelocityThreshold = 3000; // pixels per second
     private const int FastScrollCountThreshold = 3;      // consecutive fast events required
     // Saved scroll recognizers swapped out during annotation mode
@@ -136,7 +136,7 @@ public partial class MainView : UserControl
     private Point _lastTouchPosition;
     private readonly List<(double Y, long Ticks)> _touchVelocitySamples = [];
     private readonly List<(double Y, long Ticks)> _textScrollVelocitySamples = [];
-    private CancellationTokenSource? _textInertiaDebounceCts;
+    private int _textInertiaDebounceVersion;
     private DispatcherTimer? _inertiaTimer;
     private double _inertiaVelocity;
     private Border? _leftMarginTouchZone;
@@ -146,7 +146,7 @@ public partial class MainView : UserControl
     private double? _pendingScrollRestoreY;
     private int _scrollRestoreRetries;
     private bool _isAdjustingWindow;
-    private CancellationTokenSource? _windowCheckCts;
+    private int _windowCheckVersion;
     private bool _immediateExtendPending;
 
     public MainView()
@@ -460,29 +460,26 @@ public partial class MainView : UserControl
                     _textScrollVelocitySamples.RemoveAt(0);
             }
 
-            _textInertiaDebounceCts?.Cancel();
-            _textInertiaDebounceCts = new CancellationTokenSource();
-            var debounceCts = _textInertiaDebounceCts;
-            _ = Task.Delay(40, debounceCts.Token).ContinueWith(t =>
+            var textInertiaVersion = ++_textInertiaDebounceVersion;
+            _ = Task.Delay(40).ContinueWith(t =>
             {
-                if (t.IsCanceled) return;
+                if (_textInertiaDebounceVersion != textInertiaVersion) return;
                 Dispatcher.UIThread.Post(() =>
                 {
-                    if (!_isTouchPanning && _inertiaTimer == null)
+                    if (_textInertiaDebounceVersion == textInertiaVersion && !_isTouchPanning && _inertiaTimer == null)
                         StartTextInertiaFromSamples();
                 });
             }, TaskScheduler.Default);
         }
 
         // Reset the "scroll stopped" timer — hide markers after scrolling stops.
-        _scrollStopCts?.Cancel();
-        _scrollStopCts = new CancellationTokenSource();
-        var cts = _scrollStopCts;
-        _ = Task.Delay(800, cts.Token).ContinueWith(t =>
+        var scrollStopVersion = ++_scrollStopVersion;
+        _ = Task.Delay(800).ContinueWith(t =>
         {
-            if (t.IsCanceled) return;
+            if (_scrollStopVersion != scrollStopVersion) return;
             Dispatcher.UIThread.Post(() =>
             {
+                if (_scrollStopVersion != scrollStopVersion) return;
                 _fastScrollCount = 0;
                 if (_chapterMarkersShownByScroll)
                 {
@@ -510,15 +507,13 @@ public partial class MainView : UserControl
         // near the viewport. Collapsing rapid events prevents thrashing.
         if (!_isAdjustingWindow)
         {
-            _windowCheckCts?.Cancel();
-            _windowCheckCts = new CancellationTokenSource();
-            var windowCts = _windowCheckCts;
-            _ = Task.Delay(100, windowCts.Token).ContinueWith(t =>
+            var windowCheckVersion = ++_windowCheckVersion;
+            _ = Task.Delay(100).ContinueWith(t =>
             {
-                if (t.IsCanceled) return;
+                if (_windowCheckVersion != windowCheckVersion) return;
                 Dispatcher.UIThread.Post(() =>
                 {
-                    if (!windowCts.IsCancellationRequested)
+                    if (_windowCheckVersion == windowCheckVersion)
                         CheckWindowBounds();
                 }, DispatcherPriority.Loaded);
             }, TaskScheduler.Default);
@@ -2285,7 +2280,7 @@ public partial class MainView : UserControl
         _inertiaTimer.Tick -= OnInertiaTick;
         _inertiaTimer = null;
         _inertiaVelocity = 0;
-        _textInertiaDebounceCts?.Cancel();
+        _textInertiaDebounceVersion++;
         _textScrollVelocitySamples.Clear();
     }
 
