@@ -922,6 +922,9 @@ public partial class MainView : UserControl
         if (_paragraphList == null || _paragraphs.Count == 0)
             return;
 
+        // Single visual-tree walk shared by both the progress thumb and verse sync.
+        var (topParagraph, topOffset, topBodyText) = GetTopVisibleParagraphsOnce();
+
         // Position the custom thumb using paragraph-index fraction (works with
         // virtualization), but detect true top/bottom via ScrollViewer offset
         // so the thumb reaches both extremes.
@@ -938,19 +941,15 @@ public partial class MainView : UserControl
             {
                 fraction = 1;
             }
+            else if (topParagraph != null)
+            {
+                var idx = FindParagraphIndex(topParagraph);
+                var maxIndex = Math.Max(1, _paragraphs.Count - 1);
+                fraction = idx >= 0 ? Math.Clamp((idx + topOffset) / maxIndex, 0, 1) : 0;
+            }
             else
             {
-                var (topPara, topOff) = GetTopVisibleParagraph();
-                if (topPara != null)
-                {
-                    var idx = FindParagraphIndex(topPara);
-                    var maxIndex = Math.Max(1, _paragraphs.Count - 1);
-                    fraction = idx >= 0 ? Math.Clamp((idx + topOff) / maxIndex, 0, 1) : 0;
-                }
-                else
-                {
-                    fraction = 0;
-                }
+                fraction = 0;
             }
 
             var trackHeight = _readerProgressTrack.Bounds.Height;
@@ -961,12 +960,11 @@ public partial class MainView : UserControl
 
         if (_suppressReaderProgressSync) return;
 
-        var (topParagraph, _) = GetTopVisibleParagraph();
         if (topParagraph == null) return;
 
         if (DataContext is ScriptureViewModel vm)
         {
-            var syncParagraph = GetTopVisibleBodyTextParagraph() ?? topParagraph;
+            var syncParagraph = topBodyText ?? topParagraph;
             vm.Header = $"{vm.BookTitle} {syncParagraph.StartChapter}:{syncParagraph.StartVerse}";
             vm.UpdateLookupFromReaderProgress(syncParagraph.StartChapter, syncParagraph.StartVerse);
         }
@@ -1269,55 +1267,15 @@ public partial class MainView : UserControl
             _contentHScrollContainer.Offset = Vector.Zero;
     }
 
-    private (BibleParagraph? Paragraph, double OffsetWithinParagraph) GetTopVisibleParagraph()
-    {
-        if (_paragraphList == null)
-        {
-            return (null, 0);
-        }
-
-        var candidates = _paragraphList.GetVisualDescendants()
-            .OfType<ListBoxItem>()
-            .Select(item => new
-            {
-                Item = item,
-                Top = item.TranslatePoint(default, _paragraphList)?.Y,
-                Height = item.Bounds.Height,
-                Paragraph = item.DataContext as BibleParagraph
-            })
-            .Where(x => x.Paragraph != null && x.Top.HasValue && x.Height > 0)
-            .Select(x => new
-            {
-                x.Paragraph,
-                Top = x.Top!.Value,
-                x.Height
-            })
-            .Where(x => x.Top + x.Height > 0)
-            .OrderBy(x => x.Top)
-            .ToList();
-
-        if (candidates.Count == 0)
-        {
-            return (null, 0);
-        }
-
-        var top = candidates[0];
-        var offsetWithinParagraph = Math.Clamp(-top.Top / top.Height, 0, 1);
-        return (top.Paragraph, offsetWithinParagraph);
-    }
-
     /// <summary>
-    /// Returns the topmost visible body-text paragraph for chapter/verse syncing.
-    /// Skips headings and parallel references (their <see cref="BibleParagraph.StartVerse"/>
-    /// is not updated by verse markers and may reflect a stale position).
-    /// Also skips the topmost item when it is mostly scrolled off AND is a chapter
-    /// drop-cap or heading, so that the large visual gap at the top of a chapter
-    /// doesn't prevent the next paragraph from becoming the reported position.
+    /// Single visual-tree walk returning both the topmost visible paragraph (any type)
+    /// and the topmost visible body-text paragraph. Called once per scroll event so
+    /// callers don't duplicate the expensive GetVisualDescendants traversal.
     /// </summary>
-    private BibleParagraph? GetTopVisibleBodyTextParagraph()
+    private (BibleParagraph? Top, double TopOffset, BibleParagraph? TopBodyText) GetTopVisibleParagraphsOnce()
     {
         if (_paragraphList == null)
-            return null;
+            return (null, 0, null);
 
         var candidates = _paragraphList.GetVisualDescendants()
             .OfType<ListBoxItem>()
@@ -1332,32 +1290,40 @@ public partial class MainView : UserControl
             {
                 Paragraph = x.Paragraph!,
                 Top = x.Top!.Value,
-                Height = x.Height
+                x.Height
             })
             .Where(x => x.Top + x.Height > 0)
             .OrderBy(x => x.Top)
             .ToList();
 
         if (candidates.Count == 0)
-            return null;
+            return (null, 0, null);
 
+        var first = candidates[0];
+        var topOffset = Math.Clamp(-first.Top / first.Height, 0, 1);
+
+        // Find topmost body-text paragraph in the same pass.
+        BibleParagraph? topBodyText = null;
         foreach (var candidate in candidates)
         {
             if (!candidate.Paragraph.IsBodyText)
                 continue;
 
-            // If this item is mostly scrolled off (>85 % hidden) AND it carries a
-            // chapter drop cap or the item after it is also body text, skip it so
-            // the heading/drop-cap whitespace at the top doesn't anchor the verse.
+            // Skip mostly-scrolled-off drop-cap paragraphs so the large visual gap at
+            // the top of a chapter doesn't anchor the verse to the wrong paragraph.
             var visibleFraction = Math.Clamp((candidate.Top + candidate.Height) / candidate.Height, 0.0, 1.0);
             if (visibleFraction < 0.15 && candidate.Paragraph.HasChapterDropCap)
                 continue;
 
-            return candidate.Paragraph;
+            topBodyText = candidate.Paragraph;
+            break;
         }
 
-        // Fallback: return the first body-text paragraph found, even if it's mostly off-screen.
-        return candidates.FirstOrDefault(x => x.Paragraph.IsBodyText)?.Paragraph;
+        // Fallback: first body-text paragraph even if mostly off-screen.
+        if (topBodyText == null)
+            topBodyText = candidates.FirstOrDefault(x => x.Paragraph.IsBodyText)?.Paragraph;
+
+        return (first.Paragraph, topOffset, topBodyText);
     }
 
     private int FindParagraphIndex(BibleParagraph paragraph)
