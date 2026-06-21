@@ -107,6 +107,7 @@ public class JournalStoreMergeTests : IDisposable
         var journal = await CreateJournalAsync();
         var stroke = MakeStroke("stroke-abc");
         await _store.AppendInkStrokeAsync(journal.Id, stroke);
+        _store.NotifySyncSucceeded(); // simulate: stroke was pushed to Drive
 
         await _store.RemoveInkStrokeAsync(journal.Id, "stroke-abc", "GEN", 1);
 
@@ -178,6 +179,7 @@ public class JournalStoreMergeTests : IDisposable
 
         var stroke = MakeStroke("stroke-y");
         await _store.AppendInkStrokeAsync(id, stroke);
+        _store.NotifySyncSucceeded(); // simulate: stroke was pushed to Drive
         await _store.RemoveInkStrokeAsync(id, "stroke-y", "GEN", 1);
 
         // Remote still has stroke-y (hasn't synced the erase)
@@ -225,6 +227,7 @@ public class JournalStoreMergeTests : IDisposable
         var strokeB = MakeStroke("stroke-b");
         await _store.AppendInkStrokeAsync(id, strokeA);
         await _store.AppendInkStrokeAsync(id, strokeB);
+        _store.NotifySyncSucceeded(); // simulate: strokes were pushed to Drive
         await _store.RemoveInkStrokeAsync(id, "stroke-a", "GEN", 1);
 
         var remoteEntry = MakeEntry(id, t.AddMinutes(2), [strokeA], [new InkStrokeTombstone

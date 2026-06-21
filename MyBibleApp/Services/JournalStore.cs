@@ -12,6 +12,7 @@ namespace MyBibleApp.Services;
 public sealed class JournalStore : IJournalStore
 {
     private readonly string _filePath;
+    private readonly string _localOnlyFilePath;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
 
     // Tracks journals whose ink stroke save failed and need retry on next save
@@ -39,6 +40,20 @@ public sealed class JournalStore : IJournalStore
             Directory.CreateDirectory(storageDir);
 
         _filePath = Path.Combine(storageDir, "journals.json");
+        _localOnlyFilePath = Path.Combine(storageDir, "local-only-strokes.json");
+
+        if (File.Exists(_localOnlyFilePath))
+        {
+            try
+            {
+                var raw = File.ReadAllText(_localOnlyFilePath);
+                var ids = JsonSerializer.Deserialize<List<string>>(raw, JsonOptions);
+                if (ids != null)
+                    foreach (var id in ids)
+                        _localOnlyStrokeIds.Add(id);
+            }
+            catch { }
+        }
     }
 
     /// <inheritdoc />
@@ -301,6 +316,7 @@ public sealed class JournalStore : IJournalStore
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
             lock (_localOnlyLock)
                 foreach (var s in strokes) _localOnlyStrokeIds.Add(s.Id);
+            SaveLocalOnlySet();
             return Result.Success();
         }
         catch (Exception ex)
@@ -331,6 +347,7 @@ public sealed class JournalStore : IJournalStore
             entry.Metadata.LastModifiedUtc = DateTime.UtcNow;
             await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
             lock (_localOnlyLock) _localOnlyStrokeIds.Add(stroke.Id);
+            SaveLocalOnlySet();
             return Result.Success();
         }
         catch (Exception ex)
@@ -374,6 +391,7 @@ public sealed class JournalStore : IJournalStore
                         });
                     entry.Metadata.LastModifiedUtc = now;
                     await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+                    if (wasLocalOnly) SaveLocalOnlySet();
                 }
             }
             return Result.Success();
@@ -537,6 +555,19 @@ public sealed class JournalStore : IJournalStore
     public void NotifySyncSucceeded()
     {
         lock (_localOnlyLock) _localOnlyStrokeIds.Clear();
+        try { File.Delete(_localOnlyFilePath); } catch { }
+    }
+
+    private void SaveLocalOnlySet()
+    {
+        try
+        {
+            List<string> snapshot;
+            lock (_localOnlyLock) snapshot = [.. _localOnlyStrokeIds];
+            var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+            WriteAtomically(_localOnlyFilePath, json);
+        }
+        catch { }
     }
 
     private async Task<(List<JournalEntry> Entries, List<DeletedJournalTombstone> Tombstones)> LoadEntriesAsync()
