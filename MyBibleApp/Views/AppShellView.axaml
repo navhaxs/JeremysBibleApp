@@ -53,6 +53,11 @@
         <ColumnDefinition Width="0" MinWidth="0" />
         <ColumnDefinition Width="0" MinWidth="0" />
       </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*" MinHeight="120" />
+        <RowDefinition Height="0" MinHeight="0" />
+        <RowDefinition Height="0" MinHeight="0" />
+      </Grid.RowDefinitions>
 
       <views:MainView Grid.Column="0" x:Name="MainView" DataContext="{x:Null}" />
 
@@ -62,32 +67,33 @@
                     ResizeBehavior="PreviousAndNext"
                     ResizeDirection="Columns"
                     Background="{DynamicResource ThemeAccentBrush2}"
-                    HorizontalAlignment="Stretch" />
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch" />
 
       <views:MainView Grid.Column="2" x:Name="SecondaryView" IsVisible="False" DataContext="{x:Null}" />
 
-      <!-- Debug overlays span both panes -->
-      <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugView"             IsVisible="False" />
-      <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugDrawingView"      IsVisible="False" />
-      <views:SyncDebugView     Grid.Column="0" Grid.ColumnSpan="3" x:Name="SyncDebugView"         IsVisible="False" />
-      <views:ThemeResourcesDebugView Grid.Column="0" Grid.ColumnSpan="3" x:Name="ThemeResourcesDebugView" IsVisible="False" />
-      <views:LocalStorageDebugView   Grid.Column="0" Grid.ColumnSpan="3" x:Name="LocalStorageDebugView"   IsVisible="False" />
-      <views:DebugLogsView            Grid.Column="0" Grid.ColumnSpan="3" x:Name="DebugLogsView"          IsVisible="False" />
+      <!-- Debug overlays span both panes in both split orientations -->
+      <views:DebugPointerView  Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="DebugView"             IsVisible="False" />
+      <views:DebugDrawingView  Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="DebugDrawingView"      IsVisible="False" />
+      <views:SyncDebugView     Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="SyncDebugView"         IsVisible="False" />
+      <views:ThemeResourcesDebugView Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="ThemeResourcesDebugView" IsVisible="False" />
+      <views:LocalStorageDebugView   Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="LocalStorageDebugView"   IsVisible="False" />
+      <views:DebugLogsView            Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="DebugLogsView"          IsVisible="False" />
 
       <!-- Bible Reading overlay — full-shell, toggled via header button -->
-      <views:BibleReadingView  Grid.Column="0" Grid.ColumnSpan="3" x:Name="BibleReadingView" IsVisible="False" ZIndex="25"
+      <views:BibleReadingView  Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3" x:Name="BibleReadingView" IsVisible="False" ZIndex="25"
                                Background="{DynamicResource ThemeBackgroundBrush}" />
 
       <!-- Dismiss overlay: transparent layer that closes the journal flyout on tap-away -->
       <Border x:Name="JournalFlyoutDismissOverlay"
-              Grid.Column="0" Grid.ColumnSpan="3"
+              Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3"
               IsVisible="False"
               Background="Transparent"
               ZIndex="99" />
 
       <!-- Journal flyout — floating panel anchored to the right, below the toolbar -->
       <views:JournalFlyoutView x:Name="JournalFlyoutView"
-                               Grid.Column="0" Grid.ColumnSpan="3"
+                               Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3"
                                IsVisible="False"
                                HorizontalAlignment="Right"
                                VerticalAlignment="Top"
@@ -95,7 +101,7 @@
                                ZIndex="100" />
 
       <!-- Debug log overlay — bottom-left, visible only in debug mode -->
-      <Border Grid.Column="0" Grid.ColumnSpan="3"
+      <Border Grid.Column="0" Grid.ColumnSpan="3" Grid.RowSpan="3"
               IsVisible="{Binding IsDebugMode}"
               IsHitTestVisible="False"
               HorizontalAlignment="Left"

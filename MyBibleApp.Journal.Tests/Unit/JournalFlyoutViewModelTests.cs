@@ -129,6 +129,7 @@ file sealed class FakeJournalStore : IJournalStore
         Task.FromResult(Result.Success());
     public Task<JournalDataSnapshot> GetSnapshotAsync() => Task.FromResult(new JournalDataSnapshot { Journals = [], DeletedJournals = [], LastModifiedUtc = DateTime.UtcNow });
     public Task MergeRemoteAsync(JournalDataSnapshot remote) => Task.CompletedTask;
+    public void NotifySyncSucceeded() { }
 }
 
 file static class TestHelpers

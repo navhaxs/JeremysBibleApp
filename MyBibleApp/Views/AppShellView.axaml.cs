@@ -28,6 +28,8 @@ public partial class AppShellView : UserControl
     private MainView?         _secondaryView;
     private StackPanel?       _tabButtonsHost;
     private bool              _isSplit;
+    private bool              _isPortrait;
+    private int               _orientationVersion;
     private DebugPointerView? _debugPointerView;
     private DebugDrawingView? _debugDrawingView;
     private SyncDebugView?    _syncDebugView;
@@ -124,7 +126,10 @@ public partial class AppShellView : UserControl
         // Give the secondary pane its own VM up front so it never inherits the
         // AppShell DataContext (which is the global AppViewModel).
         if (_secondaryView != null)
+        {
             _secondaryView.DataContext = new ScriptureViewModel(_appVM);
+            _secondaryView.MarkAsSecondaryPane();
+        }
 
         _ = RestoreTabsAndAuthAsync();
 
@@ -217,6 +222,12 @@ public partial class AppShellView : UserControl
 
         _primaryView.DataContext = vm;
 
+        // Clear strokes from the outgoing tab BEFORE restoring the snapshot so the snapshot
+        // is visible immediately during the async chapter-load gap. (Previously LoadJournalStrokes
+        // was called after RestoreInkState, wiping out the snapshot before it could be seen.)
+        if (!_isRestoringTabs)
+            _primaryView.LoadJournalStrokes([]);
+
         // Restore ink state and navigate to the saved verse position.
         _primaryView.RestoreInkState(_tabInkStates.TryGetValue(vm, out var inkState) ? inkState : null);
         _appVM.AppendSyncDebugLog($"[Tab] Entering tab {index} \"{vm.Header}\" — navigating to {targetPos.Chapter}:{targetPos.Verse}");
@@ -224,6 +235,7 @@ public partial class AppShellView : UserControl
 
         // Load journal strokes for incoming tab.
         // Skip during restore — RestoreTabsAndAuthAsync reloads after content and BookCode are ready.
+        // OnChapterEnteredWindow uses ReplaceChapterStrokes, so snapshot strokes won't duplicate.
         if (!_isRestoringTabs)
         {
             var journalId = _tabActiveJournalIds.TryGetValue(vm, out var jid) ? jid : null;
@@ -232,8 +244,6 @@ public partial class AppShellView : UserControl
                 var journal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(journalId);
                 if (journal != null)
                 {
-                    // Strokes will be loaded by OnChapterEnteredWindow as chapters enter the window.
-                    _primaryView.LoadJournalStrokes([]);   // clear previous tab's strokes
                     _primaryView.SetActiveJournalName(journal.Name);
                     _primaryView.SetUnsavedBadgeVisible(false);
                     _primaryView.SetJournalLayout(journal.Layout);
@@ -242,7 +252,6 @@ public partial class AppShellView : UserControl
             else
             {
                 var ephemeral = _tabEphemeralStrokes.TryGetValue(vm, out var ep) ? ep : [];
-                _primaryView.LoadJournalStrokes([]);   // clear; ChapterEnteredWindow loads incrementally
                 _primaryView.SetActiveJournalName(null);
                 _primaryView.SetUnsavedBadgeVisible(ephemeral.Count > 0);
             }
@@ -1159,7 +1168,10 @@ public partial class AppShellView : UserControl
         // If the chapter exited the window while we were loading, discard the result.
         if (ct.IsCancellationRequested) return;
 
-        _primaryView?.AppendChapterStrokes(strokes);
+        // ReplaceChapterStrokes removes any existing strokes for this chapter before adding the
+        // loaded ones. This handles the tab-switch case where RestoreInkState already placed
+        // snapshot strokes; plain AppendChapterStrokes would duplicate them.
+        _primaryView?.ReplaceChapterStrokes(chapter, strokes);
     }
 
     private void OnChapterExitedWindow(object? sender, int chapter)
@@ -1238,21 +1250,27 @@ public partial class AppShellView : UserControl
 
         if (_isSplit)
         {
-
-            _contentGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
-            _contentGrid.ColumnDefinitions[1].Width = new GridLength(SplitterWidth);
-            _contentGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
             _paneSplitter.IsVisible = true;
             _secondaryView.IsVisible = true;
 
+            _isPortrait = IsPortrait();
+            ApplySplitLayout(_isPortrait);
             ApplySplitSizing();
         }
         else
         {
+            // Collapse both axes and restore element positions to column-mode defaults.
             _contentGrid.ColumnDefinitions[0].MinWidth = 120;
             _contentGrid.ColumnDefinitions[1].Width = new GridLength(0);
             _contentGrid.ColumnDefinitions[2].Width = new GridLength(0);
             _contentGrid.ColumnDefinitions[2].MinWidth = 0;
+            _contentGrid.RowDefinitions[1].Height = new GridLength(0);
+            _contentGrid.RowDefinitions[1].MinHeight = 0;
+            _contentGrid.RowDefinitions[2].Height = new GridLength(0);
+            _contentGrid.RowDefinitions[2].MinHeight = 0;
+            Grid.SetRow(_paneSplitter, 0);  Grid.SetColumn(_paneSplitter, 1);
+            Grid.SetRow(_secondaryView, 0); Grid.SetColumn(_secondaryView, 2);
+            _paneSplitter.ResizeDirection = GridResizeDirection.Columns;
             _paneSplitter.IsVisible = false;
             _secondaryView.IsVisible = false;
         }
@@ -1264,8 +1282,28 @@ public partial class AppShellView : UserControl
 
     private void OnContentGridSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        if (_isSplit)
+        if (!_isSplit) return;
+
+        var newPortrait = IsPortrait();
+        if (newPortrait != _isPortrait)
+        {
+            var v = ++_orientationVersion;
+            _ = Task.Delay(250).ContinueWith(_ =>
+            {
+                if (_orientationVersion != v) return;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_orientationVersion != v) return;
+                    _isPortrait = IsPortrait();
+                    ApplySplitLayout(_isPortrait);
+                    ApplySplitSizing();
+                });
+            }, TaskScheduler.Default);
+        }
+        else
+        {
             ApplySplitSizing();
+        }
     }
 
     private void UpdateTabBarVisibility(double? width = null)
@@ -1279,21 +1317,72 @@ public partial class AppShellView : UserControl
         UpdateTabBarVisibility(e.NewSize.Width);
     }
 
+    private bool IsPortrait() =>
+        _contentGrid is { } g && g.Bounds.Height > g.Bounds.Width;
+
+    private void ApplySplitLayout(bool portrait)
+    {
+        if (_contentGrid == null || _paneSplitter == null || _secondaryView == null) return;
+
+        if (portrait)
+        {
+            // Stack views vertically (row split).
+            _contentGrid.ColumnDefinitions[1].Width = new GridLength(0);
+            _contentGrid.ColumnDefinitions[2].Width = new GridLength(0);
+            _contentGrid.ColumnDefinitions[2].MinWidth = 0;
+
+            _contentGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            _contentGrid.RowDefinitions[1].Height = new GridLength(SplitterWidth);
+            _contentGrid.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
+
+            Grid.SetRow(_paneSplitter, 1);  Grid.SetColumn(_paneSplitter, 0);
+            Grid.SetRow(_secondaryView, 2); Grid.SetColumn(_secondaryView, 0);
+
+            _paneSplitter.ResizeDirection = GridResizeDirection.Rows;
+        }
+        else
+        {
+            // Side-by-side views (column split).
+            _contentGrid.RowDefinitions[1].Height = new GridLength(0);
+            _contentGrid.RowDefinitions[1].MinHeight = 0;
+            _contentGrid.RowDefinitions[2].Height = new GridLength(0);
+            _contentGrid.RowDefinitions[2].MinHeight = 0;
+
+            _contentGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            _contentGrid.ColumnDefinitions[1].Width = new GridLength(SplitterWidth);
+            _contentGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+
+            Grid.SetRow(_paneSplitter, 0);  Grid.SetColumn(_paneSplitter, 1);
+            Grid.SetRow(_secondaryView, 0); Grid.SetColumn(_secondaryView, 2);
+
+            _paneSplitter.ResizeDirection = GridResizeDirection.Columns;
+        }
+    }
+
     private void ApplySplitSizing()
     {
         if (_contentGrid == null) return;
 
-        var col0 = _contentGrid.ColumnDefinitions[0];
-        var col2 = _contentGrid.ColumnDefinitions[2];
-
-        var available = Math.Max(0, _contentGrid.Bounds.Width - SplitterWidth);
-        var half = available / 2.0;
-
-        // Target 300px where possible; on narrow screens, reduce gracefully.
-        var effectiveMin = Math.Min(PreferredPaneMinWidth, Math.Max(AbsolutePaneMinWidth, half));
-
-        col0.MinWidth = effectiveMin;
-        col2.MinWidth = effectiveMin;
+        if (_isPortrait)
+        {
+            var row0 = _contentGrid.RowDefinitions[0];
+            var row2 = _contentGrid.RowDefinitions[2];
+            var available = Math.Max(0, _contentGrid.Bounds.Height - SplitterWidth);
+            var half = available / 2.0;
+            var effectiveMin = Math.Min(PreferredPaneMinWidth, Math.Max(AbsolutePaneMinWidth, half));
+            row0.MinHeight = effectiveMin;
+            row2.MinHeight = effectiveMin;
+        }
+        else
+        {
+            var col0 = _contentGrid.ColumnDefinitions[0];
+            var col2 = _contentGrid.ColumnDefinitions[2];
+            var available = Math.Max(0, _contentGrid.Bounds.Width - SplitterWidth);
+            var half = available / 2.0;
+            var effectiveMin = Math.Min(PreferredPaneMinWidth, Math.Max(AbsolutePaneMinWidth, half));
+            col0.MinWidth = effectiveMin;
+            col2.MinWidth = effectiveMin;
+        }
     }
 
     // ── Debug view handlers ───────────────────────────────────────────────────

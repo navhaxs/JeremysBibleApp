@@ -36,6 +36,7 @@ public partial class MainView : UserControl
     private ToggleButton? _splitViewToggle;
     private Button? _headerLookupButton;
     private bool _suppressSplitEvent;
+    private bool _isSecondaryPane;
     private bool _isApplyingLookupSelection;
     private Models.AppTheme _currentTheme = Models.AppTheme.LightWhite;
     private AppViewModel? _watchedAppVM;
@@ -219,6 +220,12 @@ public partial class MainView : UserControl
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
+
+        if (_isSecondaryPane)
+        {
+            if (_appMenuButton   != null) _appMenuButton.IsVisible   = false;
+            if (_splitViewToggle != null) _splitViewToggle.IsVisible = false;
+        }
         _inkOverlay     = this.FindControl<InkOverlayCanvas>("InkOverlay");
         _penUnderlay    = this.FindControl<InkOverlayCanvas>("PenUnderlay");
         _inkAreaGrid    = this.FindControl<Grid>("InkAreaGrid");
@@ -705,6 +712,15 @@ public partial class MainView : UserControl
     {
         if (_paragraphList != null)
             _paragraphList.LayoutUpdated -= OnScrollRestoreLayoutUpdated;
+    }
+
+    /// <summary>Called by AppShellView to hide controls that are redundant in the secondary pane.</summary>
+    public void MarkAsSecondaryPane()
+    {
+        _isSecondaryPane = true;
+        // Controls assigned in OnLoaded; apply now if already loaded, else OnLoaded handles it.
+        if (_appMenuButton   != null) _appMenuButton.IsVisible   = false;
+        if (_splitViewToggle != null) _splitViewToggle.IsVisible = false;
     }
 
     /// <summary>Called by AppShellView to sync the button state without re-firing the event.</summary>
