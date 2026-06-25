@@ -507,15 +507,14 @@
                     SelectionChanged="OnParagraphListSelectionChanged"
                     SelectionMode="Single">
                     <!--
-                        Plain StackPanel disables item-container recycling.
-                        VirtualizingStackPanel caches item heights; when a container is recycled
-                        from a short paragraph to a tall one the stale cached height causes items
-                        to overlap. Bible chapters are short enough (≤200 paragraphs) that
-                        full materialisation is fine.
+                        VirtualScrollPanel adds virtual top/bottom padding to represent
+                        unloaded chapters above/below the realized window, keeping the scroll
+                        extent equal to the full virtual book height. Like StackPanel, it does
+                        not virtualize containers (all realized items are always laid out).
                     -->
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <StackPanel />
+                            <controls:VirtualScrollPanel />
                         </ItemsPanelTemplate>
                     </ListBox.ItemsPanel>
                     <ListBox.ItemTemplate>

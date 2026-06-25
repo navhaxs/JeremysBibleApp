@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using Avalonia.Collections;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,14 +43,22 @@ public partial class MainView : UserControl
     private Models.AppTheme _currentTheme = Models.AppTheme.LightWhite;
     private AppViewModel? _watchedAppVM;
     // Windowed paragraph loading.
-    private readonly ObservableCollection<BibleParagraph>
-        _windowedItems = [];
+    private readonly AvaloniaList<BibleParagraph> _windowedItems = [];
     private int _windowStart;   // index into _chapterGroups (0-based)
     private int _windowEnd;     // exclusive upper bound into _chapterGroups
 
     // Cache accurate measured heights by 1-based chapter number.
     // Populated by TrimWindowTop; used by ExtendWindowUp for accurate offset compensation.
     private readonly Dictionary<int, double> _measuredChapterHeights = new();
+
+    // Virtual heights for all chapters in the book (0-based).
+    // Initially estimated; updated to measured values as chapters are laid out.
+    // Drives VirtualScrollPanel top/bottom padding so the scroll extent always
+    // represents the full book height, not just the loaded window.
+    private double[] _virtualHeights = Array.Empty<double>();
+    private VirtualScrollPanel? _virtualScrollPanel;
+    private double _topSpacerHeight;
+    private double _bottomSpacerHeight;
 
     // Events for chapter enter/exit — AppShellView uses these to load/unload ink strokes.
     public event EventHandler<int>? ChapterEnteredWindow;
@@ -83,6 +92,7 @@ public partial class MainView : UserControl
     private Border? _readerProgressThumb;
     private Canvas? _chapterMarkersCanvas;
     private bool _isDraggingProgressBar;
+    private double _lastDragFraction;
     private bool _isPressedOnTrack;
     private double _dragStartY;
     private CancellationTokenSource? _scrollbarHideCts;
@@ -460,6 +470,10 @@ public partial class MainView : UserControl
         _paragraphScrollViewer = sv;
         _paragraphScrollViewer.ScrollChanged += OnParagraphScrollChanged;
         _isScrollTrackingAttached = true;
+
+        _virtualScrollPanel ??= _paragraphList.GetVisualDescendants()
+            .OfType<VirtualScrollPanel>().FirstOrDefault();
+        UpdateSpacers();   // apply any pre-computed heights if InitializeVirtualHeights ran first
 
         var scp = sv.GetVisualDescendants().OfType<ScrollContentPresenter>().FirstOrDefault();
         if (scp != null)
@@ -1063,6 +1077,24 @@ public partial class MainView : UserControl
         if (_paragraphList == null || _paragraphs.Count == 0) return;
         fraction = Math.Clamp(fraction, 0, 1);
 
+        // During drag: lightweight path — advance virtual scroll offset without loading chapters.
+        // Avoids expensive EnsureChapterInWindow on every pointer-move event (~60 fps).
+        // Content loads once on pointer release when _isDraggingProgressBar is cleared first.
+        if (_isDraggingProgressBar && _paragraphScrollViewer != null && _virtualHeights.Length > 0)
+        {
+            var scrollable = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+            if (scrollable > 0)
+            {
+                var dragIdx = (int)(fraction * (_paragraphs.Count - 1));
+                var targetChapterIdx = _paragraphs[dragIdx].StartChapter - 1; // 0-based
+                var virtualY = 0.0;
+                for (var i = 0; i < Math.Min(targetChapterIdx, _virtualHeights.Length); i++)
+                    virtualY += _virtualHeights[i];
+                _paragraphScrollViewer.Offset = new Avalonia.Vector(0, Math.Min(virtualY, scrollable));
+            }
+            return;
+        }
+
         if (fraction <= 0 && _paragraphScrollViewer != null)
         {
             EnsureChapterInWindow(1);
@@ -1083,7 +1115,13 @@ public partial class MainView : UserControl
         var targetIndex = (int)(fraction * (_paragraphs.Count - 1));
         var targetPara  = _paragraphs[targetIndex];
         EnsureChapterInWindow(targetPara.StartChapter);
-        _paragraphList.ScrollIntoView(targetPara);
+        // Defer ScrollIntoView to after the layout pass so item containers exist and have bounds.
+        // EnsureChapterInWindow already positions the viewport at _topSpacerHeight (showing text),
+        // so the defer only refines position to the exact target paragraph.
+        var pendingPara = targetPara;
+        Dispatcher.UIThread.Post(
+            () => _paragraphList?.ScrollIntoView(pendingPara),
+            DispatcherPriority.Loaded);
     }
 
     private void OnProgressTrackPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -1110,7 +1148,8 @@ public partial class MainView : UserControl
             BuildChapterMarkers();
         }
 
-        ScrollToFraction(y / _readerProgressTrack.Bounds.Height);
+        _lastDragFraction = y / _readerProgressTrack.Bounds.Height;
+        ScrollToFraction(_lastDragFraction);
 
         // Move thumb immediately for responsive feel while scroll catches up.
         if (_readerProgressThumb != null)
@@ -1134,6 +1173,8 @@ public partial class MainView : UserControl
             _isDraggingProgressBar = false;
             if (_chapterMarkersCanvas != null)
                 _chapterMarkersCanvas.IsVisible = false;
+            // Flag cleared first so ScrollToFraction takes the full EnsureChapterInWindow path.
+            ScrollToFraction(_lastDragFraction);
         }
 
         // Restart the auto-hide countdown after interaction ends.
@@ -1151,6 +1192,27 @@ public partial class MainView : UserControl
             _chapterMarkersCanvas.IsVisible = false;
         if (!PlatformHelper.IsDesktop)
             ShowScrollbarBriefly();
+        ScrollToFraction(_lastDragFraction);
+    }
+
+    /// <summary>
+    /// Fires the window extend/bounds checks suppressed during thumb drag.
+    /// Called from all scrollbar pointer-release paths.
+    /// </summary>
+    private void FireWindowChecksAfterScrollbarRelease()
+    {
+        if (_isAdjustingWindow) return;
+        CheckWindowExtend();
+        var v = ++_windowCheckVersion;
+        _ = Task.Delay(50).ContinueWith(_ =>
+        {
+            if (_windowCheckVersion != v) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_windowCheckVersion == v)
+                    CheckWindowBounds();
+            }, DispatcherPriority.Loaded);
+        }, TaskScheduler.Default);
     }
 
     // ── Mobile scrollbar auto-hide ────────────────────────────────────────────
@@ -1417,9 +1479,18 @@ public partial class MainView : UserControl
         for (var i = 0; i < _paragraphs.Count; i++)
         {
             if (ReferenceEquals(_paragraphs[i], paragraph))
-            {
                 return i;
-            }
+        }
+
+        // Fallback for PrepareForDisplay copies that differ only in EffectivePoetryLevel
+        // (poetry paragraphs under layout engine v2). Match by stable identity fields.
+        for (var i = 0; i < _paragraphs.Count; i++)
+        {
+            var p = _paragraphs[i];
+            if (p.StartChapter == paragraph.StartChapter
+                && p.StartVerse == paragraph.StartVerse
+                && p.IsHeading == paragraph.IsHeading)
+                return i;
         }
 
         return -1;
@@ -1435,6 +1506,29 @@ public partial class MainView : UserControl
         _chapterStartY.Clear();
         _chapterLocalTops.Clear();
         _measuredChapterHeights.Clear();
+        InitializeVirtualHeights();
+    }
+
+    /// <summary>
+    /// Pre-estimates heights for all chapters in the book using paragraph count.
+    /// Sets the full-book virtual scroll extent so the thumb represents true position.
+    /// Called on book load; spacer heights are then adjusted as chapters enter/exit the window.
+    /// </summary>
+    private void InitializeVirtualHeights()
+    {
+        _virtualHeights = new double[_chapterGroups.Count];
+        for (var i = 0; i < _chapterGroups.Count; i++)
+            _virtualHeights[i] = EstimateChapterHeight(i + 1);
+        _topSpacerHeight = 0;
+        _bottomSpacerHeight = _virtualHeights.Sum();
+        UpdateSpacers();
+    }
+
+    private void UpdateSpacers()
+    {
+        if (_virtualScrollPanel == null) return;
+        _virtualScrollPanel.TopPadding = _topSpacerHeight;
+        _virtualScrollPanel.BottomPadding = _bottomSpacerHeight;
     }
 
     /// <summary>
@@ -1464,6 +1558,11 @@ public partial class MainView : UserControl
 
             if (_chapterGroups.Count == 0) return;
 
+            // Reset spacer heights — window restarts from the top.
+            _topSpacerHeight = 0;
+            _bottomSpacerHeight = _virtualHeights.Length > 0 ? _virtualHeights.Sum() : 0;
+            UpdateSpacers();
+
             // Wait for viewport to be known; if not yet, use a fallback.
             var vpHeight = _paragraphScrollViewer?.Viewport.Height;
             var targetHeight = (vpHeight > 0 ? vpHeight.Value : 800) * 3;
@@ -1476,10 +1575,14 @@ public partial class MainView : UserControl
     }
 
     // Applies layout-version-dependent display flags before adding to _windowedItems.
-    private BibleParagraph PrepareForDisplay(BibleParagraph para) =>
-        para.IsPoetry && _activeLayoutEngineVersion >= 2
-            ? para with { EffectivePoetryLevel = para.PoetryIndentLevel }
-            : para with { EffectivePoetryLevel = 0 };
+    // Returns the original reference when no modification is needed so ReferenceEquals
+    // in FindParagraphIndex can still identify the paragraph in _paragraphs.
+    private BibleParagraph PrepareForDisplay(BibleParagraph para)
+    {
+        if (para.IsPoetry && _activeLayoutEngineVersion >= 2)
+            return para with { EffectivePoetryLevel = para.PoetryIndentLevel };
+        return para.EffectivePoetryLevel == 0 ? para : para with { EffectivePoetryLevel = 0 };
+    }
 
     /// <summary>
     /// Adds chapters at the bottom of the window until the added content height
@@ -1492,8 +1595,16 @@ public partial class MainView : UserControl
         while (_windowEnd < _chapterGroups.Count && (targetHeight <= 0 || added < targetHeight))
         {
             var chapter = _windowEnd + 1;   // 1-based chapter number
-            foreach (var para in _chapterGroups[_windowEnd])
-                _windowedItems.Add(PrepareForDisplay(para));
+
+            // Chapter is leaving the bottom spacer — shrink it before adding items so
+            // both changes are batched into one layout pass.
+            if (_windowEnd < _virtualHeights.Length)
+            {
+                _bottomSpacerHeight = Math.Max(0, _bottomSpacerHeight - _virtualHeights[_windowEnd]);
+                UpdateSpacers();
+            }
+
+            _windowedItems.AddRange(_chapterGroups[_windowEnd].Select(PrepareForDisplay));
 
             _windowEnd++;
             var chEst = EstimateChapterHeight(chapter);
@@ -1515,14 +1626,20 @@ public partial class MainView : UserControl
         var chapter = _windowStart + 1;     // 1-based
         var newParagraphs = _chapterGroups[_windowStart];
 
+        // Chapter is leaving the top spacer — shrink it by virtual height estimate.
+        // Any difference between virtual and actual is handled by extent-delta compensation below.
+        if (_windowStart < _virtualHeights.Length)
+        {
+            _topSpacerHeight = Math.Max(0, _topSpacerHeight - _virtualHeights[_windowStart]);
+            UpdateSpacers();
+        }
+
         // Snapshot extent BEFORE insert so LayoutUpdated can compute actual added height.
         // Using actual extent delta eliminates the paragraphCount×60px estimation error
         // (which is 10–100× wrong for short Psalms chapters or Psalms 119 at 22 500px).
         _pendingTopExtentBeforeAdd = _paragraphScrollViewer.Extent.Height;
 
-        // Prepend paragraphs (ObservableCollection has no AddRange; insert individually).
-        for (var i = newParagraphs.Count - 1; i >= 0; i--)
-            _windowedItems.Insert(0, PrepareForDisplay(newParagraphs[i]));
+        _windowedItems.InsertRange(0, newParagraphs.Select(PrepareForDisplay));
 
         DbgLog($"+ch{chapter} ↑up  [deferred extent-compensation]  win={_windowStart + 1}..{_windowEnd}");
 
@@ -1545,6 +1662,15 @@ public partial class MainView : UserControl
         var removedHeight = measured ?? estimated;
         _measuredChapterHeights[chapter] = removedHeight;   // cache for next ExtendWindowUp
 
+        // Update virtual heights with the actual measured value for accurate future estimates.
+        if (chapter - 1 < _virtualHeights.Length)
+            _virtualHeights[chapter - 1] = removedHeight;
+
+        // Grow top spacer BEFORE removing items so both changes land in one layout pass.
+        // TopPadding increase exactly cancels the item removal — no scroll compensation needed.
+        _topSpacerHeight += removedHeight;
+        UpdateSpacers();
+
         // Remove paragraphs from the start of _windowedItems.
         for (var i = 0; i < removedParagraphs.Count; i++)
             _windowedItems.RemoveAt(0);
@@ -1555,13 +1681,11 @@ public partial class MainView : UserControl
         _chapterStartY.Remove(chapter);
         _chapterLocalTops.Remove(chapter);
 
-        // Defer offset compensation: applying it now races the inertia DispatcherTimer
-        // (higher dispatch priority). ApplyPendingTopCompensation() in LayoutUpdated
-        // applies it against the actual offset after inertia and layout have settled.
-        _pendingTopTrimCompensation += removedHeight;
-        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  pending={_pendingTopTrimCompensation:F0}px  win={_windowStart}..{_windowEnd}");
+        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  spacer={_topSpacerHeight:F0}px  win={_windowStart}..{_windowEnd}");
 
         ChapterExitedWindow?.Invoke(this, chapter);
+        // NOTE: _pendingTopTrimCompensation is NOT set — VirtualScrollPanel.TopPadding
+        // absorbs the removed height, so no explicit scroll offset adjustment is needed.
     }
 
     /// <summary>
@@ -1577,6 +1701,17 @@ public partial class MainView : UserControl
         var chapter = _windowEnd + 1;       // 1-based
         var removedParagraphs = _chapterGroups[_windowEnd];
 
+        var measured = MeasureChapterHeight(chapter);
+        var removedHeight = measured ?? EstimateChapterHeight(chapter);
+
+        // Update virtual heights with actual measured value for accurate future estimates.
+        if (chapter - 1 < _virtualHeights.Length)
+            _virtualHeights[chapter - 1] = removedHeight;
+
+        // Grow bottom spacer (content removing from below viewport — no scroll jump).
+        _bottomSpacerHeight += removedHeight;
+        UpdateSpacers();
+
         for (var i = 0; i < removedParagraphs.Count; i++)
             _windowedItems.RemoveAt(_windowedItems.Count - 1);
 
@@ -1584,7 +1719,7 @@ public partial class MainView : UserControl
         _chapterStartY.Remove(chapter);
         _chapterLocalTops.Remove(chapter);
 
-        DbgLog($"-ch{chapter} ↓trim  win={_windowStart + 1}..{_windowEnd}");
+        DbgLog($"-ch{chapter} ↓trim  ht={removedHeight:F0}px  spacer={_bottomSpacerHeight:F0}px  win={_windowStart + 1}..{_windowEnd}");
         ChapterExitedWindow?.Invoke(this, chapter);
     }
 
@@ -1800,7 +1935,7 @@ public partial class MainView : UserControl
     /// <summary>
     /// Returns the 1-based chapter numbers of the topmost and bottommost chapters
     /// that overlap the visible scroll range, using the cached <see cref="_chapterStartY"/> positions.
-    /// Falls back to the full loaded window when positions are unavailable.
+    /// Falls back to virtual height estimates for chapters outside the loaded window.
     /// </summary>
     private (int TopChapter, int BottomChapter) GetVisibleChapterRange(double scrollTop, double scrollBottom)
     {
@@ -1824,8 +1959,59 @@ public partial class MainView : UserControl
                 bottomVisible = Math.Max(bottomVisible, chapter);
         }
 
+        // Extend into the bottom virtual spacer: when user has scrolled past the loaded window,
+        // use virtual height estimates to find the target chapter.
+        if (_paragraphScrollViewer != null && _windowEnd < _chapterGroups.Count && _virtualHeights.Length > 0)
+        {
+            var loadedContentBottom = _paragraphScrollViewer.Extent.Height - _bottomSpacerHeight;
+            if (scrollBottom > loadedContentBottom)
+            {
+                var distanceIntoSpacer = scrollBottom - loadedContentBottom;
+                var offset = FindVirtualChapter(_windowEnd, distanceIntoSpacer);
+                bottomVisible = Math.Min(_chapterGroups.Count, _windowEnd + offset + 1);
+            }
+        }
+
+        // Extend into the top virtual spacer: when user has scrolled above the loaded window.
+        if (_windowStart > 0 && _virtualHeights.Length > 0 && scrollTop < _topSpacerHeight)
+        {
+            var distanceFromBottom = _topSpacerHeight - scrollTop;
+            var offset = FindVirtualChapterFromEnd(_windowStart - 1, distanceFromBottom);
+            topVisible = Math.Max(1, _windowStart - offset);
+        }
+
         bottomVisible = Math.Max(topVisible, bottomVisible);
         return (topVisible, bottomVisible);
+    }
+
+    /// <summary>
+    /// Finds how many chapters past <paramref name="startIdx"/> (0-based) the given
+    /// <paramref name="targetOffset"/> falls, using virtual height estimates.
+    /// </summary>
+    private int FindVirtualChapter(int startIdx, double targetOffset)
+    {
+        double accumulated = 0;
+        for (var i = startIdx; i < _virtualHeights.Length; i++)
+        {
+            accumulated += _virtualHeights[i];
+            if (accumulated > targetOffset) return i - startIdx;
+        }
+        return _virtualHeights.Length - 1 - startIdx;
+    }
+
+    /// <summary>
+    /// Finds how many chapters before <paramref name="endIdx"/> (0-based, inclusive)
+    /// the given <paramref name="targetOffset"/> falls, scanning backwards.
+    /// </summary>
+    private int FindVirtualChapterFromEnd(int endIdx, double targetOffset)
+    {
+        double accumulated = 0;
+        for (var i = endIdx; i >= 0; i--)
+        {
+            accumulated += _virtualHeights[i];
+            if (accumulated > targetOffset) return endIdx - i;
+        }
+        return endIdx;
     }
 
     /// <summary>
@@ -1866,15 +2052,24 @@ public partial class MainView : UserControl
             while (_windowEnd < targetEnd)
             {
                 var ch = _windowEnd + 1;
-                foreach (var para in _chapterGroups[_windowEnd])
-                    _windowedItems.Add(PrepareForDisplay(para));
+                _windowedItems.AddRange(_chapterGroups[_windowEnd].Select(PrepareForDisplay));
                 _windowEnd++;
                 ChapterEnteredWindow?.Invoke(this, ch);
             }
 
-            // Adjust scroll offset to top (will be corrected by layout once items are realized).
+            // Recalculate spacer heights for the new window position.
+            if (_virtualHeights.Length > 0)
+            {
+                _topSpacerHeight = _virtualHeights[.._windowStart].Sum();
+                _bottomSpacerHeight = _virtualHeights[_windowEnd..].Sum();
+                UpdateSpacers();
+            }
+
+            // Position viewport at the start of loaded content so text is visible immediately.
+            // TopPadding may be large (virtual spacer for preceding chapters), so Offset.Y = 0
+            // would show empty spacer. Jump to _topSpacerHeight to land on actual content.
             if (_paragraphScrollViewer != null)
-                _paragraphScrollViewer.Offset = new Vector(0, 0);
+                _paragraphScrollViewer.Offset = new Vector(0, _topSpacerHeight);
         }
         finally
         {
@@ -2356,7 +2551,8 @@ public partial class MainView : UserControl
 
             if (_isDraggingProgressBar)
             {
-                ScrollToFraction(fraction);
+                _lastDragFraction = fraction;
+                ScrollToFraction(_lastDragFraction);
                 if (_readerProgressThumb != null)
                 {
                     var maxTop = Math.Max(0, _readerProgressTrack.Bounds.Height - _readerProgressThumb.Height);
@@ -2427,6 +2623,8 @@ public partial class MainView : UserControl
                 _chapterMarkersCanvas.IsVisible = false;
             e.Pointer.Capture(null);
             ShowScrollbarBriefly();
+            // Flag cleared first so ScrollToFraction takes the full EnsureChapterInWindow path.
+            ScrollToFraction(_lastDragFraction);
             return;
         }
 
