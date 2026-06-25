@@ -970,7 +970,7 @@
             Margin="0,0,12,12"
             Opacity="0.85"
             Padding="0"
-            ToolTip.Tip="Lock horizontal scroll"
+            ToolTip.Tip="Toggle horizontal scroll lock"
             VerticalAlignment="Bottom"
             Width="44"
             x:Name="HScrollLockButton">

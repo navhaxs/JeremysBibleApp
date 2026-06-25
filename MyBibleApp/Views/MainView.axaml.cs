@@ -707,6 +707,8 @@ public partial class MainView : UserControl
     {
         if (_hScrollLockIconUnlocked != null) _hScrollLockIconUnlocked.IsVisible = !_hScrollLocked;
         if (_hScrollLockIconLocked   != null) _hScrollLockIconLocked.IsVisible   = _hScrollLocked;
+        if (_hScrollLockButton       != null) _hScrollLockButton.Background =
+            _hScrollLocked ? new SolidColorBrush(Color.FromRgb(0xFF, 0x80, 0x00)) : null;
     }
 
     // ── Split-view toggle ────────────────────────────────────────────────────
@@ -2592,6 +2594,12 @@ public partial class MainView : UserControl
                 if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
                 _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
                 _journalHScrollNeedsReset = true;
+            }
+            else
+            {
+                _hScrollLocked = false;
+                UpdateHScrollLockButton();
+                if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = false;
             }
 
             if (layout.FontSizeDip > 0)
