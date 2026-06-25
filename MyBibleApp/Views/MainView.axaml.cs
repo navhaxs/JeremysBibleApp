@@ -2314,6 +2314,20 @@ public partial class MainView : UserControl
         if (e.Pointer.Type != PointerType.Touch) return;
         if (_inkAreaGrid == null) return;
 
+        // Don't intercept taps on the H-scroll lock FAB — it sits outside InkAreaGrid
+        // but the tunnel handler fires for it too because it's in the right margin column.
+        if (_hScrollLockButton != null && _hScrollLockButton.IsVisible)
+        {
+            var fabPt = e.GetPosition(_hScrollLockButton);
+            if (fabPt.X >= 0 && fabPt.Y >= 0 &&
+                fabPt.X <= _hScrollLockButton.Bounds.Width &&
+                fabPt.Y <= _hScrollLockButton.Bounds.Height)
+            {
+                MarginLog("SKIP: FAB hit");
+                return;
+            }
+        }
+
         var pos = e.GetPosition(_inkAreaGrid);
         var h = _inkAreaGrid.Bounds.Height;
 
