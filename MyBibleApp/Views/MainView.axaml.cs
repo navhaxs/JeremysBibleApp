@@ -12,6 +12,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Input.GestureRecognizers;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
@@ -130,11 +131,18 @@ public partial class MainView : UserControl
     private ColorView? _colorPickerView;
     private Button? _activeColorSwatch;
     private bool _suppressToolbarUpdates;
+    private int _activeLayoutEngineVersion = JournalLayout.CurrentVersion;
+
+    private const double LeftBufferDip = 400;   // virtual left overflow zone for pre-existing annotations
+    private double _journalHomePanX;            // HScroll home: LeftBufferDip - layout.LeftMarginDip when journal active, 0 otherwise
+    private bool _journalHScrollNeedsReset;     // true after journal activated; cleared once offset is applied with valid Extent
 
     private bool _isMouseDragging;
     private Point _lastMousePosition;
     private bool _isTouchPanning;
     private Point _lastTouchPosition;
+    private enum PanAxis { Undecided, Vertical, Horizontal }
+    private PanAxis _touchPanAxis;
     private readonly List<(double Y, long Ticks)> _touchVelocitySamples = [];
     private readonly List<(double Y, long Ticks)> _textScrollVelocitySamples = [];
     private int _textInertiaDebounceVersion;
@@ -149,10 +157,24 @@ public partial class MainView : UserControl
     private bool _isAdjustingWindow;
     private int _windowCheckVersion;
     private bool _immediateExtendPending;
+    // Deferred top-compensation: applied in OnParagraphListLayoutUpdated to avoid
+    // racing the inertia timer (which fires at higher dispatch priority than Loaded).
+    private double _pendingTopTrimCompensation;   // > 0 → subtract from Offset after trim
+    private double _pendingTopExtentBeforeAdd;    // ≥ 0 → extent before up-extend; -1 = none
+
+    // ── Scroll/chapter debug overlay ──────────────────────────────────────
+    private Border? _scrollDebugOverlay;
+    private TextBlock? _dbgStats;
+    private ItemsControl? _dbgEventList;
+    private Button? _debugToggleButton;
+    private ToggleSwitch? _scrollDebugMenuToggle;
+    private readonly ObservableCollection<string> _dbgEvents = new();
+    private double _dbgLastVelocity;
 
     public MainView()
     {
         InitializeComponent();
+        _pendingTopExtentBeforeAdd = -1;
 
         _footnoteTextBlock = new SelectableTextBlock { TextWrapping = TextWrapping.Wrap };
         _footnoteFlyout = new Flyout
@@ -272,6 +294,15 @@ public partial class MainView : UserControl
         _pointerModeButton = this.FindControl<ToggleButton>("PointerModeButton");
         _undoButton        = this.FindControl<Button>("UndoButton");
 
+        // ── Debug overlay ────────────────────────────────────────────────
+        _scrollDebugOverlay = this.FindControl<Border>("ScrollDebugOverlay");
+        _dbgStats           = this.FindControl<TextBlock>("DbgStats");
+        _dbgEventList       = this.FindControl<ItemsControl>("DbgEventList");
+        _debugToggleButton    = this.FindControl<Button>("DebugToggleButton");
+        _scrollDebugMenuToggle = this.FindControl<ToggleSwitch>("ScrollDebugToggle");
+        if (_dbgEventList != null)
+            _dbgEventList.ItemsSource = _dbgEvents;
+
         // Build the ColorView flyout for the custom-colour button.
         _colorPickerView = new ColorView
         {
@@ -343,9 +374,27 @@ public partial class MainView : UserControl
             // When the pointer is over the ListBox, its internal ScrollViewer marks
             // the event handled; handledEventsToo:false means we only see margin hits.
             _inkAreaGrid.AddHandler(PointerWheelChangedEvent, OnMarginMouseWheelChanged, handledEventsToo: false);
+            // Horizontal wheel (trackpad swipe / Shift+scroll) → pan ContentHScrollContainer.
+            // The ListBox only consumes vertical wheel, so Delta.X events propagate; the
+            // handledEventsToo:true ensures we catch them even if something else marks handled first.
+            _inkAreaGrid.AddHandler(PointerWheelChangedEvent, OnHorizontalWheelChanged, handledEventsToo: true);
             // Keep ink canvas column-offset in sync when the viewport is resized.
-            _inkAreaGrid.SizeChanged += (_, _) => UpdateInkTextColumnOffset();
+            // Also apply the journal HScroll home position the first time the grid has a valid Extent
+            // (setting ScrollViewer.Offset before Extent > 0 is clamped to zero by Avalonia).
+            _inkAreaGrid.SizeChanged += (_, _) =>
+            {
+                UpdateInkTextColumnOffset();
+                if (_journalHScrollNeedsReset && _contentHScrollContainer != null
+                    && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
+                {
+                    _contentHScrollContainer.Offset = new Vector(_journalHomePanX, 0);
+                    _journalHScrollNeedsReset = false;
+                }
+            };
         }
+
+        if (_contentHScrollContainer != null)
+            _contentHScrollContainer.SizeChanged += (_, _) => UpdateJournalInkAreaGridWidth();
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
         UpdateAnnotationState();
@@ -408,7 +457,39 @@ public partial class MainView : UserControl
     private void OnParagraphListLayoutUpdated(object? sender, EventArgs e)
     {
         EnsureScrollTrackingAttached();
+        ApplyPendingTopCompensation();
         RebuildParagraphTopCache();
+    }
+
+    private void ApplyPendingTopCompensation()
+    {
+        var sv = _paragraphScrollViewer;
+        if (sv == null) return;
+
+        // TrimWindowTop deferred: subtract measured removed height from wherever
+        // inertia + natural scroll landed while the layout was pending.
+        if (_pendingTopTrimCompensation > 0)
+        {
+            var delta = _pendingTopTrimCompensation;
+            _pendingTopTrimCompensation = 0;
+            var newOff = Math.Max(0, sv.Offset.Y - delta);
+            DbgLog($"  ↳ trim-compensate  Δ=-{delta:F0}px  off:{sv.Offset.Y:F0}→{newOff:F0}");
+            sv.Offset = new Vector(sv.Offset.X, newOff);
+        }
+
+        // ExtendWindowUp deferred: add the ACTUAL extent increase (beats estimate).
+        if (_pendingTopExtentBeforeAdd >= 0)
+        {
+            var extBefore = _pendingTopExtentBeforeAdd;
+            _pendingTopExtentBeforeAdd = -1;
+            var actualAdded = sv.Extent.Height - extBefore;
+            if (actualAdded > 0)
+            {
+                var newOff = sv.Offset.Y + actualAdded;
+                DbgLog($"  ↳ up-compensate    Δ=+{actualAdded:F0}px  off:{sv.Offset.Y:F0}→{newOff:F0}  (extent Δ)");
+                sv.Offset = new Vector(sv.Offset.X, newOff);
+            }
+        }
     }
 
     private void OnParagraphScrollChanged(object? sender, ScrollChangedEventArgs e)
@@ -434,6 +515,7 @@ public partial class MainView : UserControl
         if (elapsed > 0 && elapsed < 1)
         {
             var velocity = Math.Abs(currentOffset - _lastScrollOffset) / elapsed;
+            _dbgLastVelocity = velocity;
 
             if (velocity >= ScrollVelocityThreshold)
             {
@@ -451,6 +533,15 @@ public partial class MainView : UserControl
             {
                 _fastScrollCount = 0;
             }
+        }
+
+        // Debug: flag large unexpected jumps (distinguish from normal momentum).
+        if (_scrollDebugOverlay?.IsVisible == true)
+        {
+            var delta = currentOffset - _lastScrollOffset;
+            if (Math.Abs(delta) > 150 && elapsed is > 0 and < 0.5)
+                DbgLog($"⚡JUMP  {_lastScrollOffset:F0}→{currentOffset:F0}  Δ={delta:+F0;-F0}");
+            DbgUpdateStats();
         }
 
         _lastScrollOffset = currentOffset;
@@ -1275,7 +1366,7 @@ public partial class MainView : UserControl
         // Reset outer horizontal scroll so navigation always shows the column's left edge.
         // Without this, a previous horizontal pan leaves the chapter heading off-screen.
         if (_contentHScrollContainer != null)
-            _contentHScrollContainer.Offset = Vector.Zero;
+            _contentHScrollContainer.Offset = new Vector(_journalHomePanX, 0);
     }
 
     /// <summary>
@@ -1398,6 +1489,12 @@ public partial class MainView : UserControl
         }
     }
 
+    // Applies layout-version-dependent display flags before adding to _windowedItems.
+    private BibleParagraph PrepareForDisplay(BibleParagraph para) =>
+        para.IsPoetry && _activeLayoutEngineVersion >= 2
+            ? para with { EffectivePoetryLevel = para.PoetryIndentLevel }
+            : para with { EffectivePoetryLevel = 0 };
+
     /// <summary>
     /// Adds chapters at the bottom of the window until the added content height
     /// reaches targetHeight or the end of the book is reached.
@@ -1410,10 +1507,12 @@ public partial class MainView : UserControl
         {
             var chapter = _windowEnd + 1;   // 1-based chapter number
             foreach (var para in _chapterGroups[_windowEnd])
-                _windowedItems.Add(para);
+                _windowedItems.Add(PrepareForDisplay(para));
 
             _windowEnd++;
-            added += EstimateChapterHeight(chapter);
+            var chEst = EstimateChapterHeight(chapter);
+            added += chEst;
+            DbgLog($"+ch{chapter} ↓down  est={chEst:F0}px  win={_windowStart + 1}..{_windowEnd}");
             ChapterEnteredWindow?.Invoke(this, chapter);
         }
     }
@@ -1435,10 +1534,12 @@ public partial class MainView : UserControl
 
         // Prepend paragraphs (ObservableCollection has no AddRange; insert individually).
         for (var i = newParagraphs.Count - 1; i >= 0; i--)
-            _windowedItems.Insert(0, newParagraphs[i]);
+            _windowedItems.Insert(0, PrepareForDisplay(newParagraphs[i]));
 
         // Compensate scroll offset so visible content doesn't jump.
-        var newOffset = _paragraphScrollViewer.Offset.Y + estimatedHeight;
+        var oldOffset = _paragraphScrollViewer.Offset.Y;
+        var newOffset = oldOffset + estimatedHeight;
+        DbgLog($"+ch{chapter} ↑up  ht={estimatedHeight:F0}px [{(_measuredChapterHeights.ContainsKey(chapter) ? "cached" : "est   ")}]  off:{oldOffset:F0}→{newOffset:F0}  win={_windowStart + 1}..{_windowEnd}");
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
 
         // Shift cached content-Y values to match the new scroll coordinate system.
@@ -1480,6 +1581,7 @@ public partial class MainView : UserControl
         // Compensate scroll offset downward.
         var oldScrollOffset = _paragraphScrollViewer.Offset.Y;
         var newOffset = Math.Max(0, oldScrollOffset - removedHeight);
+        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  off:{oldScrollOffset:F0}→{newOffset:F0}  Δ={newOffset - oldScrollOffset:+F0;-F0}  win={_windowStart}..{_windowEnd}");
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
 
         // Shift cached content-Y values to match the new scroll coordinate system.
@@ -1512,7 +1614,52 @@ public partial class MainView : UserControl
         _chapterStartY.Remove(chapter);
         _chapterLocalTops.Remove(chapter);
 
+        DbgLog($"-ch{chapter} ↓trim  win={_windowStart + 1}..{_windowEnd}");
         ChapterExitedWindow?.Invoke(this, chapter);
+    }
+
+    // ── Debug overlay helpers ────────────────────────────────────────────────
+
+    public void ShowScrollDebugOverlay(bool show = true)
+    {
+        if (_scrollDebugOverlay != null) _scrollDebugOverlay.IsVisible = show;
+        if (_debugToggleButton  != null) _debugToggleButton.IsVisible  = !show;
+        if (_scrollDebugMenuToggle != null && _scrollDebugMenuToggle.IsChecked != show)
+            _scrollDebugMenuToggle.IsChecked = show;
+        if (show) DbgUpdateStats();
+    }
+
+    private void OnScrollDebugToggleChanged(object? sender, RoutedEventArgs e)
+        => ShowScrollDebugOverlay(_scrollDebugMenuToggle?.IsChecked == true);
+
+    private void OnDebugToggleClick(object? sender, RoutedEventArgs e)
+        => ShowScrollDebugOverlay(true);
+
+    private void OnDebugOverlayClose(object? sender, RoutedEventArgs e)
+        => ShowScrollDebugOverlay(false);
+
+    private void DbgLog(string msg)
+    {
+        if (_scrollDebugOverlay?.IsVisible != true) return;
+        var ts = DateTime.Now.ToString("HH:mm:ss.fff");
+        _dbgEvents.Insert(0, $"{ts} {msg}");
+        while (_dbgEvents.Count > 40)
+            _dbgEvents.RemoveAt(_dbgEvents.Count - 1);
+    }
+
+    private void DbgUpdateStats()
+    {
+        if (_dbgStats == null || _scrollDebugOverlay?.IsVisible != true) return;
+        var off = _paragraphScrollViewer?.Offset.Y ?? 0;
+        var ext = _paragraphScrollViewer?.Extent.Height ?? 0;
+        var vp  = _paragraphScrollViewer?.Viewport.Height ?? 0;
+        var loaded = _windowEnd - _windowStart;
+        _dbgStats.Text =
+            $"off:    {off,9:F1}px\n" +
+            $"extent: {ext,9:F1}px\n" +
+            $"vp:     {vp,9:F1}px\n" +
+            $"vel:    {_dbgLastVelocity,7:F0}px/s {(_dbgLastVelocity >= ScrollVelocityThreshold ? "FAST" : "    ")}\n" +
+            $"window: ch{_windowStart + 1}..ch{_windowEnd} ({loaded} loaded)";
     }
 
     /// <summary>
@@ -1765,7 +1912,7 @@ public partial class MainView : UserControl
             {
                 var ch = _windowEnd + 1;
                 foreach (var para in _chapterGroups[_windowEnd])
-                    _windowedItems.Add(para);
+                    _windowedItems.Add(PrepareForDisplay(para));
                 _windowEnd++;
                 ChapterEnteredWindow?.Invoke(this, ch);
             }
@@ -1794,12 +1941,12 @@ public partial class MainView : UserControl
     /// <summary>Atomically replaces strokes for one chapter (with legacy anchor migration). No global clear.</summary>
     public void ReplaceChapterStrokes(int chapter, IReadOnlyList<JournalInkStroke> strokes)
     {
-        var migrated = InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
+        var migrated = InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs, _activeLayoutEngineVersion);
         _inkOverlay?.ReplaceChapterStrokes(chapter, migrated);
     }
 
     private IReadOnlyList<JournalInkStroke> MigrateStrokeAnchors(IReadOnlyList<JournalInkStroke> strokes) =>
-        InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
+        InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs, _activeLayoutEngineVersion);
 
     // ── Ink paragraph anchoring helpers ───────────────────────────────────────
 
@@ -2194,6 +2341,7 @@ public partial class MainView : UserControl
         _touchVelocitySamples.Add((pos.Y, DateTime.UtcNow.Ticks));
 
         _isTouchPanning = true;
+        _touchPanAxis = PanAxis.Undecided;
         _lastTouchPosition = pos;
         e.Pointer.Capture(_inkAreaGrid);
         e.Handled = true;
@@ -2213,11 +2361,24 @@ public partial class MainView : UserControl
         if (_paragraphScrollViewer == null) { MarginLog("Moved: sv null"); return; }
 
         var currentPos = e.GetPosition(_inkAreaGrid);
+        var deltaX = _lastTouchPosition.X - currentPos.X;
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
 
-        var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
-        var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + deltaY, 0, maxY);
-        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
+        if (_touchPanAxis == PanAxis.Undecided && (Math.Abs(deltaX) > 8 || Math.Abs(deltaY) > 8))
+            _touchPanAxis = Math.Abs(deltaX) > Math.Abs(deltaY) ? PanAxis.Horizontal : PanAxis.Vertical;
+
+        if (_touchPanAxis == PanAxis.Horizontal && _contentHScrollContainer != null)
+        {
+            var maxX = Math.Max(0, _contentHScrollContainer.Extent.Width - _contentHScrollContainer.Viewport.Width);
+            var newX = Math.Clamp(_contentHScrollContainer.Offset.X + deltaX, 0, maxX);
+            _contentHScrollContainer.Offset = new Vector(newX, _contentHScrollContainer.Offset.Y);
+        }
+        else if (_touchPanAxis == PanAxis.Vertical)
+        {
+            var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
+            var newY = Math.Clamp(_paragraphScrollViewer.Offset.Y + deltaY, 0, maxY);
+            _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newY);
+        }
 
         _touchVelocitySamples.Add((currentPos.Y, DateTime.UtcNow.Ticks));
         if (_touchVelocitySamples.Count > 5)
@@ -2341,6 +2502,16 @@ public partial class MainView : UserControl
         e.Handled = true;
     }
 
+    private void OnHorizontalWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (e.Delta.X == 0 || _contentHScrollContainer == null) return;
+        const double ScrollStep = 50.0;
+        var maxX = Math.Max(0, _contentHScrollContainer.Extent.Width - _contentHScrollContainer.Viewport.Width);
+        var newX = Math.Clamp(_contentHScrollContainer.Offset.X - e.Delta.X * ScrollStep, 0, maxX);
+        _contentHScrollContainer.Offset = new Vector(newX, _contentHScrollContainer.Offset.Y);
+        e.Handled = true;
+    }
+
     // ── Journal integration ───────────────────────────────────────────────────
 
     public void SetActiveJournalName(string? name)
@@ -2373,26 +2544,47 @@ public partial class MainView : UserControl
 
     public void SetJournalLayout(JournalLayout? layout)
     {
+        _activeLayoutEngineVersion = layout?.LayoutEngineVersion is > 0
+            ? layout.LayoutEngineVersion
+            : JournalLayout.CurrentVersion;
+
+        // Refresh EffectivePoetryLevel on all displayed paragraphs when the layout version changes.
+        for (var i = 0; i < _windowedItems.Count; i++)
+        {
+            var para = _windowedItems[i];
+            var newLevel = para.IsPoetry && _activeLayoutEngineVersion >= 2 ? para.PoetryIndentLevel : 0;
+            if (para.EffectivePoetryLevel != newLevel)
+                _windowedItems[i] = para with { EffectivePoetryLevel = newLevel };
+        }
+
         if (_paragraphList == null) return;
 
         if (layout == null)
         {
             // Restore defaults
             _paragraphList.MaxWidth = double.PositiveInfinity;
+            _paragraphList.HorizontalAlignment = HorizontalAlignment.Stretch;
+            _paragraphList.Margin = new Thickness(0);
             _paragraphList.FontSize = 19;
             _paragraphList.ClearValue(FontFamilyProperty);
-            if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = 0;
+            if (_inkAreaGrid != null) { _inkAreaGrid.MinWidth = 0; _inkAreaGrid.Width = double.NaN; }
             if (_contentHScrollContainer != null)
                 _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            _journalHomePanX = 0;
+            _journalHScrollNeedsReset = false;
         }
         else
         {
             if (layout.TextColumnWidthDip > 0)
             {
                 _paragraphList.MaxWidth = layout.TextColumnWidthDip;
-                if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip;
+                _paragraphList.HorizontalAlignment = HorizontalAlignment.Left;
+                _paragraphList.Margin = new Thickness(LeftBufferDip, 0, 0, 0);
+                if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip + LeftBufferDip;
                 if (_contentHScrollContainer != null)
                     _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+                _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
+                _journalHScrollNeedsReset = true;
             }
 
             if (layout.FontSizeDip > 0)
@@ -2402,8 +2594,16 @@ public partial class MainView : UserControl
                 _paragraphList.FontFamily = new Avalonia.Media.FontFamily(layout.FontFamily);
         }
 
-        // Update ink canvas text-column offset after layout settles.
-        Dispatcher.UIThread.Post(UpdateInkTextColumnOffset, DispatcherPriority.Loaded);
+        // Update ink canvas text-column offset and expand InkAreaGrid for H-scroll after layout settles.
+        Dispatcher.UIThread.Post(() => { UpdateJournalInkAreaGridWidth(); UpdateInkTextColumnOffset(); }, DispatcherPriority.Loaded);
+    }
+
+    private void UpdateJournalInkAreaGridWidth()
+    {
+        if (_inkAreaGrid == null || _contentHScrollContainer == null || _journalHomePanX <= 0) return;
+        var viewportWidth = _contentHScrollContainer.Viewport.Width;
+        if (viewportWidth <= 0) return;
+        _inkAreaGrid.Width = viewportWidth + LeftBufferDip;
     }
 
     private void UpdateInkTextColumnOffset()
