@@ -1708,63 +1708,44 @@ public partial class MainView : UserControl
             var scrollBottom  = scrollTop + vpHeight;
             var contentBottom = _paragraphScrollViewer.Extent.Height;
 
-            // Extend down when within 1 viewport of the window bottom.
-            // Use a 3× target to overshoot because EstimateChapterHeight is
-            // usually 2–3× larger than actual rendered height on desktop, so
-            // each call adds roughly 1 real viewport of content.
-            if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
-            {
-                ExtendWindowDown(vpHeight * 3);
-            }
-
-            // Extend up when within half a viewport of the window top.
+            // Extend up FIRST — if it fires, bottom operations below are deferred to avoid
+            // contaminating the extent snapshot set by ExtendWindowUp.
             if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
             {
                 ExtendWindowUp();
             }
 
-            // Trim top only when 5+ viewports above the current scroll position.
-            // Wide hysteresis (extend < 1×, trim > 5×) prevents extend↔trim
-            // oscillation when individual chapter heights exceed 1 viewport.
-            if (_windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
+            // Extend down: skip when top-extent compensation is pending (would inflate actualAdded).
+            if (_pendingTopExtentBeforeAdd < 0 &&
+                _windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
             {
-                // Guard: only trim if the chapter being removed is outside the ±1 buffer
-                // that CheckWindowExtend maintains. If we trim the buffer chapter,
-                // CheckWindowExtend immediately re-adds it → infinite oscillation.
+                ExtendWindowDown(vpHeight * 3);
+            }
+
+            // Trim top: mutually exclusive with the ExtendWindowUp condition above, but guard for safety.
+            if (_pendingTopExtentBeforeAdd < 0 && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
+            {
                 bool safeToTrimTop = false;
                 if (_chapterStartY.Count > 0)
                 {
                     var (topVisible, _) = GetVisibleChapterRange(scrollTop, scrollBottom);
-                    // Safe: chapter at windowStart (_windowStart+1, 1-based) is more than
-                    // 1 chapter above topVisible (i.e., not the buffer chapter topVisible-1).
                     safeToTrimTop = (_windowStart + 1) < (topVisible - 1);
                 }
-                // When _chapterStartY is empty, can't compute visible range — skip trim.
                 if (safeToTrimTop)
-                {
                     TrimWindowTop();
-                }
             }
 
-            // Trim bottom only when 5+ viewports below the current scroll position.
-            if (_windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
+            // Trim bottom: could contaminate extent snapshot if ExtendWindowUp also fired this pass.
+            if (_pendingTopExtentBeforeAdd < 0 && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
             {
-                // Guard: only trim if the chapter being removed is outside the ±1 buffer
-                // that CheckWindowExtend maintains. If we trim the buffer chapter,
-                // CheckWindowExtend immediately re-adds it → infinite oscillation.
                 bool safeToTrimBottom = false;
                 if (_chapterStartY.Count > 0)
                 {
                     var (_, bottomVisible) = GetVisibleChapterRange(scrollTop, scrollBottom);
-                    // Safe: last loaded chapter (_windowEnd in 1-based, since _windowEnd is 0-based exclusive)
-                    // is more than 1 chapter below bottomVisible (i.e., not the buffer chapter bottomVisible+1).
                     safeToTrimBottom = _windowEnd > (bottomVisible + 1);
                 }
-                // When _chapterStartY is empty, can't compute visible range — skip trim.
                 if (safeToTrimBottom)
-                {
                     TrimWindowBottom();
-                }
             }
         }
         finally
@@ -1809,8 +1790,10 @@ public partial class MainView : UserControl
                 }
 
                 // Extend down: load the chapter after the bottommost visible chapter.
+                // Skip when a top-extend compensation is pending — both would run before the same
+                // LayoutUpdated, inflating the actualAdded extent delta and overcorrecting offset.
                 var needBelow = bottomVisible + 1;       // 1-based
-                if (needBelow <= _chapterGroups.Count && (needBelow - 1) >= _windowEnd)
+                if (_pendingTopExtentBeforeAdd < 0 && needBelow <= _chapterGroups.Count && (needBelow - 1) >= _windowEnd)
                 {
                     ExtendWindowDown(1);                 // targetHeight=1 → adds exactly one chapter
                 }
@@ -1819,13 +1802,13 @@ public partial class MainView : UserControl
             {
                 // Fallback when chapter positions aren't measured yet: use content-height
                 // heuristic (same logic as CheckWindowBounds extend conditions).
-                if (_windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
-                {
-                    ExtendWindowDown(vpHeight * 3);
-                }
                 if (_windowStart > 0 && scrollTop < vpHeight * 0.5)
                 {
                     ExtendWindowUp();
+                }
+                if (_pendingTopExtentBeforeAdd < 0 && _windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
+                {
+                    ExtendWindowDown(vpHeight * 3);
                 }
             }
         }
