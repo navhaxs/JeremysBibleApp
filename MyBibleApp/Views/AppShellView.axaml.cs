@@ -1018,7 +1018,8 @@ public partial class AppShellView : UserControl
                 RightMarginDip = 115,
                 FontFamily = "Inter",
                 FontSizeDip = 16,
-                LineHeightDip = 24
+                LineHeightDip = 24,
+                LayoutEngineVersion = JournalLayout.CurrentVersion
             }
         };
         var result = await SharedSyncRuntime.Instance.JournalStore.CreateJournalAsync(request);

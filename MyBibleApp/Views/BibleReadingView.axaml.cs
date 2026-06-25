@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -6,6 +7,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using MyBibleApp.Controls;
 using MyBibleApp.ViewModels;
 
@@ -165,6 +167,36 @@ public partial class BibleReadingView : UserControl
         if (viewportWidth <= 0) return;
         var hMargin = _booksGrid.Margin.Left + _booksGrid.Margin.Right;
         _booksGrid.Width = Math.Max(MinBooksGridWidth, viewportWidth - hMargin);
+    }
+
+    // ── Scroll to current passage ─────────────────────────────────────────────
+
+    private void OnScrollToCurrentClick(object? sender, RoutedEventArgs e)
+    {
+        if (_panScrollViewer == null) return;
+
+        foreach (var grid in this.GetVisualDescendants().OfType<ChapterGridControl>())
+        {
+            var cellRect = grid.GetCurrentChapterCellRect();
+            if (cellRect == null) continue;
+
+            var cellCenter = new Point(
+                cellRect.Value.X + cellRect.Value.Width / 2,
+                cellRect.Value.Y + cellRect.Value.Height / 2);
+
+            // Translate cell center to ScrollViewer viewport coordinates, then add
+            // current scroll offset to get content-space coordinates.
+            var pt = grid.TranslatePoint(cellCenter, _panScrollViewer);
+            if (pt == null) return;
+
+            var contentX = pt.Value.X + _panScrollViewer.Offset.X;
+            var contentY = pt.Value.Y + _panScrollViewer.Offset.Y;
+
+            _panScrollViewer.Offset = new Vector(
+                Math.Max(0, contentX - _panScrollViewer.Viewport.Width / 2),
+                Math.Max(0, contentY - _panScrollViewer.Viewport.Height / 2));
+            return;
+        }
     }
 
     // ── Close ─────────────────────────────────────────────────────────────────

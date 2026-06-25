@@ -7,16 +7,40 @@ namespace MyBibleApp.Helpers;
 public static class InkAnchorMigrator
 {
     /// <summary>
-    /// Converts legacy strokes (AnchorChapter == 0) to chapter-local anchors.
-    /// Strokes with AnchorChapter > 0 pass through unchanged.
+    /// Migrates strokes from the given layout engine version to the current version.
+    /// Currently handles: AnchorChapter == 0 → chapter-local anchor (format migration, any version).
+    /// Add new cases here when <see cref="JournalLayout.CurrentVersion"/> is incremented and
+    /// the new engine produces different paragraph Y-positions for the same content.
     /// </summary>
     public static IReadOnlyList<JournalInkStroke> Migrate(
         IReadOnlyList<JournalInkStroke> strokes,
         Dictionary<BibleParagraph, (int Chapter, int LocalIndex)> paragraphInfo,
-        IReadOnlyList<BibleParagraph> allParagraphs)
+        IReadOnlyList<BibleParagraph> allParagraphs,
+        int layoutEngineVersion = JournalLayout.CurrentVersion)
     {
         if (allParagraphs.Count == 0) return strokes;
 
+        // Normalise missing/pre-versioning value: treat 0 as 1.
+        var fromVersion = layoutEngineVersion > 0 ? layoutEngineVersion : 1;
+
+        var result = MigrateGlobalAnchors(strokes, paragraphInfo, allParagraphs);
+
+        // Version-specific layout migrations. Add a new case here each time
+        // JournalLayout.CurrentVersion is incremented and paragraph Y-positions change.
+        // Chain: fromVersion=1 → CurrentVersion=2 would apply step 1→2 here, etc.
+        // (No steps needed while CurrentVersion == 1.)
+        _ = fromVersion;
+
+        return result;
+    }
+
+    // Converts legacy strokes (AnchorChapter == 0) to chapter-local anchors.
+    // Format migration — version-independent.
+    private static IReadOnlyList<JournalInkStroke> MigrateGlobalAnchors(
+        IReadOnlyList<JournalInkStroke> strokes,
+        Dictionary<BibleParagraph, (int Chapter, int LocalIndex)> paragraphInfo,
+        IReadOnlyList<BibleParagraph> allParagraphs)
+    {
         List<JournalInkStroke>? result = null;
 
         for (var i = 0; i < strokes.Count; i++)

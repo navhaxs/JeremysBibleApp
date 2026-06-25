@@ -1,175 +1,228 @@
-<UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="using:MyBibleApp.ViewModels"
-             xmlns:controls="using:MyBibleApp.Controls"
-             mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="700"
-             x:Class="MyBibleApp.Views.BibleReadingView"
-             x:DataType="vm:BibleReadingViewModel">
+<UserControl
+    d:DesignHeight="700"
+    d:DesignWidth="900"
+    mc:Ignorable="d"
+    x:Class="MyBibleApp.Views.BibleReadingView"
+    x:DataType="vm:BibleReadingViewModel"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:avalonia="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+    xmlns:controls="using:MyBibleApp.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:vm="using:MyBibleApp.ViewModels"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <UserControl.Resources>
-    <DataTemplate x:Key="BookEntryTemplate" x:DataType="vm:BibleReadingBookEntry">
-      <Border Classes="book-card">
-        <Grid ColumnDefinitions="110,Auto" ColumnSpacing="8">
-          <Border Grid.Column="0"
-                  Background="{Binding LabelBackground}"
-                  CornerRadius="2"
-                  Padding="4,2"
-                  VerticalAlignment="Top">
-            <TextBlock Text="{Binding Name}"
-                       Foreground="{Binding LabelForeground}"
-                       FontSize="12"
-                       TextWrapping="Wrap" />
-          </Border>
-          <controls:ChapterGridControl Grid.Column="1"
-                                        Chapters="{Binding Chapters}"
-                                        BookCellColor="{Binding ReadCellColor}" />
-        </Grid>
-      </Border>
-    </DataTemplate>
-  </UserControl.Resources>
+    <UserControl.Resources>
+        <DataTemplate x:DataType="vm:BibleReadingBookEntry" x:Key="BookEntryTemplate">
+            <Border Classes="book-card">
+                <Grid ColumnDefinitions="110,Auto" ColumnSpacing="8">
+                    <Border
+                        Background="{Binding LabelBackground}"
+                        CornerRadius="2"
+                        Grid.Column="0"
+                        Padding="4,2"
+                        VerticalAlignment="Top">
+                        <TextBlock
+                            FontSize="12"
+                            Foreground="{Binding LabelForeground}"
+                            Text="{Binding Name}"
+                            TextWrapping="Wrap" />
+                    </Border>
+                    <controls:ChapterGridControl
+                        BookCellColor="{Binding ReadCellColor}"
+                        Chapters="{Binding Chapters}"
+                        Grid.Column="1" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </UserControl.Resources>
 
-  <UserControl.Styles>
+    <UserControl.Styles>
 
-    <!-- Book card container -->
-    <Style Selector="Border.book-card">
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" />
-      <Setter Property="Margin" Value="6,4" />
-      <Setter Property="Padding" Value="8,6" />
-    </Style>
+        <!--  Book card container  -->
+        <Style Selector="Border.book-card">
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumLowBrush}" />
+            <Setter Property="Margin" Value="6,4" />
+            <Setter Property="Padding" Value="8,6" />
+        </Style>
 
-    <!-- Flyout menu item style -->
-    <Style Selector="Button.flyout-item">
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="4" />
-      <Setter Property="HorizontalAlignment" Value="Stretch" />
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="Padding" Value="12,8" />
-      <Setter Property="Cursor" Value="Hand" />
-    </Style>
-    <Style Selector="Button.flyout-item:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="{DynamicResource SystemControlHighlightListLowBrush}" />
-    </Style>
+        <!--  Flyout menu item style  -->
+        <Style Selector="Button.flyout-item">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Button.flyout-item:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource SystemControlHighlightListLowBrush}" />
+        </Style>
 
-  </UserControl.Styles>
+    </UserControl.Styles>
 
-  <Grid RowDefinitions="Auto,Auto,*">
+    <Grid RowDefinitions="Auto,Auto,*">
 
-    <!-- ── Header ─────────────────────────────────────────────────────────── -->
-    <Border Grid.Row="0"
-            Padding="16,12"
-            BorderThickness="0,0,0,1"
-            BorderBrush="{DynamicResource ThemeBorderMidBrush}">
-      <Grid ColumnDefinitions="*,Auto">
-        <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
-          <TextBlock Text="My Bible Reading"
-                     FontSize="22"
-                     FontWeight="Bold" />
-          <TextBlock x:Name="ProgressSummary"
-                     FontSize="12"
-                     Opacity="0.6"
-                     Margin="0,2,0,0" />
-        </StackPanel>
-        <Button Grid.Column="1"
-                x:Name="CloseButton"
-                Width="40" Height="40"
-                CornerRadius="20"
-                Padding="0"
-                VerticalAlignment="Center"
-                ToolTip.Tip="Close"
-                Click="OnCloseButtonClick">
-          <TextBlock Text="✕" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
-        </Button>
-      </Grid>
-    </Border>
-
-    <!-- ── Sync debug panel (debug mode only) ───────────────────────────── -->
-    <Border Grid.Row="1"
-            IsVisible="{Binding IsDebugMode}"
-            Background="{DynamicResource ThemeBackgroundBrush}"
-            BorderThickness="0,0,0,1"
+        <!--  ── Header ───────────────────────────────────────────────────────────  -->
+        <Border
             BorderBrush="{DynamicResource ThemeBorderMidBrush}"
+            BorderThickness="0,0,0,1"
+            Grid.Row="0"
+            Padding="16,12">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <StackPanel
+                    Grid.Column="0"
+                    Spacing="0"
+                    VerticalAlignment="Center">
+                    <TextBlock
+                        FontSize="22"
+                        FontWeight="Bold"
+                        Text="My Bible Reading" />
+                    <TextBlock
+                        FontSize="12"
+                        Margin="0,2,0,0"
+                        Opacity="0.6"
+                        x:Name="ProgressSummary" />
+                </StackPanel>
+                <Button
+                    Click="OnScrollToCurrentClick"
+                    CornerRadius="20"
+                    Grid.Column="1"
+                    Height="40"
+                    Margin="0,0,6,0"
+                    Padding="0"
+                    ToolTip.Tip="Scroll to current passage"
+                    VerticalAlignment="Center"
+                    Width="40"
+                    x:Name="ScrollToCurrentButton">
+                    <avalonia:MaterialIcon
+                        Height="16"
+                        Kind="Target"
+                        Width="16" />
+                </Button>
+                <Button
+                    Click="OnCloseButtonClick"
+                    CornerRadius="20"
+                    Grid.Column="2"
+                    Height="40"
+                    Padding="0"
+                    ToolTip.Tip="Close"
+                    VerticalAlignment="Center"
+                    Width="40"
+                    x:Name="CloseButton">
+                    <TextBlock
+                        FontSize="16"
+                        HorizontalAlignment="Center"
+                        Text="✕"
+                        VerticalAlignment="Center" />
+                </Button>
+            </Grid>
+        </Border>
+
+        <!--  ── Sync debug panel (debug mode only) ─────────────────────────────  -->
+        <Border
+            Background="{DynamicResource ThemeBackgroundBrush}"
+            BorderBrush="{DynamicResource ThemeBorderMidBrush}"
+            BorderThickness="0,0,0,1"
+            Grid.Row="1"
+            IsVisible="{Binding IsDebugMode}"
             Padding="16,8">
-      <StackPanel Spacing="4">
-        <TextBlock Text="SYNC DEBUG"
-                   FontSize="10"
-                   FontWeight="Bold"
-                   Opacity="0.5"
-                   LetterSpacing="1.5" />
-        <TextBlock Text="{Binding SyncDebugInfo}"
-                   FontSize="11"
-                   FontFamily="Consolas, Menlo, monospace"
-                   TextWrapping="Wrap"
-                   Opacity="0.85" />
-        <StackPanel Orientation="Horizontal" Spacing="6">
-          <Button Content="Refresh"
-                  FontSize="11"
-                  Padding="8,3"
-                  Click="OnDebugRefreshClick" />
-          <Button Content="Sync Now"
-                  FontSize="11"
-                  Padding="8,3"
-                  IsEnabled="{Binding AppVM.CanForceSync}"
-                  Click="OnDebugSyncNowClick" />
-        </StackPanel>
-      </StackPanel>
-    </Border>
+            <StackPanel Spacing="4">
+                <TextBlock
+                    FontSize="10"
+                    FontWeight="Bold"
+                    LetterSpacing="1.5"
+                    Opacity="0.5"
+                    Text="SYNC DEBUG" />
+                <TextBlock
+                    FontFamily="Consolas, Menlo, monospace"
+                    FontSize="11"
+                    Opacity="0.85"
+                    Text="{Binding SyncDebugInfo}"
+                    TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button
+                        Click="OnDebugRefreshClick"
+                        Content="Refresh"
+                        FontSize="11"
+                        Padding="8,3" />
+                    <Button
+                        Click="OnDebugSyncNowClick"
+                        Content="Sync Now"
+                        FontSize="11"
+                        IsEnabled="{Binding AppVM.CanForceSync}"
+                        Padding="8,3" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
 
-    <!-- ── Two-column (OT | NT) vertically scrolling book cards ────────── -->
-    <ScrollViewer Grid.Row="2"
-                  x:Name="PanScrollViewer"
-                  HorizontalScrollBarVisibility="Auto"
-                  VerticalScrollBarVisibility="Auto"
-                  AllowAutoHide="True">
+        <!--  ── Two-column (OT | NT) vertically scrolling book cards ──────────  -->
+        <ScrollViewer
+            AllowAutoHide="True"
+            Grid.Row="2"
+            HorizontalScrollBarVisibility="Auto"
+            VerticalScrollBarVisibility="Auto"
+            x:Name="PanScrollViewer">
 
-      <Grid x:Name="BooksGrid" ColumnDefinitions="*,*" Margin="16,12" ColumnSpacing="24">
+            <Grid
+                ColumnDefinitions="*,*"
+                ColumnSpacing="24"
+                Margin="16,12"
+                x:Name="BooksGrid">
 
-        <!-- ── Old Testament ──────────────────────────────────────────── -->
-        <StackPanel Grid.Column="0" Spacing="0" Background="Transparent">
-          <TextBlock Text="Old Testament"
-                     FontSize="11"
-                     FontWeight="SemiBold"
-                     Opacity="0.5"
-                     Margin="6,0,0,4"
-                     LetterSpacing="1.5" />
-          <ItemsControl ItemsSource="{Binding OtBooks}">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <StackPanel Orientation="Vertical" />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <StaticResource ResourceKey="BookEntryTemplate" />
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
+                <!--  ── Old Testament ────────────────────────────────────────────  -->
+                <StackPanel
+                    Background="Transparent"
+                    Grid.Column="0"
+                    Spacing="0">
+                    <TextBlock
+                        FontSize="11"
+                        FontWeight="SemiBold"
+                        LetterSpacing="1.5"
+                        Margin="6,0,0,4"
+                        Opacity="0.5"
+                        Text="Old Testament" />
+                    <ItemsControl ItemsSource="{Binding OtBooks}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Vertical" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <StaticResource ResourceKey="BookEntryTemplate" />
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
 
-        <!-- ── New Testament ──────────────────────────────────────────── -->
-        <StackPanel Grid.Column="1" Spacing="0" Background="Transparent">
-          <TextBlock Text="New Testament"
-                     FontSize="11"
-                     FontWeight="SemiBold"
-                     Opacity="0.5"
-                     Margin="6,0,0,4"
-                     LetterSpacing="1.5" />
-          <ItemsControl ItemsSource="{Binding NtBooks}">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <StackPanel Orientation="Vertical" />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <StaticResource ResourceKey="BookEntryTemplate" />
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
+                <!--  ── New Testament ────────────────────────────────────────────  -->
+                <StackPanel
+                    Background="Transparent"
+                    Grid.Column="1"
+                    Spacing="0">
+                    <TextBlock
+                        FontSize="11"
+                        FontWeight="SemiBold"
+                        LetterSpacing="1.5"
+                        Margin="6,0,0,4"
+                        Opacity="0.5"
+                        Text="New Testament" />
+                    <ItemsControl ItemsSource="{Binding NtBooks}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Vertical" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <StaticResource ResourceKey="BookEntryTemplate" />
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
 
-      </Grid>
+            </Grid>
 
-    </ScrollViewer>
+        </ScrollViewer>
 
-  </Grid>
+    </Grid>
 </UserControl>

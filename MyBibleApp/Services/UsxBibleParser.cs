@@ -71,6 +71,8 @@ public sealed class UsxBibleParser
             {
                 IsHeading = IsHeadingStyle(style),
                 IsParallelReference = IsParallelReferenceStyle(style),
+                IsPoetry = IsPoetryStyle(style),
+                PoetryIndentLevel = GetPoetryIndentLevel(style),
                 InkStrokes = new List<BibleInkStroke>()
             });
             chapterDropCapPending = false;
@@ -210,6 +212,19 @@ public sealed class UsxBibleParser
     {
         return style?.Equals("r", StringComparison.OrdinalIgnoreCase) == true;
     }
+
+    private static bool IsPoetryStyle(string? style)
+    {
+        return style is "q1" or "q2" or "q3" or "qa" or "qr" or "qc";
+    }
+
+    private static int GetPoetryIndentLevel(string? style) => style switch
+    {
+        "q1" or "qa" or "qc" => 1,
+        "q2" or "qr" => 2,
+        "q3" => 3,
+        _ => 0
+    };
 
     private static bool IsNonReadingStyle(string? style)
     {

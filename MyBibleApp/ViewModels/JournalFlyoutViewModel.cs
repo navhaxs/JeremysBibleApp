@@ -67,7 +67,8 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
                 RightMarginDip = 115,
                 FontFamily = "Inter",
                 FontSizeDip = 16,
-                LineHeightDip = 24
+                LineHeightDip = 24,
+                LayoutEngineVersion = JournalLayout.CurrentVersion
             }
         };
         var result = await _journalStore.CreateJournalAsync(request);

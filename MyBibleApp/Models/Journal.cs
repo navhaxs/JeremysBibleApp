@@ -30,6 +30,14 @@ public sealed class JournalLayout
     public double FontSizeDip { get; init; }
     public double LineHeightDip { get; init; }
 
+    // Tracks the rendering layout engine version at journal creation time.
+    // Increment this constant whenever paragraph Y-positions can change for the same content
+    // (font metrics, column width, USX parsing, scroll virtualisation logic, etc.).
+    // A mismatch between stored value and CurrentVersion means AnchorContentTop values
+    // on existing strokes may be stale. 0 = legacy journals created before versioning (treated as 1).
+    public int LayoutEngineVersion { get; init; } = 1;
+    public const int CurrentVersion = 2;
+
     [JsonIgnore]
     public double TotalWidthDip => LeftMarginDip + TextColumnWidthDip + RightMarginDip;
 }

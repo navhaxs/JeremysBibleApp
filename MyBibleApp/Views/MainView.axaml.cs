@@ -109,8 +109,6 @@ public partial class MainView : UserControl
     private int _scrollStopVersion;
     private const double ScrollVelocityThreshold = 3000; // pixels per second
     private const int FastScrollCountThreshold = 3;      // consecutive fast events required
-    // Saved scroll recognizers swapped out during annotation mode
-    private readonly List<ScrollGestureRecognizer> _savedScrollRecognizers = new();
 
     // ── Annotation toolbar controls ──────────────────────────────────────────
     private Border? _annotationSection;
@@ -133,19 +131,18 @@ public partial class MainView : UserControl
     private bool _suppressToolbarUpdates;
     private int _activeLayoutEngineVersion = JournalLayout.CurrentVersion;
 
-    private const double LeftBufferDip = 400;   // virtual left overflow zone for pre-existing annotations
+    private const double LeftBufferDip = 850;   // virtual left overflow zone for pre-existing annotations
     private double _journalHomePanX;            // HScroll home: LeftBufferDip - layout.LeftMarginDip when journal active, 0 otherwise
     private bool _journalHScrollNeedsReset;     // true after journal activated; cleared once offset is applied with valid Extent
 
     private bool _isMouseDragging;
     private Point _lastMousePosition;
     private bool _isTouchPanning;
+    private bool _isTouchPanningScrollbar;
     private Point _lastTouchPosition;
     private enum PanAxis { Undecided, Vertical, Horizontal }
     private PanAxis _touchPanAxis;
     private readonly List<(double Y, long Ticks)> _touchVelocitySamples = [];
-    private readonly List<(double Y, long Ticks)> _textScrollVelocitySamples = [];
-    private int _textInertiaDebounceVersion;
     private DispatcherTimer? _inertiaTimer;
     private double _inertiaVelocity;
     private Border? _leftMarginTouchZone;
@@ -406,7 +403,12 @@ public partial class MainView : UserControl
         }
 
         if (_contentHScrollContainer != null)
+        {
             _contentHScrollContainer.SizeChanged += (_, _) => UpdateJournalInkAreaGridWidth();
+            // Remove the built-in ScrollGestureRecognizer so all touch panning is
+            // handled exclusively by our unified OnMarginTouchMoved handler.
+            _contentHScrollContainer.LayoutUpdated += RemoveHScrollContainerRecognizer;
+        }
 
         _annotationToggle.IsCheckedChanged += OnAnnotationToggleChanged;
         UpdateAnnotationState();
@@ -418,6 +420,17 @@ public partial class MainView : UserControl
             _readerProgressTrack.IsHitTestVisible = false;
             _paragraphList.AddHandler(TappedEvent, OnListBoxTapped, handledEventsToo: false);
         }
+    }
+
+    private void RemoveHScrollContainerRecognizer(object? sender, EventArgs e)
+    {
+        if (_contentHScrollContainer == null) return;
+        var scp = _contentHScrollContainer.GetVisualDescendants()
+            .OfType<ScrollContentPresenter>().FirstOrDefault();
+        if (scp == null) return;
+        foreach (var r in scp.GestureRecognizers.OfType<ScrollGestureRecognizer>().ToList())
+            scp.GestureRecognizers.Remove(r);
+        _contentHScrollContainer.LayoutUpdated -= RemoveHScrollContainerRecognizer;
     }
 
     private void EnsureScrollTrackingAttached()
@@ -451,8 +464,8 @@ public partial class MainView : UserControl
         var scp = sv.GetVisualDescendants().OfType<ScrollContentPresenter>().FirstOrDefault();
         if (scp != null)
         {
-            foreach (var r in scp.GestureRecognizers.OfType<ScrollGestureRecognizer>())
-                r.IsScrollInertiaEnabled = false;
+            foreach (var r in scp.GestureRecognizers.OfType<ScrollGestureRecognizer>().ToList())
+                scp.GestureRecognizers.Remove(r);
         }
 
         // Keep the paragraph-position cache fresh for as long as the view lives.
@@ -562,29 +575,6 @@ public partial class MainView : UserControl
 
         _lastScrollOffset = currentOffset;
         _lastScrollTime = now;
-
-        // Track velocity for custom text-area inertia (skip when inertia is self-driving offsets)
-        if (!_isTouchPanning && !_isDraggingProgressBar && _inertiaTimer == null)
-        {
-            var prevY = _textScrollVelocitySamples.Count > 0 ? _textScrollVelocitySamples[^1].Y : currentOffset;
-            if (Math.Abs(currentOffset - prevY) < 200)
-            {
-                _textScrollVelocitySamples.Add((currentOffset, DateTime.UtcNow.Ticks));
-                if (_textScrollVelocitySamples.Count > 5)
-                    _textScrollVelocitySamples.RemoveAt(0);
-            }
-
-            var textInertiaVersion = ++_textInertiaDebounceVersion;
-            _ = Task.Delay(40).ContinueWith(t =>
-            {
-                if (_textInertiaDebounceVersion != textInertiaVersion) return;
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (_textInertiaDebounceVersion == textInertiaVersion && !_isTouchPanning && _inertiaTimer == null)
-                        StartTextInertiaFromSamples();
-                });
-            }, TaskScheduler.Default);
-        }
 
         // Reset the "scroll stopped" timer — hide markers after scrolling stops.
         var scrollStopVersion = ++_scrollStopVersion;
@@ -709,9 +699,6 @@ public partial class MainView : UserControl
         if (_hScrollLockIconLocked   != null) _hScrollLockIconLocked.IsVisible   = _hScrollLocked;
         if (_hScrollLockButton       != null) _hScrollLockButton.Background =
             _hScrollLocked ? new SolidColorBrush(Color.FromRgb(0xFF, 0x80, 0x00)) : null;
-        if (_contentHScrollContainer != null)
-            _contentHScrollContainer.HorizontalScrollBarVisibility =
-                _hScrollLocked ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
     }
 
     // ── Split-view toggle ────────────────────────────────────────────────────
@@ -861,46 +848,8 @@ public partial class MainView : UserControl
     {
         if (_paragraphList == null) return;
         bool isAnnotating = _annotationToggle?.IsChecked == true;
-
-        // Show / hide the annotation section of the floating toolbar.
         if (_annotationSection != null)
             _annotationSection.IsVisible = isAnnotating;
-
-        var scp = _paragraphList.GetVisualDescendants()
-            .OfType<ScrollContentPresenter>().FirstOrDefault();
-        if (scp == null) return;
-
-        if (isAnnotating && _savedScrollRecognizers.Count == 0)
-        {
-            // Swap out the default ScrollGestureRecognizer for a touch-only version
-            // so the recognizer never competes with pen input.
-            var existing = scp.GestureRecognizers
-                .OfType<ScrollGestureRecognizer>().ToList();
-            foreach (var r in existing)
-            {
-                _savedScrollRecognizers.Add(r);
-                scp.GestureRecognizers.Remove(r);
-            }
-            if (_savedScrollRecognizers.Count > 0)
-            {
-                var orig = _savedScrollRecognizers[0];
-                scp.GestureRecognizers.Add(new TouchOnlyScrollGestureRecognizer
-                {
-                    CanHorizontallyScroll  = orig.CanHorizontallyScroll,
-                    CanVerticallyScroll    = orig.CanVerticallyScroll,
-                    IsScrollInertiaEnabled = orig.IsScrollInertiaEnabled
-                });
-            }
-        }
-        else if (!isAnnotating && _savedScrollRecognizers.Count > 0)
-        {
-            foreach (var r in scp.GestureRecognizers
-                         .OfType<TouchOnlyScrollGestureRecognizer>().ToList())
-                scp.GestureRecognizers.Remove(r);
-            foreach (var r in _savedScrollRecognizers)
-                scp.GestureRecognizers.Add(r);
-            _savedScrollRecognizers.Clear();
-        }
     }
 
     // ── Toolbar: pen / eraser mode ────────────────────────────────────────────
@@ -2328,6 +2277,27 @@ public partial class MainView : UserControl
             }
         }
 
+        // Scroll track touch — handle drag directly via tunnel so Android pointer
+        // capture on the track itself (unreliable) is never needed.
+        if (_readerProgressTrack != null && _readerProgressTrack.IsHitTestVisible)
+        {
+            var trackPt = e.GetPosition(_readerProgressTrack);
+            if (trackPt.X >= 0 && trackPt.Y >= 0 &&
+                trackPt.X <= _readerProgressTrack.Bounds.Width &&
+                trackPt.Y <= _readerProgressTrack.Bounds.Height)
+            {
+                MarginLog("ACTIVATE scrollbar drag");
+                _isTouchPanningScrollbar = true;
+                _isPressedOnTrack = true;
+                _dragStartY = trackPt.Y;
+                _scrollbarHideCts?.Cancel();
+                _touchVelocitySamples.Clear();
+                e.Pointer.Capture(_inkAreaGrid);
+                e.Handled = true;
+                return;
+            }
+        }
+
         var pos = e.GetPosition(_inkAreaGrid);
         var h = _inkAreaGrid.Bounds.Height;
 
@@ -2341,13 +2311,6 @@ public partial class MainView : UserControl
 
         MarginLog($"pos=({pos.X:F0},{pos.Y:F0}) listL={listLeft:F0} listR={listRight:F0} textL={textLeft:F0} textR={textRight:F0}");
 
-        // Only activate in the left/right margin columns (not the text body).
-        if (pos.X >= textLeft && pos.X <= textRight)
-        {
-            MarginLog("SKIP: in text body");
-            return;
-        }
-
         // Also ignore touches above or below the InkAreaGrid (header row, etc.)
         if (pos.Y < 0 || pos.Y > h)
         {
@@ -2355,7 +2318,7 @@ public partial class MainView : UserControl
             return;
         }
 
-        MarginLog("ACTIVATE margin pan");
+        MarginLog($"ACTIVATE pan inTextBody={pos.X >= textLeft && pos.X <= textRight}");
         StopInertia();
         _touchVelocitySamples.Clear();
         _touchVelocitySamples.Add((pos.Y, DateTime.UtcNow.Ticks));
@@ -2363,14 +2326,48 @@ public partial class MainView : UserControl
         _isTouchPanning = true;
         _touchPanAxis = PanAxis.Undecided;
         _lastTouchPosition = pos;
-        e.Pointer.Capture(_inkAreaGrid);
-        e.Handled = true;
+
+        // Capture immediately only in the margin (no tapable content there).
+        // Text body: defer capture to OnMarginTouchMoved once movement is confirmed,
+        // so taps on list items still reach their targets.
+        bool inTextBody = pos.X >= textLeft && pos.X <= textRight;
+        if (!inTextBody)
+        {
+            e.Pointer.Capture(_inkAreaGrid);
+            e.Handled = true;
+        }
     }
 
     private bool _loggedFirstMove;
 
     private void OnMarginTouchMoved(object? sender, PointerEventArgs e)
     {
+        if (_isTouchPanningScrollbar)
+        {
+            if (e.Pointer.Type != PointerType.Touch || _readerProgressTrack == null) return;
+            var trackPt = e.GetPosition(_readerProgressTrack);
+            var fraction = Math.Clamp(trackPt.Y / _readerProgressTrack.Bounds.Height, 0, 1);
+
+            if (!_isDraggingProgressBar && Math.Abs(trackPt.Y - _dragStartY) >= 8.0)
+            {
+                _isDraggingProgressBar = true;
+                BuildChapterMarkers();
+            }
+
+            if (_isDraggingProgressBar)
+            {
+                ScrollToFraction(fraction);
+                if (_readerProgressThumb != null)
+                {
+                    var maxTop = Math.Max(0, _readerProgressTrack.Bounds.Height - _readerProgressThumb.Height);
+                    Canvas.SetTop(_readerProgressThumb, fraction * maxTop);
+                }
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (!_isTouchPanning)
         {
             if (!_loggedFirstMove) { MarginLog($"Moved but _isTouchPanning=false type={e.Pointer.Type}"); _loggedFirstMove = true; }
@@ -2385,9 +2382,16 @@ public partial class MainView : UserControl
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
 
         if (_touchPanAxis == PanAxis.Undecided && (Math.Abs(deltaX) > 8 || Math.Abs(deltaY) > 8))
-            _touchPanAxis = _hScrollLocked
+        {
+            // Vertical-first: only a near-horizontal swipe (within ~20° of horizontal) triggers H-scroll.
+            // K=2.75 means deltaX must be >2.75× deltaY; lower = easier to trigger H.
+            const double HScrollBias = 2.75;
+            _touchPanAxis = (_hScrollLocked || Math.Abs(deltaX) <= Math.Abs(deltaY) * HScrollBias)
                 ? PanAxis.Vertical
-                : (Math.Abs(deltaX) > Math.Abs(deltaY) ? PanAxis.Horizontal : PanAxis.Vertical);
+                : PanAxis.Horizontal;
+            // Capture here for text-body touches (margin captures on press; calling again is a no-op).
+            e.Pointer.Capture(_inkAreaGrid);
+        }
 
         if (_touchPanAxis == PanAxis.Horizontal && _contentHScrollContainer != null)
         {
@@ -2412,12 +2416,27 @@ public partial class MainView : UserControl
 
     private void OnMarginTouchReleased(object? sender, PointerReleasedEventArgs e)
     {
-        MarginLog($"Released _isTouchPanning={_isTouchPanning} type={e.Pointer.Type}");
+        MarginLog($"Released _isTouchPanning={_isTouchPanning} scrollbar={_isTouchPanningScrollbar} type={e.Pointer.Type}");
+
+        if (_isTouchPanningScrollbar)
+        {
+            _isTouchPanningScrollbar = false;
+            _isPressedOnTrack = false;
+            _isDraggingProgressBar = false;
+            if (_chapterMarkersCanvas != null)
+                _chapterMarkersCanvas.IsVisible = false;
+            e.Pointer.Capture(null);
+            ShowScrollbarBriefly();
+            return;
+        }
+
         if (!_isTouchPanning || e.Pointer.Type != PointerType.Touch) return;
 
         _isTouchPanning = false;
         e.Pointer.Capture(null);
-        e.Handled = true;
+        // Only consume if we actually scrolled; a tap with no movement must reach the list item.
+        if (_touchPanAxis != PanAxis.Undecided)
+            e.Handled = true;
 
         StartInertiaFromSamples();
     }
@@ -2456,22 +2475,6 @@ public partial class MainView : UserControl
         if (newOffset <= 0 || newOffset >= maxY) StopInertia();
     }
 
-    private void StartTextInertiaFromSamples()
-    {
-        if (_textScrollVelocitySamples.Count < 2 || _paragraphScrollViewer == null) return;
-        StopInertia();
-        var first = _textScrollVelocitySamples[0];
-        var last  = _textScrollVelocitySamples[^1];
-        var dtSec = (last.Ticks - first.Ticks) / (double)TimeSpan.TicksPerSecond;
-        if (dtSec <= 0) return;
-        var pxPerSec = (last.Y - first.Y) / dtSec;
-        _inertiaVelocity = pxPerSec / 60.0;
-        if (Math.Abs(_inertiaVelocity) < 1.0) return;
-        _inertiaTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
-        _inertiaTimer.Tick += OnInertiaTick;
-        _inertiaTimer.Start();
-    }
-
     private void StopInertia()
     {
         if (_inertiaTimer == null) return;
@@ -2479,8 +2482,6 @@ public partial class MainView : UserControl
         _inertiaTimer.Tick -= OnInertiaTick;
         _inertiaTimer = null;
         _inertiaVelocity = 0;
-        _textInertiaDebounceVersion++;
-        _textScrollVelocitySamples.Clear();
     }
 
     private void OnReaderKeyDown(object? sender, KeyEventArgs e)
@@ -2526,7 +2527,7 @@ public partial class MainView : UserControl
 
     private void OnHorizontalWheelChanged(object? sender, PointerWheelEventArgs e)
     {
-        if (e.Delta.X == 0 || _contentHScrollContainer == null) return;
+        if (e.Delta.X == 0 || _contentHScrollContainer == null || _hScrollLocked) return;
         const double ScrollStep = 50.0;
         var maxX = Math.Max(0, _contentHScrollContainer.Extent.Width - _contentHScrollContainer.Viewport.Width);
         var newX = Math.Clamp(_contentHScrollContainer.Offset.X - e.Delta.X * ScrollStep, 0, maxX);
@@ -2590,8 +2591,6 @@ public partial class MainView : UserControl
             _paragraphList.FontSize = 19;
             _paragraphList.ClearValue(FontFamilyProperty);
             if (_inkAreaGrid != null) { _inkAreaGrid.MinWidth = 0; _inkAreaGrid.Width = double.NaN; }
-            if (_contentHScrollContainer != null)
-                _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
             _hScrollLocked = false;
             UpdateHScrollLockButton();
             if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = false;
@@ -2606,8 +2605,6 @@ public partial class MainView : UserControl
                 _paragraphList.HorizontalAlignment = HorizontalAlignment.Left;
                 _paragraphList.Margin = new Thickness(LeftBufferDip, 0, 0, 0);
                 if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip + LeftBufferDip;
-                if (_contentHScrollContainer != null)
-                    _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
                 if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
                 _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
                 _journalHScrollNeedsReset = true;

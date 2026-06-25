@@ -276,6 +276,20 @@ public class ChapterGridControl : Control
         return null;
     }
 
+    /// <summary>Returns the bounding rect (in this control's coordinate space) of the cell marked IsCurrentChapter, or null if none.</summary>
+    public Rect? GetCurrentChapterCellRect()
+    {
+        if (_chapters == null) return null;
+        for (var i = 0; i < _chapters.Count; i++)
+        {
+            if (!_chapters[i].IsCurrentChapter) continue;
+            var col = i % _columnsPerRow;
+            var row = i / _columnsPerRow;
+            return new Rect(col * CellWidth, row * CellHeight, CellWidth, CellHeight);
+        }
+        return null;
+    }
+
     // ── Hit testing ──────────────────────────────────────────────────────────
 
     private int HitTestCell(Point position)
