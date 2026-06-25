@@ -606,45 +606,6 @@
                     ZIndex="10"
                     x:Name="InkOverlay" />
 
-                <!--  Custom scrollbar — index-based so it stays accurate with virtualization.  -->
-                <Border
-                    Background="#15808080"
-                    Cursor="Arrow"
-                    Grid.Row="0"
-                    HorizontalAlignment="Right"
-                    PointerCaptureLost="OnProgressTrackPointerCaptureLost"
-                    PointerMoved="OnProgressTrackPointerMoved"
-                    PointerPressed="OnProgressTrackPointerPressed"
-                    PointerReleased="OnProgressTrackPointerReleased"
-                    VerticalAlignment="Stretch"
-                    Width="12"
-                    ZIndex="20"
-                    x:Name="ReaderProgressTrack">
-                    <Canvas>
-                        <Border
-                            Background="{DynamicResource ThemeAccentBrush}"
-                            Canvas.Left="2"
-                            Canvas.Top="0"
-                            CornerRadius="4"
-                            Height="40"
-                            Opacity="0.55"
-                            Width="8"
-                            x:Name="ReaderProgressThumb" />
-                    </Canvas>
-                </Border>
-
-                <!--  Chapter markers — shown to the left of the scrollbar while dragging the thumb.  -->
-                <Canvas
-                    Grid.Row="0"
-                    HorizontalAlignment="Right"
-                    IsHitTestVisible="False"
-                    IsVisible="False"
-                    Margin="0,0,14,0"
-                    VerticalAlignment="Stretch"
-                    Width="52"
-                    ZIndex="19"
-                    x:Name="ChapterMarkersCanvas" />
-
                 <!--  Margin touch zones — transparent hit targets that capture finger scroll
                       in the left/right margins where the ListBox has no hittable content.
                       ZIndex=5: above ListBox (0) but below InkOverlay (10, IsHitTestVisible=False). -->
@@ -669,6 +630,46 @@
 
             </Grid>
             </ScrollViewer>
+
+            <!--  Custom scrollbar — pinned to viewport right edge, outside horizontal scroll container.  -->
+            <Border
+                Background="#15808080"
+                Cursor="Arrow"
+                Grid.Row="2"
+                HorizontalAlignment="Right"
+                PointerCaptureLost="OnProgressTrackPointerCaptureLost"
+                PointerMoved="OnProgressTrackPointerMoved"
+                PointerPressed="OnProgressTrackPointerPressed"
+                PointerReleased="OnProgressTrackPointerReleased"
+                VerticalAlignment="Stretch"
+                Width="12"
+                ZIndex="20"
+                x:Name="ReaderProgressTrack">
+                <Canvas>
+                    <Border
+                        Background="{DynamicResource ThemeAccentBrush}"
+                        Canvas.Left="2"
+                        Canvas.Top="0"
+                        CornerRadius="4"
+                        Height="40"
+                        Opacity="0.55"
+                        Width="8"
+                        x:Name="ReaderProgressThumb" />
+                </Canvas>
+            </Border>
+
+            <!--  Chapter markers — shown to the left of the scrollbar while dragging the thumb.  -->
+            <Canvas
+                Grid.Row="2"
+                HorizontalAlignment="Right"
+                IsHitTestVisible="False"
+                IsVisible="False"
+                Margin="0,0,14,0"
+                VerticalAlignment="Stretch"
+                Width="52"
+                ZIndex="19"
+                x:Name="ChapterMarkersCanvas" />
+
         </Grid>
 
         <!--  ── Floating toolbars: chapter nav pill + annotation pill, side by side ──  -->
