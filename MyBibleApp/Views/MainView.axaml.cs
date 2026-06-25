@@ -1465,6 +1465,8 @@ public partial class MainView : UserControl
     private void ReinitializeWindow()
     {
         _isAdjustingWindow = true;
+        _pendingTopExtentBeforeAdd = -1;
+        _pendingTopTrimCompensation = 0;
         try
         {
             // Evict loaded chapters so AppShellView removes their strokes before the
@@ -1877,6 +1879,8 @@ public partial class MainView : UserControl
         if (groupIdx >= _windowStart && groupIdx < _windowEnd) return;
 
         _isAdjustingWindow = true;
+        _pendingTopExtentBeforeAdd = -1;
+        _pendingTopTrimCompensation = 0;
         try
         {
             // Evict loaded chapters so AppShellView removes their strokes before
