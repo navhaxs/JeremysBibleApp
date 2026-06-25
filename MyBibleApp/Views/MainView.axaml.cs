@@ -1528,26 +1528,17 @@ public partial class MainView : UserControl
         _windowStart--;
         var chapter = _windowStart + 1;     // 1-based
         var newParagraphs = _chapterGroups[_windowStart];
-        var estimatedHeight = _measuredChapterHeights.TryGetValue(chapter, out var cachedHeight)
-            ? cachedHeight
-            : EstimateChapterHeight(chapter);
+
+        // Snapshot extent BEFORE insert so LayoutUpdated can compute actual added height.
+        // Using actual extent delta eliminates the paragraphCount×60px estimation error
+        // (which is 10–100× wrong for short Psalms chapters or Psalms 119 at 22 500px).
+        _pendingTopExtentBeforeAdd = _paragraphScrollViewer.Extent.Height;
 
         // Prepend paragraphs (ObservableCollection has no AddRange; insert individually).
         for (var i = newParagraphs.Count - 1; i >= 0; i--)
             _windowedItems.Insert(0, PrepareForDisplay(newParagraphs[i]));
 
-        // Compensate scroll offset so visible content doesn't jump.
-        var oldOffset = _paragraphScrollViewer.Offset.Y;
-        var newOffset = oldOffset + estimatedHeight;
-        DbgLog($"+ch{chapter} ↑up  ht={estimatedHeight:F0}px [{(_measuredChapterHeights.ContainsKey(chapter) ? "cached" : "est   ")}]  off:{oldOffset:F0}→{newOffset:F0}  win={_windowStart + 1}..{_windowEnd}");
-        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
-
-        // Shift cached content-Y values to match the new scroll coordinate system.
-        // Without this, the ink drift callback returns stale values between the offset
-        // change and the next LayoutUpdated → RebuildParagraphTopCache cycle, causing
-        // strokes to render shifted by ~estimatedHeight during fast scrolling.
-        foreach (var key in _chapterStartY.Keys.ToList())
-            _chapterStartY[key] += estimatedHeight;
+        DbgLog($"+ch{chapter} ↑up  [deferred extent-compensation]  win={_windowStart + 1}..{_windowEnd}");
 
         ChapterEnteredWindow?.Invoke(this, chapter);
     }
