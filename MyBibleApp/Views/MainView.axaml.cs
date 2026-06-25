@@ -161,6 +161,7 @@ public partial class MainView : UserControl
     // racing the inertia timer (which fires at higher dispatch priority than Loaded).
     private double _pendingTopTrimCompensation;   // > 0 → subtract from Offset after trim
     private double _pendingTopExtentBeforeAdd;    // ≥ 0 → extent before up-extend; -1 = none
+    private bool _isApplyingWindowCompensation;   // suppresses ⚡JUMP detector during controlled compensation
 
     // ── Scroll/chapter debug overlay ──────────────────────────────────────
     private Border? _scrollDebugOverlay;
@@ -474,7 +475,9 @@ public partial class MainView : UserControl
             _pendingTopTrimCompensation = 0;
             var newOff = Math.Max(0, sv.Offset.Y - delta);
             DbgLog($"  ↳ trim-compensate  Δ=-{delta:F0}px  off:{sv.Offset.Y:F0}→{newOff:F0}");
+            _isApplyingWindowCompensation = true;
             sv.Offset = new Vector(sv.Offset.X, newOff);
+            _isApplyingWindowCompensation = false;
         }
 
         // ExtendWindowUp deferred: add the ACTUAL extent increase (beats estimate).
@@ -487,7 +490,9 @@ public partial class MainView : UserControl
             {
                 var newOff = sv.Offset.Y + actualAdded;
                 DbgLog($"  ↳ up-compensate    Δ=+{actualAdded:F0}px  off:{sv.Offset.Y:F0}→{newOff:F0}  (extent Δ)");
+                _isApplyingWindowCompensation = true;
                 sv.Offset = new Vector(sv.Offset.X, newOff);
+                _isApplyingWindowCompensation = false;
             }
         }
     }
@@ -539,8 +544,8 @@ public partial class MainView : UserControl
         if (_scrollDebugOverlay?.IsVisible == true)
         {
             var delta = currentOffset - _lastScrollOffset;
-            if (Math.Abs(delta) > 150 && elapsed is > 0 and < 0.5)
-                DbgLog($"⚡JUMP  {_lastScrollOffset:F0}→{currentOffset:F0}  Δ={delta:+F0;-F0}");
+            if (Math.Abs(delta) > 150 && elapsed is > 0 and < 0.5 && !_isApplyingWindowCompensation)
+                DbgLog($"⚡JUMP  {_lastScrollOffset:F0}→{currentOffset:F0}  Δ={delta:+0;-0}px");
             DbgUpdateStats();
         }
 
