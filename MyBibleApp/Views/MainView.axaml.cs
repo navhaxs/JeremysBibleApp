@@ -697,9 +697,17 @@ public partial class MainView : UserControl
 
     // ── H-scroll lock FAB ────────────────────────────────────────────────────
 
-    private void OnHScrollLockButtonClick(object? sender, RoutedEventArgs e) { }
+    private void OnHScrollLockButtonClick(object? sender, RoutedEventArgs e)
+    {
+        _hScrollLocked = !_hScrollLocked;
+        UpdateHScrollLockButton();
+    }
 
-    private void UpdateHScrollLockButton() { }
+    private void UpdateHScrollLockButton()
+    {
+        if (_hScrollLockIconUnlocked != null) _hScrollLockIconUnlocked.IsVisible = !_hScrollLocked;
+        if (_hScrollLockIconLocked   != null) _hScrollLockIconLocked.IsVisible   = _hScrollLocked;
+    }
 
     // ── Split-view toggle ────────────────────────────────────────────────────
 
@@ -2358,7 +2366,9 @@ public partial class MainView : UserControl
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
 
         if (_touchPanAxis == PanAxis.Undecided && (Math.Abs(deltaX) > 8 || Math.Abs(deltaY) > 8))
-            _touchPanAxis = Math.Abs(deltaX) > Math.Abs(deltaY) ? PanAxis.Horizontal : PanAxis.Vertical;
+            _touchPanAxis = _hScrollLocked
+                ? PanAxis.Vertical
+                : (Math.Abs(deltaX) > Math.Abs(deltaY) ? PanAxis.Horizontal : PanAxis.Vertical);
 
         if (_touchPanAxis == PanAxis.Horizontal && _contentHScrollContainer != null)
         {
@@ -2563,6 +2573,9 @@ public partial class MainView : UserControl
             if (_inkAreaGrid != null) { _inkAreaGrid.MinWidth = 0; _inkAreaGrid.Width = double.NaN; }
             if (_contentHScrollContainer != null)
                 _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            _hScrollLocked = false;
+            UpdateHScrollLockButton();
+            if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = false;
             _journalHomePanX = 0;
             _journalHScrollNeedsReset = false;
         }
@@ -2576,6 +2589,7 @@ public partial class MainView : UserControl
                 if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip + LeftBufferDip;
                 if (_contentHScrollContainer != null)
                     _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+                if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
                 _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
                 _journalHScrollNeedsReset = true;
             }
