@@ -163,6 +163,12 @@ public partial class MainView : UserControl
     private double _pendingTopExtentBeforeAdd;    // ≥ 0 → extent before up-extend; -1 = none
     private bool _isApplyingWindowCompensation;   // suppresses ⚡JUMP detector during controlled compensation
 
+    // ── H-scroll lock FAB ─────────────────────────────────────────────────
+    private Button? _hScrollLockButton;
+    private Control? _hScrollLockIconUnlocked;
+    private Control? _hScrollLockIconLocked;
+    private bool _hScrollLocked;
+
     // ── Scroll/chapter debug overlay ──────────────────────────────────────
     private Border? _scrollDebugOverlay;
     private TextBlock? _dbgStats;
@@ -294,6 +300,11 @@ public partial class MainView : UserControl
         _customColorButton = this.FindControl<Button>("CustomColorButton");
         _pointerModeButton = this.FindControl<ToggleButton>("PointerModeButton");
         _undoButton        = this.FindControl<Button>("UndoButton");
+
+        // ── H-scroll lock FAB ─────────────────────────────────────────────
+        _hScrollLockButton       = this.FindControl<Button>("HScrollLockButton");
+        _hScrollLockIconUnlocked = this.FindControl<Control>("HScrollLockIconUnlocked");
+        _hScrollLockIconLocked   = this.FindControl<Control>("HScrollLockIconLocked");
 
         // ── Debug overlay ────────────────────────────────────────────────
         _scrollDebugOverlay = this.FindControl<Border>("ScrollDebugOverlay");
@@ -683,6 +694,12 @@ public partial class MainView : UserControl
 
     private void OnJournalsButtonClick(object? sender, RoutedEventArgs e) =>
         JournalsRequested?.Invoke(this, EventArgs.Empty);
+
+    // ── H-scroll lock FAB ────────────────────────────────────────────────────
+
+    private void OnHScrollLockButtonClick(object? sender, RoutedEventArgs e) { }
+
+    private void UpdateHScrollLockButton() { }
 
     // ── Split-view toggle ────────────────────────────────────────────────────
 
