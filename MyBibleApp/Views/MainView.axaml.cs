@@ -709,6 +709,9 @@ public partial class MainView : UserControl
         if (_hScrollLockIconLocked   != null) _hScrollLockIconLocked.IsVisible   = _hScrollLocked;
         if (_hScrollLockButton       != null) _hScrollLockButton.Background =
             _hScrollLocked ? new SolidColorBrush(Color.FromRgb(0xFF, 0x80, 0x00)) : null;
+        if (_contentHScrollContainer != null)
+            _contentHScrollContainer.HorizontalScrollBarVisibility =
+                _hScrollLocked ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
     }
 
     // ── Split-view toggle ────────────────────────────────────────────────────
