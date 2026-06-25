@@ -1578,18 +1578,11 @@ public partial class MainView : UserControl
         _chapterStartY.Remove(chapter);
         _chapterLocalTops.Remove(chapter);
 
-        // Compensate scroll offset downward.
-        var oldScrollOffset = _paragraphScrollViewer.Offset.Y;
-        var newOffset = Math.Max(0, oldScrollOffset - removedHeight);
-        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  off:{oldScrollOffset:F0}→{newOffset:F0}  Δ={newOffset - oldScrollOffset:+F0;-F0}  win={_windowStart}..{_windowEnd}");
-        _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
-
-        // Shift cached content-Y values to match the new scroll coordinate system.
-        // Same race as ExtendWindowUp: offset change fires OnParagraphScrollChanged
-        // synchronously, but LayoutUpdated → RebuildParagraphTopCache fires later.
-        var scrollDelta = newOffset - oldScrollOffset;
-        foreach (var key in _chapterStartY.Keys.ToList())
-            _chapterStartY[key] += scrollDelta;
+        // Defer offset compensation: applying it now races the inertia DispatcherTimer
+        // (higher dispatch priority). ApplyPendingTopCompensation() in LayoutUpdated
+        // applies it against the actual offset after inertia and layout have settled.
+        _pendingTopTrimCompensation += removedHeight;
+        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  pending={_pendingTopTrimCompensation:F0}px  win={_windowStart}..{_windowEnd}");
 
         ChapterExitedWindow?.Invoke(this, chapter);
     }
