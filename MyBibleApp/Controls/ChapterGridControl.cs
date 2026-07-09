@@ -312,6 +312,7 @@ public class ChapterGridControl : Control
         if (index != _hoverIndex)
         {
             _hoverIndex = index;
+            Cursor = index >= 0 ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
             InvalidateVisual();
         }
     }
@@ -320,7 +321,7 @@ public class ChapterGridControl : Control
     {
         base.OnPointerExited(e);
         var needsRedraw = false;
-        if (_hoverIndex != -1) { _hoverIndex = -1; needsRedraw = true; }
+        if (_hoverIndex != -1) { _hoverIndex = -1; Cursor = Cursor.Default; needsRedraw = true; }
         if (_pressedIndex != -1) { _pressedIndex = -1; needsRedraw = true; }
         if (needsRedraw) InvalidateVisual();
     }
