@@ -2800,14 +2800,21 @@ public partial class MainView : UserControl
             if (layout.TextColumnWidthDip > 0)
             {
                 _paragraphList.MaxWidth = layout.TextColumnWidthDip;
-                _paragraphList.HorizontalAlignment = HorizontalAlignment.Left;
-                _paragraphList.Margin = new Thickness(LeftBufferDip, 0, 0, 0);
-                if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip + LeftBufferDip;
-                if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
-                _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
-                _journalHScrollNeedsReset = true;
+                if (PlatformHelper.IsDesktop)
+                {
+                    _paragraphList.HorizontalAlignment = HorizontalAlignment.Center;
+                }
+                else
+                {
+                    _paragraphList.HorizontalAlignment = HorizontalAlignment.Left;
+                    _paragraphList.Margin = new Thickness(LeftBufferDip, 0, 0, 0);
+                    if (_inkAreaGrid != null) _inkAreaGrid.MinWidth = layout.TextColumnWidthDip + LeftBufferDip;
+                    if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
+                    _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
+                    _journalHScrollNeedsReset = true;
+                }
             }
-            else
+            else if (!PlatformHelper.IsDesktop)
             {
                 _hScrollLocked = false;
                 UpdateHScrollLockButton();
