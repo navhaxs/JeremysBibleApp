@@ -280,6 +280,9 @@ public partial class MainView : UserControl
             _ = LoadUiPrefsAsync();
         }
 
+        if (!PlatformHelper.IsDesktop)
+            this.SizeChanged += OnRootSizeChanged;
+
         // Provide paragraph-position callbacks so ink strokes can anchor to
         // paragraphs and survive virtualizing-panel re-layout.
         if (_inkOverlay != null)
@@ -427,6 +430,17 @@ public partial class MainView : UserControl
                     _journalHScrollNeedsReset = false;
                     HScrollDiagLog("Home pan applied, needsReset cleared.");
                 }
+                if (_pendingOrientationRestore && _contentHScrollContainer != null
+                    && _journalHomePanX > 0
+                    && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
+                {
+                    var target = _lastOrientationIsPortrait == true ? _portraitPanX : _landscapePanX;
+                    var clamped = OrientationPanHelper.ClampPanX(target,
+                        _contentHScrollContainer.Extent.Width, _contentHScrollContainer.Viewport.Width);
+                    _contentHScrollContainer.Offset = new Vector(clamped, 0);
+                    _pendingOrientationRestore = false;
+                    HScrollDiagLog($"Orientation restore applied: isPortrait={_lastOrientationIsPortrait} target={target:F1} clamped={clamped:F1}");
+                }
             };
         }
 
@@ -454,6 +468,14 @@ public partial class MainView : UserControl
             _readerProgressTrack.IsHitTestVisible = false;
             _paragraphList.AddHandler(TappedEvent, OnListBoxTapped, handledEventsToo: false);
         }
+    }
+
+    private void OnRootSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        var isPortrait = OrientationPanHelper.IsPortrait(e.NewSize.Width, e.NewSize.Height);
+        if (_lastOrientationIsPortrait.HasValue && _lastOrientationIsPortrait.Value != isPortrait)
+            _pendingOrientationRestore = true;
+        _lastOrientationIsPortrait = isPortrait;
     }
 
     private void RemoveHScrollContainerRecognizer(object? sender, EventArgs e)
