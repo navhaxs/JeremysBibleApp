@@ -2692,9 +2692,11 @@ public partial class MainView : UserControl
 
         if (_touchPanAxis == PanAxis.Horizontal && _contentHScrollContainer != null)
         {
+            var offsetBefore = _contentHScrollContainer.Offset.X;
             var maxX = Math.Max(0, _contentHScrollContainer.Extent.Width - _contentHScrollContainer.Viewport.Width);
-            var newX = Math.Clamp(_contentHScrollContainer.Offset.X + deltaX, 0, maxX);
+            var newX = Math.Clamp(offsetBefore + deltaX, 0, maxX);
             _contentHScrollContainer.Offset = new Vector(newX, _contentHScrollContainer.Offset.Y);
+            HScrollDiagLog($"H-pan write deltaX={deltaX:F1} offsetBefore={offsetBefore:F1} newX={newX:F1}");
             CaptureAndPersistPan(newX);
         }
         else if (_touchPanAxis == PanAxis.Vertical)
