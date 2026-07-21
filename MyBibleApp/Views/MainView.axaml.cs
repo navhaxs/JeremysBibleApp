@@ -145,6 +145,13 @@ public partial class MainView : UserControl
     private double _journalHomePanX;            // HScroll home: LeftBufferDip - layout.LeftMarginDip when journal active, 0 otherwise
     private bool _journalHScrollNeedsReset;     // true after journal activated; cleared once offset is applied with valid Extent
 
+    private static readonly UiPreferencesStore _uiPrefsStore = new();
+    private static bool _uiPrefsLoadStarted;
+    private static double _portraitPanX;
+    private static double _landscapePanX;
+    private static bool? _lastOrientationIsPortrait; // null = not yet determined
+    private static bool _pendingOrientationRestore;  // set on orientation flip, cleared once restore is applied
+
     private bool _isMouseDragging;
     private Point _lastMousePosition;
     private bool _isTouchPanning;
@@ -266,6 +273,12 @@ public partial class MainView : UserControl
         _penUnderlay    = this.FindControl<InkOverlayCanvas>("PenUnderlay");
         _inkAreaGrid    = this.FindControl<Grid>("InkAreaGrid");
         _contentHScrollContainer = this.FindControl<ScrollViewer>("ContentHScrollContainer");
+
+        if (!PlatformHelper.IsDesktop && !_uiPrefsLoadStarted)
+        {
+            _uiPrefsLoadStarted = true;
+            _ = LoadUiPrefsAsync();
+        }
 
         // Provide paragraph-position callbacks so ink strokes can anchor to
         // paragraphs and survive virtualizing-panel re-layout.
@@ -2880,6 +2893,13 @@ public partial class MainView : UserControl
     {
         if (_inkOverlay == null || _paragraphList == null) return;
         _inkOverlay.UpdateTextColumnOffsetX(_paragraphList.Bounds.X);
+    }
+
+    private static async Task LoadUiPrefsAsync()
+    {
+        var (portraitX, landscapeX) = await _uiPrefsStore.LoadJournalPanAsync();
+        _portraitPanX = portraitX;
+        _landscapePanX = landscapeX;
     }
 }
 
