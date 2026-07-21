@@ -441,18 +441,30 @@ public partial class MainView : UserControl
                 if (_journalHScrollNeedsReset && _contentHScrollContainer != null
                     && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
                 {
-                    ApplyJournalPan();
-                    _journalHScrollNeedsReset = false;
-                    _pendingOrientationRestore = false;
-                    HScrollDiagLog("Journal-activation pan applied, needsReset cleared.");
+                    if (ApplyJournalPan())
+                    {
+                        _journalHScrollNeedsReset = false;
+                        _pendingOrientationRestore = false;
+                        HScrollDiagLog("Journal-activation pan applied and converged, needsReset cleared.");
+                    }
+                    else
+                    {
+                        HScrollDiagLog("Journal-activation pan applied but not yet converged -- Extent still settling, needsReset stays pending.");
+                    }
                 }
                 else if (_pendingOrientationRestore && _contentHScrollContainer != null
                     && _journalHomePanX > 0
                     && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
                 {
-                    ApplyJournalPan();
-                    _pendingOrientationRestore = false;
-                    HScrollDiagLog("Orientation-change pan re-applied.");
+                    if (ApplyJournalPan())
+                    {
+                        _pendingOrientationRestore = false;
+                        HScrollDiagLog("Orientation-change pan re-applied and converged.");
+                    }
+                    else
+                    {
+                        HScrollDiagLog("Orientation-change pan re-applied but not yet converged -- Extent still settling, stays pending.");
+                    }
                 }
             };
         }
@@ -488,18 +500,36 @@ public partial class MainView : UserControl
         var isPortrait = OrientationPanHelper.IsPortrait(e.NewSize.Width, e.NewSize.Height);
         var flipped = _lastOrientationIsPortrait.HasValue && _lastOrientationIsPortrait.Value != isPortrait;
         if (flipped)
+        {
             _pendingOrientationRestore = true;
+            _lastAppliedJournalPanX = null; // fresh settle-cycle: don't compare against a stale prior convergence
+        }
         HScrollDiagLog($"OnRootSizeChanged newSize={e.NewSize} isPortrait={isPortrait} " +
             $"prevIsPortrait={_lastOrientationIsPortrait} flipped={flipped} pendingRestore={_pendingOrientationRestore}");
         _lastOrientationIsPortrait = isPortrait;
     }
 
+    // Tracks the last clamped value ApplyJournalPan set, so repeated calls during the
+    // InkAreaGrid/ContentHScroll settle-cascade (see ApplyJournalPan) can detect convergence.
+    private double? _lastAppliedJournalPanX;
+
     // Applies the remembered pan for the current orientation if one has ever been captured,
     // otherwise falls back to the journal's fixed home-pan position. Callers must have already
     // verified _contentHScrollContainer.Extent.Width > Viewport.Width (h-scroll actually applies).
-    private void ApplyJournalPan()
+    //
+    // Returns whether the result has converged and callers can stop re-invoking this: either the
+    // value fit without clamping (Extent is definitely big enough), or the clamped value matches
+    // the previous call's (Extent has stopped changing, even if the target is legitimately out of
+    // range). Extent grows through several intermediate sizes after an orientation change or
+    // journal activation (InkAreaGrid.Width is set to viewportWidth+LeftBufferDip only after
+    // ContentHScrollContainer's own SizeChanged/UpdateJournalInkAreaGridWidth runs, which can be
+    // one or more layout passes behind the InkAreaGrid.SizeChanged firing that invokes this) --
+    // applying once against a not-yet-final Extent silently under-restores (confirmed via device
+    // repro: a P->L rotation clamped a 421.7 remembered value down to 330.8 against a transient
+    // Extent of 1716.2, before Extent grew to its true 2235.8 a moment later).
+    private bool ApplyJournalPan()
     {
-        if (_contentHScrollContainer == null) return;
+        if (_contentHScrollContainer == null) return true;
         var remembered = _lastOrientationIsPortrait == true ? _portraitPanX
             : _lastOrientationIsPortrait == false ? _landscapePanX
             : null;
@@ -507,8 +537,12 @@ public partial class MainView : UserControl
         var clamped = OrientationPanHelper.ClampPanX(target,
             _contentHScrollContainer.Extent.Width, _contentHScrollContainer.Viewport.Width);
         _contentHScrollContainer.Offset = new Vector(clamped, 0);
+        var converged = clamped == target || clamped == _lastAppliedJournalPanX;
+        _lastAppliedJournalPanX = clamped;
         HScrollDiagLog($"ApplyJournalPan isPortrait={_lastOrientationIsPortrait} remembered={remembered} " +
+            $"converged={converged} " +
             $"homePanX={_journalHomePanX:F1} target={target:F1} clamped={clamped:F1}");
+        return converged;
     }
 
     private void CaptureAndPersistPan(double newX)
@@ -2929,6 +2963,7 @@ public partial class MainView : UserControl
                     if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
                     _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
                     _journalHScrollNeedsReset = true;
+                    _lastAppliedJournalPanX = null; // fresh settle-cycle: don't compare against a stale prior convergence
                     HScrollDiagLog($"SetJournalLayout(mobile): TextColumnWidthDip={layout.TextColumnWidthDip:F1} " +
                         $"LeftMarginDip={layout.LeftMarginDip:F1} homePanX={_journalHomePanX:F1} " +
                         $"inkAreaGrid.Bounds={_inkAreaGrid?.Bounds} contentHScroll.Bounds={_contentHScrollContainer?.Bounds} " +
