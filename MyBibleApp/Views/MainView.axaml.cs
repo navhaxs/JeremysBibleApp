@@ -474,15 +474,20 @@ public partial class MainView : UserControl
     private void OnRootSizeChanged(object? sender, SizeChangedEventArgs e)
     {
         var isPortrait = OrientationPanHelper.IsPortrait(e.NewSize.Width, e.NewSize.Height);
-        if (_lastOrientationIsPortrait.HasValue && _lastOrientationIsPortrait.Value != isPortrait)
+        var flipped = _lastOrientationIsPortrait.HasValue && _lastOrientationIsPortrait.Value != isPortrait;
+        if (flipped)
             _pendingOrientationRestore = true;
+        HScrollDiagLog($"OnRootSizeChanged newSize={e.NewSize} isPortrait={isPortrait} " +
+            $"prevIsPortrait={_lastOrientationIsPortrait} flipped={flipped} pendingRestore={_pendingOrientationRestore}");
         _lastOrientationIsPortrait = isPortrait;
     }
 
-    private static void CaptureAndPersistPan(double newX)
+    private void CaptureAndPersistPan(double newX)
     {
         // _lastOrientationIsPortrait is only non-null on mobile (Task 4 only hooks
         // OnRootSizeChanged when !PlatformHelper.IsDesktop), so this is a no-op on desktop.
+        HScrollDiagLog($"CaptureAndPersistPan newX={newX:F1} isPortrait={_lastOrientationIsPortrait} " +
+            $"portraitPanX(before)={_portraitPanX:F1} landscapePanX(before)={_landscapePanX:F1}");
         if (_lastOrientationIsPortrait == true) _portraitPanX = newX;
         else if (_lastOrientationIsPortrait == false) _landscapePanX = newX;
         else return;
