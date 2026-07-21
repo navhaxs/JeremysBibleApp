@@ -360,7 +360,8 @@ public partial class AppShellView : UserControl
     {
         _authStateHandler = (_, args) =>
         {
-            if (args.PropertyName == nameof(AppViewModel.IsAuthenticating))
+            if (args.PropertyName == nameof(AppViewModel.IsAuthenticating) ||
+                args.PropertyName == nameof(AppViewModel.IsAwaitingBrowserAuth))
                 Dispatcher.UIThread.Post(UpdateSignInOverlayVisibility);
             if (args.PropertyName == nameof(AppViewModel.IsTabBarVisible))
                 Dispatcher.UIThread.Post(() => UpdateTabBarVisibility());
@@ -375,6 +376,17 @@ public partial class AppShellView : UserControl
         var overlay = this.FindControl<Panel>("SignInProgressOverlay");
         if (overlay != null)
             overlay.IsVisible = _appVM.IsAuthenticating;
+
+        bool awaitingBrowser = _appVM.IsAwaitingBrowserAuth;
+        var statusText = this.FindControl<TextBlock>("SignInStatusText");
+        if (statusText != null)
+            statusText.Text = awaitingBrowser ? "Waiting for sign-in…" : "Loading...";
+        var subText = this.FindControl<TextBlock>("SignInStatusSubText");
+        if (subText != null)
+            subText.IsVisible = awaitingBrowser;
+        var reopenButton = this.FindControl<Button>("ReopenBrowserButton");
+        if (reopenButton != null)
+            reopenButton.IsVisible = awaitingBrowser;
     }
 
     private void OnCancelSignInButtonClick(object? sender, RoutedEventArgs e)

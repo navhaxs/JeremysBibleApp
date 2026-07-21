@@ -30,6 +30,7 @@ public class AppViewModel : ViewModelBase, IDisposable
     private bool _isSyncing;
     private bool _isAuthenticated;
     private bool _isAuthenticating;
+    private bool _isAwaitingBrowserAuth;
     private string? _currentUserEmail;
     private string _syncStatus = string.Empty;
     private DateTimeOffset? _lastUpToDateSyncAt;
@@ -240,6 +241,12 @@ public class AppViewModel : ViewModelBase, IDisposable
         private set => this.RaiseAndSetIfChanged(ref _isAuthenticating, value);
     }
 
+    public bool IsAwaitingBrowserAuth
+    {
+        get => _isAwaitingBrowserAuth;
+        private set => this.RaiseAndSetIfChanged(ref _isAwaitingBrowserAuth, value);
+    }
+
     public string? CurrentUserEmail
     {
         get => _currentUserEmail;
@@ -289,6 +296,7 @@ public class AppViewModel : ViewModelBase, IDisposable
         }
 
         IsAuthenticating = true;
+        IsAwaitingBrowserAuth = true;
         try
         {
             AppendSyncDebugLog($"[Auth] Starting authentication. Platform={PlatformHelper.GetPlatformName()}, IsAuthenticated={IsAuthenticated}, CanAuthenticate={CanAuthenticate}.");
@@ -296,6 +304,7 @@ public class AppViewModel : ViewModelBase, IDisposable
                 AppendSyncDebugLog($"[Auth] Android: LaunchUri set={AndroidOAuthCallbackBridge.LaunchUri != null}.");
             AppendSyncDebugLog("Starting authentication... a browser window should open.");
             var success = await _syncCoordinator.AuthenticateAsync(code);
+            IsAwaitingBrowserAuth = false;
             IsAuthenticated = success;
             AppendSyncDebugLog(success
                 ? $"Authentication succeeded ({_googleDriveAuthService?.CurrentUserEmail ?? "user"})."
@@ -312,6 +321,7 @@ public class AppViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            IsAwaitingBrowserAuth = false;
             IsAuthenticating = false;
         }
     }

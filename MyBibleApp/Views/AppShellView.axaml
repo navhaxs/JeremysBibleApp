@@ -264,12 +264,14 @@
                   VerticalAlignment="Center"
                   Spacing="20"
                   MinWidth="260">
-        <TextBlock Text="Waiting for sign-in…"
+        <TextBlock x:Name="SignInStatusText"
+                   Text="Waiting for sign-in…"
                    FontSize="17"
                    FontWeight="SemiBold"
                    HorizontalAlignment="Center" />
         <ProgressBar IsIndeterminate="True" Height="4" />
-        <TextBlock Text="A sign-in page has been opened in your browser."
+        <TextBlock x:Name="SignInStatusSubText"
+                   Text="A sign-in page has been opened in your browser."
                    FontSize="12"
                    HorizontalAlignment="Center"
                    TextWrapping="Wrap"

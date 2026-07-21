@@ -483,7 +483,7 @@
             <!--  Main content grid (row 2) with overlay  -->
             <ScrollViewer
                 Grid.Row="2"
-                HorizontalScrollBarVisibility="Disabled"
+                HorizontalScrollBarVisibility="Hidden"
                 VerticalScrollBarVisibility="Disabled"
                 x:Name="ContentHScrollContainer">
             <Grid

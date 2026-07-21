@@ -1,0 +1,1 @@
+dotnet publish MyBibleApp.Desktop\MyBibleApp.Desktop.csproj -c Release -r win-x64 --self-contained false /p:PublishSingleFile=true

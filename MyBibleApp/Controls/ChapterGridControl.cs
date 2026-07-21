@@ -21,7 +21,7 @@ public class ChapterGridControl : Control
 {
     private const double CellWidth = 26;
     private const double CellHeight = 22;
-    private const double BorderThickness = 0.5;
+    private const double BorderThickness = 1.0;
     private const int FallbackColumnsPerRow = 10;
 
     private int _columnsPerRow = FallbackColumnsPerRow;
@@ -264,7 +264,7 @@ public class ChapterGridControl : Control
 
     private static FormattedText CreateText(int number, IBrush foreground) =>
         new(number.ToString(), CultureInfo.InvariantCulture,
-            FlowDirection.LeftToRight, DefaultTypeface, 9, foreground);
+            FlowDirection.LeftToRight, DefaultTypeface, 11, foreground);
 
     private IBrush? GetResourceBrush(string key)
     {

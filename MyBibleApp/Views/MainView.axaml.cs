@@ -403,18 +403,29 @@ public partial class MainView : UserControl
             _inkAreaGrid.SizeChanged += (_, _) =>
             {
                 UpdateInkTextColumnOffset();
+                HScrollDiagLog($"InkAreaGrid.SizeChanged newSize={_inkAreaGrid.Bounds.Size} " +
+                    $"needsReset={_journalHScrollNeedsReset} " +
+                    $"extent={_contentHScrollContainer?.Extent} viewport={_contentHScrollContainer?.Viewport} " +
+                    $"homePanX={_journalHomePanX:F1} hScrollLocked={_hScrollLocked}");
                 if (_journalHScrollNeedsReset && _contentHScrollContainer != null
                     && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
                 {
                     _contentHScrollContainer.Offset = new Vector(_journalHomePanX, 0);
                     _journalHScrollNeedsReset = false;
+                    HScrollDiagLog("Home pan applied, needsReset cleared.");
                 }
             };
         }
 
         if (_contentHScrollContainer != null)
         {
-            _contentHScrollContainer.SizeChanged += (_, _) => UpdateJournalInkAreaGridWidth();
+            _contentHScrollContainer.SizeChanged += (_, _) =>
+            {
+                HScrollDiagLog($"ContentHScroll.SizeChanged newSize={_contentHScrollContainer.Bounds.Size} " +
+                    $"viewport={_contentHScrollContainer.Viewport} extent={_contentHScrollContainer.Extent} " +
+                    $"inkAreaGrid.Width={_inkAreaGrid?.Width} inkAreaGrid.MinWidth={_inkAreaGrid?.MinWidth}");
+                UpdateJournalInkAreaGridWidth();
+            };
             // Remove the built-in ScrollGestureRecognizer so all touch panning is
             // handled exclusively by our unified OnMarginTouchMoved handler.
             _contentHScrollContainer.LayoutUpdated += RemoveHScrollContainerRecognizer;
@@ -2448,6 +2459,15 @@ public partial class MainView : UserControl
             Dispatcher.UIThread.Post(() => vm.AppVM.AppendSyncDebugLog($"[Margin] {msg}"));
     }
 
+    // TEMP DIAGNOSTIC — read-only, no behavior change. Remove once the Android
+    // portrait initial-centering bug is root-caused.
+    private void HScrollDiagLog(string msg)
+    {
+        System.Diagnostics.Debug.WriteLine($"[HScrollDiag] {msg}");
+        if (DataContext is ScriptureViewModel vm)
+            Dispatcher.UIThread.Post(() => vm.AppVM.AppendSyncDebugLog($"[HScrollDiag] {msg}"));
+    }
+
     private void OnMarginTouchPressed(object? sender, PointerPressedEventArgs e)
     {
         MarginLog($"Pressed type={e.Pointer.Type} inkGrid={_inkAreaGrid != null} sv={_paragraphScrollViewer != null}");
@@ -2812,6 +2832,11 @@ public partial class MainView : UserControl
                     if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = true;
                     _journalHomePanX = Math.Max(0, LeftBufferDip - layout.LeftMarginDip);
                     _journalHScrollNeedsReset = true;
+                    HScrollDiagLog($"SetJournalLayout(mobile): TextColumnWidthDip={layout.TextColumnWidthDip:F1} " +
+                        $"LeftMarginDip={layout.LeftMarginDip:F1} homePanX={_journalHomePanX:F1} " +
+                        $"inkAreaGrid.Bounds={_inkAreaGrid?.Bounds} contentHScroll.Bounds={_contentHScrollContainer?.Bounds} " +
+                        $"viewport={_contentHScrollContainer?.Viewport} extent={_contentHScrollContainer?.Extent} " +
+                        $"hScrollLocked={_hScrollLocked}");
                 }
             }
             else if (!PlatformHelper.IsDesktop)
@@ -2834,10 +2859,21 @@ public partial class MainView : UserControl
 
     private void UpdateJournalInkAreaGridWidth()
     {
-        if (_inkAreaGrid == null || _contentHScrollContainer == null || _journalHomePanX <= 0) return;
+        if (_inkAreaGrid == null || _contentHScrollContainer == null || _journalHomePanX <= 0)
+        {
+            HScrollDiagLog($"UpdateJournalInkAreaGridWidth bail: inkAreaGrid={_inkAreaGrid != null} " +
+                $"hScroll={_contentHScrollContainer != null} homePanX={_journalHomePanX:F1}");
+            return;
+        }
         var viewportWidth = _contentHScrollContainer.Viewport.Width;
-        if (viewportWidth <= 0) return;
+        if (viewportWidth <= 0)
+        {
+            HScrollDiagLog("UpdateJournalInkAreaGridWidth bail: viewportWidth<=0");
+            return;
+        }
         _inkAreaGrid.Width = viewportWidth + LeftBufferDip;
+        HScrollDiagLog($"UpdateJournalInkAreaGridWidth applied: viewportWidth={viewportWidth:F1} " +
+            $"newInkAreaGridWidth={_inkAreaGrid.Width:F1}");
     }
 
     private void UpdateInkTextColumnOffset()
