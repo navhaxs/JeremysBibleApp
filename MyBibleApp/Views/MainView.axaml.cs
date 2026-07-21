@@ -478,6 +478,17 @@ public partial class MainView : UserControl
         _lastOrientationIsPortrait = isPortrait;
     }
 
+    private static void CaptureAndPersistPan(double newX)
+    {
+        // _lastOrientationIsPortrait is only non-null on mobile (Task 4 only hooks
+        // OnRootSizeChanged when !PlatformHelper.IsDesktop), so this is a no-op on desktop.
+        if (_lastOrientationIsPortrait == true) _portraitPanX = newX;
+        else if (_lastOrientationIsPortrait == false) _landscapePanX = newX;
+        else return;
+
+        _ = _uiPrefsStore.SaveJournalPanAsync(_portraitPanX, _landscapePanX);
+    }
+
     private void RemoveHScrollContainerRecognizer(object? sender, EventArgs e)
     {
         if (_contentHScrollContainer == null) return;
@@ -2649,6 +2660,7 @@ public partial class MainView : UserControl
             var maxX = Math.Max(0, _contentHScrollContainer.Extent.Width - _contentHScrollContainer.Viewport.Width);
             var newX = Math.Clamp(_contentHScrollContainer.Offset.X + deltaX, 0, maxX);
             _contentHScrollContainer.Offset = new Vector(newX, _contentHScrollContainer.Offset.Y);
+            CaptureAndPersistPan(newX);
         }
         else if (_touchPanAxis == PanAxis.Vertical)
         {
@@ -2785,6 +2797,7 @@ public partial class MainView : UserControl
         var maxX = Math.Max(0, _contentHScrollContainer.Extent.Width - _contentHScrollContainer.Viewport.Width);
         var newX = Math.Clamp(_contentHScrollContainer.Offset.X - e.Delta.X * ScrollStep, 0, maxX);
         _contentHScrollContainer.Offset = new Vector(newX, _contentHScrollContainer.Offset.Y);
+        CaptureAndPersistPan(newX);
         e.Handled = true;
     }
 
