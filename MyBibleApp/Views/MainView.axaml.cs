@@ -147,10 +147,15 @@ public partial class MainView : UserControl
 
     private static readonly UiPreferencesStore _uiPrefsStore = new();
     private static bool _uiPrefsLoadStarted;
-    private static double _portraitPanX;
-    private static double _landscapePanX;
+    private static double? _portraitPanX;  // null = never captured this pan yet (fall back to home pan)
+    private static double? _landscapePanX; // null = never captured this pan yet (fall back to home pan)
     private static bool? _lastOrientationIsPortrait; // null = not yet determined
-    private static bool _pendingOrientationRestore;  // set on orientation flip, cleared once restore is applied
+    // Set when orientation changes while journal is already active (process survives the
+    // rotation) so the ink area re-applies the new orientation's remembered pan. Journal
+    // activation (_journalHScrollNeedsReset) independently applies the same remembered-or-home
+    // logic, so this flag is not the only path to a correct pan after an Android process
+    // restart mid-rotation (where in-memory flip-detection state is lost).
+    private static bool _pendingOrientationRestore;
 
     private bool _isMouseDragging;
     private Point _lastMousePosition;
@@ -414,33 +419,40 @@ public partial class MainView : UserControl
             // handledEventsToo:true ensures we catch them even if something else marks handled first.
             _inkAreaGrid.AddHandler(PointerWheelChangedEvent, OnHorizontalWheelChanged, handledEventsToo: true);
             // Keep ink canvas column-offset in sync when the viewport is resized.
-            // Also apply the journal HScroll home position the first time the grid has a valid Extent
-            // (setting ScrollViewer.Offset before Extent > 0 is clamped to zero by Avalonia).
+            // Also apply the journal HScroll home/remembered position the first time the grid
+            // has a valid Extent (setting ScrollViewer.Offset before Extent > 0 is clamped to
+            // zero by Avalonia).
+            //
+            // Two independent triggers feed the same ApplyJournalPan() logic:
+            //  - _journalHScrollNeedsReset: journal just activated (always re-evaluate remembered-or-home,
+            //    since SetJournalLayout re-runs when Android recreates the process mid-rotation too —
+            //    the in-memory flip-detection below is lost across a process restart, this path is not).
+            //  - _pendingOrientationRestore: orientation changed while journal was already active and the
+            //    process survived the rotation (no re-activation, so the above never fires).
+            // Both apply the identical remembered-value-for-current-orientation-or-home logic, so whichever
+            // fires first does the correct thing; the other's flag is cleared to avoid a redundant re-apply.
             _inkAreaGrid.SizeChanged += (_, _) =>
             {
                 UpdateInkTextColumnOffset();
                 HScrollDiagLog($"InkAreaGrid.SizeChanged newSize={_inkAreaGrid.Bounds.Size} " +
-                    $"needsReset={_journalHScrollNeedsReset} " +
+                    $"needsReset={_journalHScrollNeedsReset} pendingOrientationRestore={_pendingOrientationRestore} " +
                     $"extent={_contentHScrollContainer?.Extent} viewport={_contentHScrollContainer?.Viewport} " +
                     $"homePanX={_journalHomePanX:F1} hScrollLocked={_hScrollLocked}");
                 if (_journalHScrollNeedsReset && _contentHScrollContainer != null
                     && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
                 {
-                    _contentHScrollContainer.Offset = new Vector(_journalHomePanX, 0);
+                    ApplyJournalPan();
                     _journalHScrollNeedsReset = false;
                     _pendingOrientationRestore = false;
-                    HScrollDiagLog("Home pan applied, needsReset cleared.");
+                    HScrollDiagLog("Journal-activation pan applied, needsReset cleared.");
                 }
-                if (_pendingOrientationRestore && _contentHScrollContainer != null
+                else if (_pendingOrientationRestore && _contentHScrollContainer != null
                     && _journalHomePanX > 0
                     && _contentHScrollContainer.Extent.Width > _contentHScrollContainer.Viewport.Width)
                 {
-                    var target = _lastOrientationIsPortrait == true ? _portraitPanX : _landscapePanX;
-                    var clamped = OrientationPanHelper.ClampPanX(target,
-                        _contentHScrollContainer.Extent.Width, _contentHScrollContainer.Viewport.Width);
-                    _contentHScrollContainer.Offset = new Vector(clamped, 0);
+                    ApplyJournalPan();
                     _pendingOrientationRestore = false;
-                    HScrollDiagLog($"Orientation restore applied: isPortrait={_lastOrientationIsPortrait} target={target:F1} clamped={clamped:F1}");
+                    HScrollDiagLog("Orientation-change pan re-applied.");
                 }
             };
         }
@@ -482,12 +494,29 @@ public partial class MainView : UserControl
         _lastOrientationIsPortrait = isPortrait;
     }
 
+    // Applies the remembered pan for the current orientation if one has ever been captured,
+    // otherwise falls back to the journal's fixed home-pan position. Callers must have already
+    // verified _contentHScrollContainer.Extent.Width > Viewport.Width (h-scroll actually applies).
+    private void ApplyJournalPan()
+    {
+        if (_contentHScrollContainer == null) return;
+        var remembered = _lastOrientationIsPortrait == true ? _portraitPanX
+            : _lastOrientationIsPortrait == false ? _landscapePanX
+            : null;
+        var target = remembered ?? _journalHomePanX;
+        var clamped = OrientationPanHelper.ClampPanX(target,
+            _contentHScrollContainer.Extent.Width, _contentHScrollContainer.Viewport.Width);
+        _contentHScrollContainer.Offset = new Vector(clamped, 0);
+        HScrollDiagLog($"ApplyJournalPan isPortrait={_lastOrientationIsPortrait} remembered={remembered} " +
+            $"homePanX={_journalHomePanX:F1} target={target:F1} clamped={clamped:F1}");
+    }
+
     private void CaptureAndPersistPan(double newX)
     {
         // _lastOrientationIsPortrait is only non-null on mobile (Task 4 only hooks
         // OnRootSizeChanged when !PlatformHelper.IsDesktop), so this is a no-op on desktop.
         HScrollDiagLog($"CaptureAndPersistPan newX={newX:F1} isPortrait={_lastOrientationIsPortrait} " +
-            $"portraitPanX(before)={_portraitPanX:F1} landscapePanX(before)={_landscapePanX:F1}");
+            $"portraitPanX(before)={_portraitPanX} landscapePanX(before)={_landscapePanX}");
         if (_lastOrientationIsPortrait == true) _portraitPanX = newX;
         else if (_lastOrientationIsPortrait == false) _landscapePanX = newX;
         else return;

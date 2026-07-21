@@ -16,12 +16,12 @@ public class UiPreferencesStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadJournalPanAsync_NoFileYet_ReturnsZeros()
+    public async Task LoadJournalPanAsync_NoFileYet_ReturnsNulls()
     {
         var store = new UiPreferencesStore(_tempDir);
         var (portraitX, landscapeX) = await store.LoadJournalPanAsync();
-        Assert.Equal(0, portraitX);
-        Assert.Equal(0, landscapeX);
+        Assert.Null(portraitX);
+        Assert.Null(landscapeX);
     }
 
     [Fact]
@@ -38,7 +38,22 @@ public class UiPreferencesStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadJournalPanAsync_CorruptFile_ReturnsZerosInsteadOfThrowing()
+    public async Task SaveThenLoad_RoundTripsZeroAsADistinctCapturedValue()
+    {
+        // A legitimately-captured pan of exactly 0 (user panned all the way left) must
+        // round-trip as 0.0, not collapse into "never captured" (null).
+        var store = new UiPreferencesStore(_tempDir);
+        await store.SaveJournalPanAsync(0.0, 0.0);
+
+        var reloaded = new UiPreferencesStore(_tempDir);
+        var (portraitX, landscapeX) = await reloaded.LoadJournalPanAsync();
+
+        Assert.Equal(0.0, portraitX);
+        Assert.Equal(0.0, landscapeX);
+    }
+
+    [Fact]
+    public async Task LoadJournalPanAsync_CorruptFile_ReturnsNullsInsteadOfThrowing()
     {
         Directory.CreateDirectory(_tempDir);
         await File.WriteAllTextAsync(Path.Combine(_tempDir, "ui-prefs.json"), "{ not valid json");
@@ -46,7 +61,7 @@ public class UiPreferencesStoreTests : IDisposable
         var store = new UiPreferencesStore(_tempDir);
         var (portraitX, landscapeX) = await store.LoadJournalPanAsync();
 
-        Assert.Equal(0, portraitX);
-        Assert.Equal(0, landscapeX);
+        Assert.Null(portraitX);
+        Assert.Null(landscapeX);
     }
 }

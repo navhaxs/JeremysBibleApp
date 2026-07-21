@@ -22,25 +22,25 @@ public sealed class UiPreferencesStore
         _filePath = Path.Combine(storageDir, "ui-prefs.json");
     }
 
-    public async Task<(double PortraitX, double LandscapeX)> LoadJournalPanAsync()
+    public async Task<(double? PortraitX, double? LandscapeX)> LoadJournalPanAsync()
     {
         return await Task.Run(() =>
         {
-            if (!File.Exists(_filePath)) return (0.0, 0.0);
+            if (!File.Exists(_filePath)) return ((double?)null, (double?)null);
             try
             {
                 var json = File.ReadAllText(_filePath);
                 var data = JsonSerializer.Deserialize<UiPreferencesData>(json, JsonOptions);
-                return (data?.PortraitJournalPanX ?? 0.0, data?.LandscapeJournalPanX ?? 0.0);
+                return (data?.PortraitJournalPanX, data?.LandscapeJournalPanX);
             }
             catch
             {
-                return (0.0, 0.0);
+                return ((double?)null, (double?)null);
             }
         }).ConfigureAwait(false);
     }
 
-    public async Task SaveJournalPanAsync(double portraitX, double landscapeX)
+    public async Task SaveJournalPanAsync(double? portraitX, double? landscapeX)
     {
         await Task.Run(() =>
         {
@@ -73,7 +73,7 @@ public sealed class UiPreferencesStore
 
     private sealed class UiPreferencesData
     {
-        public double PortraitJournalPanX { get; set; }
-        public double LandscapeJournalPanX { get; set; }
+        public double? PortraitJournalPanX { get; set; }
+        public double? LandscapeJournalPanX { get; set; }
     }
 }
