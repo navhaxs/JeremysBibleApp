@@ -428,6 +428,7 @@ public partial class MainView : UserControl
                 {
                     _contentHScrollContainer.Offset = new Vector(_journalHomePanX, 0);
                     _journalHScrollNeedsReset = false;
+                    _pendingOrientationRestore = false;
                     HScrollDiagLog("Home pan applied, needsReset cleared.");
                 }
                 if (_pendingOrientationRestore && _contentHScrollContainer != null
