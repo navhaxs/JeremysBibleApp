@@ -2621,7 +2621,7 @@ public partial class MainView : UserControl
 
         _isTouchPanning = true;
         _touchPanAxis = PanAxis.Undecided;
-        _lastTouchPosition = pos;
+        _lastTouchPosition = GetStablePanPosition(e);
 
         // Capture immediately only in the margin (no tapable content there).
         // Text body: defer capture to OnMarginTouchMoved once movement is confirmed,
@@ -2635,6 +2635,18 @@ public partial class MainView : UserControl
     }
 
     private bool _loggedFirstMove;
+
+    // _inkAreaGrid is itself the content horizontally scrolled by _contentHScrollContainer's
+    // Offset, so measuring pan deltas via e.GetPosition(_inkAreaGrid) is self-referential: every
+    // Offset write shifts _inkAreaGrid under the finger, making the next frame's measured
+    // position reflect that shift and produce an equal-and-opposite delta -- an oscillation that
+    // repeats every frame while panning (confirmed via real-device repro: offsetBefore on each
+    // write exactly matched the previous write's newX, ping-ponging between two values). Measure
+    // against _contentHScrollContainer instead -- its own Bounds don't move when its content
+    // scrolls, so it's a stable reference frame for both axes (vertical scrolling of the nested
+    // ListBox doesn't move it either).
+    private Point GetStablePanPosition(PointerEventArgs e) =>
+        _contentHScrollContainer != null ? e.GetPosition(_contentHScrollContainer) : e.GetPosition(_inkAreaGrid);
 
     private void OnMarginTouchMoved(object? sender, PointerEventArgs e)
     {
@@ -2674,7 +2686,7 @@ public partial class MainView : UserControl
         if (e.Pointer.Type != PointerType.Touch) return;
         if (_paragraphScrollViewer == null) { MarginLog("Moved: sv null"); return; }
 
-        var currentPos = e.GetPosition(_inkAreaGrid);
+        var currentPos = GetStablePanPosition(e);
         var deltaX = _lastTouchPosition.X - currentPos.X;
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
 
