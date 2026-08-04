@@ -176,11 +176,33 @@ public partial class MainView : UserControl
     private bool _isAdjustingWindow;
     private int _windowCheckVersion;
     private bool _immediateExtendPending;
-    // Deferred top-compensation: applied in OnParagraphListLayoutUpdated to avoid
+    // Deferred top-extend compensation: applied in OnParagraphListLayoutUpdated to avoid
     // racing the inertia timer (which fires at higher dispatch priority than Loaded).
-    private double _pendingTopTrimCompensation;   // > 0 → subtract from Offset after trim
+    // ExtendWindowUp refuses to re-fire while this is pending (see ExtendWindowUp), so
+    // at most one up-extend's compensation is ever outstanding — a second up-extend
+    // before layout settles used to overwrite this baseline and silently drop the
+    // first extend's compensation, causing the scroll position to jump once layout
+    // caught up. That race is the leading suspect for real-device jump reports.
     private double _pendingTopExtentBeforeAdd;    // ≥ 0 → extent before up-extend; -1 = none
     private bool _isApplyingWindowCompensation;   // suppresses ⚡JUMP detector during controlled compensation
+
+    // RebuildParagraphTopCache recomputes each realized paragraph's absolute content-Y by
+    // walking the whole visual tree — expensive, and its result (Offset + item-relative-Y)
+    // is invariant under pure scrolling, so re-running it on every LayoutUpdated (which fires
+    // continuously during scroll and, worse, during the layout churn chapter loading itself
+    // causes) is wasted work competing with the same UI thread that Loaded-priority window
+    // checks need. Throttled here; forced immediate on the next layout pass whenever window
+    // membership actually changes (see _topCacheDirty writes in Extend/Trim/Reinitialize/
+    // EnsureChapterInWindow) so newly-realized chapters still get cached promptly.
+    private bool _topCacheDirty = true;
+    private long _lastTopCacheRebuildTicks;
+    private const long TopCacheRebuildThrottleMs = 100;
+
+    // Last (Extent, Viewport, Offset) logged by the ContentHScroll.ScrollChanged
+    // diagnostic below — dedupes so it doesn't drown the shared debug log with
+    // identical lines on every layout arrange (it used to fire dozens of times
+    // per second with unchanged values during unrelated vertical scrolling).
+    private (Size Extent, Size Viewport, Vector Offset)? _lastHScrollDiagState;
 
     // ── H-scroll lock FAB ─────────────────────────────────────────────────
     private Button? _hScrollLockButton;
@@ -458,8 +480,13 @@ public partial class MainView : UserControl
             // this from re-entering on its own Offset write.
             _contentHScrollContainer.ScrollChanged += (_, _) =>
             {
-                HScrollDiagLog($"ContentHScroll.ScrollChanged extent={_contentHScrollContainer.Extent} " +
-                    $"viewport={_contentHScrollContainer.Viewport} offset={_contentHScrollContainer.Offset}");
+                var state = (_contentHScrollContainer.Extent, _contentHScrollContainer.Viewport, _contentHScrollContainer.Offset);
+                if (state != _lastHScrollDiagState)
+                {
+                    _lastHScrollDiagState = state;
+                    HScrollDiagLog($"ContentHScroll.ScrollChanged extent={state.Item1} " +
+                        $"viewport={state.Item2} offset={state.Item3}");
+                }
                 TryApplyPendingJournalPan();
             };
             // Remove the built-in ScrollGestureRecognizer so all touch panning is
@@ -662,6 +689,13 @@ public partial class MainView : UserControl
     {
         EnsureScrollTrackingAttached();
         ApplyPendingTopCompensation();
+
+        var now = Environment.TickCount64;
+        if (!_topCacheDirty && now - _lastTopCacheRebuildTicks < TopCacheRebuildThrottleMs)
+            return;
+
+        _topCacheDirty = false;
+        _lastTopCacheRebuildTicks = now;
         RebuildParagraphTopCache();
     }
 
@@ -669,19 +703,6 @@ public partial class MainView : UserControl
     {
         var sv = _paragraphScrollViewer;
         if (sv == null) return;
-
-        // TrimWindowTop deferred: subtract measured removed height from wherever
-        // inertia + natural scroll landed while the layout was pending.
-        if (_pendingTopTrimCompensation > 0)
-        {
-            var delta = _pendingTopTrimCompensation;
-            _pendingTopTrimCompensation = 0;
-            var newOff = Math.Max(0, sv.Offset.Y - delta);
-            DbgLog($"  ↳ trim-compensate  Δ=-{delta:F0}px  off:{sv.Offset.Y:F0}→{newOff:F0}");
-            _isApplyingWindowCompensation = true;
-            sv.Offset = new Vector(sv.Offset.X, newOff);
-            _isApplyingWindowCompensation = false;
-        }
 
         // ExtendWindowUp deferred: add the ACTUAL extent increase (beats estimate).
         if (_pendingTopExtentBeforeAdd >= 0)
@@ -1704,7 +1725,7 @@ public partial class MainView : UserControl
     {
         _isAdjustingWindow = true;
         _pendingTopExtentBeforeAdd = -1;
-        _pendingTopTrimCompensation = 0;
+        _topCacheDirty = true;
         try
         {
             // Evict loaded chapters so AppShellView removes their strokes before the
@@ -1756,6 +1777,7 @@ public partial class MainView : UserControl
     /// </summary>
     private void ExtendWindowDown(double targetHeight = 0)
     {
+        _topCacheDirty = true;
         double added = 0;
         while (_windowEnd < _chapterGroups.Count && (targetHeight <= 0 || added < targetHeight))
         {
@@ -1787,6 +1809,15 @@ public partial class MainView : UserControl
     {
         if (_windowStart == 0 || _paragraphScrollViewer == null) return;
 
+        // Refuse to re-fire while a previous up-extend's compensation is still
+        // pending — CheckWindowExtend/CheckWindowBounds can both call this on
+        // back-to-back scroll events (e.g. rapid touch inertia ticks) faster than
+        // LayoutUpdated settles. A second call here would overwrite
+        // _pendingTopExtentBeforeAdd's baseline and silently drop the first
+        // extend's compensation, producing a visible jump once layout catches up.
+        if (_pendingTopExtentBeforeAdd >= 0) return;
+
+        _topCacheDirty = true;
         _windowStart--;
         var chapter = _windowStart + 1;     // 1-based
         var newParagraphs = _chapterGroups[_windowStart];
@@ -1820,6 +1851,7 @@ public partial class MainView : UserControl
     {
         if (_windowEnd - _windowStart <= 1 || _paragraphScrollViewer == null) return;
 
+        _topCacheDirty = true;
         var chapter = _windowStart + 1;     // 1-based
         var removedParagraphs = _chapterGroups[_windowStart];
         var measured  = MeasureChapterHeight(chapter);
@@ -1849,8 +1881,8 @@ public partial class MainView : UserControl
         DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  spacer={_topSpacerHeight:F0}px  win={_windowStart}..{_windowEnd}");
 
         ChapterExitedWindow?.Invoke(this, chapter);
-        // NOTE: _pendingTopTrimCompensation is NOT set — VirtualScrollPanel.TopPadding
-        // absorbs the removed height, so no explicit scroll offset adjustment is needed.
+        // NOTE: no scroll offset compensation is needed here — VirtualScrollPanel.TopPadding
+        // absorbs the removed height, so the extent stays put.
     }
 
     /// <summary>
@@ -1862,6 +1894,7 @@ public partial class MainView : UserControl
     {
         if (_windowEnd - _windowStart <= 1) return;
 
+        _topCacheDirty = true;
         _windowEnd--;
         var chapter = _windowEnd + 1;       // 1-based
         var removedParagraphs = _chapterGroups[_windowEnd];
@@ -1910,11 +1943,18 @@ public partial class MainView : UserControl
 
     private void DbgLog(string msg)
     {
-        if (_scrollDebugOverlay?.IsVisible != true) return;
+        // Always record — not gated on overlay visibility. Real-device jumps get
+        // reported after the fact, when nobody had the overlay open to see them.
         var ts = DateTime.Now.ToString("HH:mm:ss.fff");
         _dbgEvents.Insert(0, $"{ts} {msg}");
         while (_dbgEvents.Count > 40)
             _dbgEvents.RemoveAt(_dbgEvents.Count - 1);
+
+        // Mirror into the app-wide sync debug log too, so it survives overlay
+        // close/app restart and is retrievable via DebugLogsView's copy button —
+        // same sink MarginLog/HScrollDiagLog already use for the same reason.
+        if (DataContext is ScriptureViewModel vm)
+            vm.AppVM.AppendSyncDebugLog($"[Scroll] {msg}");
     }
 
     private void DbgUpdateStats()
@@ -2193,7 +2233,7 @@ public partial class MainView : UserControl
 
         _isAdjustingWindow = true;
         _pendingTopExtentBeforeAdd = -1;
-        _pendingTopTrimCompensation = 0;
+        _topCacheDirty = true;
         try
         {
             // Evict loaded chapters so AppShellView removes their strokes before
