@@ -172,6 +172,9 @@ public class SyncCoordinator : ISyncCoordinator
 
     public async Task<bool> TrySilentAuthAsync()
     {
+        if (_isOffline)
+            return false;
+
         var result = await _authService.TrySilentAuthAsync().ConfigureAwait(false);
         if (result.IsSuccess)
             await _localStorage.SaveAsync("LastAuthenticatedUser", result.UserEmail ?? "Unknown").ConfigureAwait(false);
