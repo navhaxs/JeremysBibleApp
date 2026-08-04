@@ -52,7 +52,12 @@ public class VirtualScrollPanel : Panel
                 maxWidth = child.DesiredSize.Width;
         }
 
-        return new Size(maxWidth, TopPadding + totalChildHeight + BottomPadding);
+        // Report the available width (not just the widest child) so the containing
+        // ScrollContentPresenter arranges this panel to fill the viewport instead of
+        // shrink-wrapping to whichever realized paragraph happens to be widest —
+        // otherwise short lines/headings leave a blank strip on the right.
+        var width = double.IsInfinity(availableSize.Width) ? maxWidth : availableSize.Width;
+        return new Size(width, TopPadding + totalChildHeight + BottomPadding);
     }
 
     protected override Size ArrangeOverride(Size finalSize)

@@ -145,6 +145,13 @@ public partial class MainView : UserControl
     private double _journalHomePanX;            // HScroll home: LeftBufferDip - layout.LeftMarginDip when journal active, 0 otherwise
     private bool _journalHScrollNeedsReset;     // true after journal activated; cleared once offset is applied with valid Extent
 
+    // Reading-margin left inset (constant) and responsive right inset — the right margin/touch
+    // zone shrinks below NarrowViewportBreakpointDip so it doesn't eat too much text width on phones.
+    private const double BaseLeftMarginDip = 24;
+    private const double WideRightMarginDip = 64;
+    private const double NarrowRightMarginDip = 32;
+    private const double NarrowViewportBreakpointDip = 500;
+
     private static readonly UiPreferencesStore _uiPrefsStore = new();
     private static bool _uiPrefsLoadStarted;
     private static double? _portraitPanX;  // null = never captured this pan yet (fall back to home pan)
@@ -472,7 +479,9 @@ public partial class MainView : UserControl
                     $"viewport={_contentHScrollContainer.Viewport} extent={_contentHScrollContainer.Extent} " +
                     $"inkAreaGrid.Width={_inkAreaGrid?.Width} inkAreaGrid.MinWidth={_inkAreaGrid?.MinWidth}");
                 UpdateJournalInkAreaGridWidth();
+                UpdateResponsiveRightMargin();
             };
+            UpdateResponsiveRightMargin();
             // Extent can finish catching up to a content resize on a layout pass *after*
             // InkAreaGrid's own SizeChanged stops firing (confirmed via device repro -- see
             // TryApplyPendingJournalPan). ScrollChanged fires on Offset/Extent/Viewport changes,
@@ -2715,8 +2724,8 @@ public partial class MainView : UserControl
         // Bounds.Left > 0, so the visual left margin is wider than the template's 24px.
         var listLeft  = _paragraphList?.Bounds.Left  ?? 0;
         var listRight = _paragraphList?.Bounds.Right ?? _inkAreaGrid.Bounds.Width;
-        var textLeft  = listLeft  + 24;
-        var textRight = listRight - 64;
+        var textLeft  = listLeft  + BaseLeftMarginDip;
+        var textRight = listRight - (_rightMarginTouchZone?.Bounds.Width ?? WideRightMarginDip);
 
         MarginLog($"pos=({pos.X:F0},{pos.Y:F0}) listL={listLeft:F0} listR={listRight:F0} textL={textLeft:F0} textR={textRight:F0}");
 
@@ -3024,9 +3033,17 @@ public partial class MainView : UserControl
             if (_hScrollLockButton != null) _hScrollLockButton.IsVisible = false;
             _journalHomePanX = 0;
             _journalHScrollNeedsReset = false;
+            // No journal: disable the H-scroll container so it measures its child with the
+            // real finite viewport width (not infinity), which is what makes paragraphs wrap.
+            // Journal mode needs "Hidden" (still pannable, infinite measure) for its H-scroll buffer.
+            if (_contentHScrollContainer != null)
+                _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         }
         else
         {
+            if (_contentHScrollContainer != null)
+                _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
+
             if (layout.TextColumnWidthDip > 0)
             {
                 _paragraphList.MaxWidth = layout.TextColumnWidthDip;
@@ -3066,6 +3083,24 @@ public partial class MainView : UserControl
 
         // Update ink canvas text-column offset and expand InkAreaGrid for H-scroll after layout settles.
         Dispatcher.UIThread.Post(() => { UpdateJournalInkAreaGridWidth(); UpdateInkTextColumnOffset(); }, DispatcherPriority.Loaded);
+    }
+
+    // Shrinks the right reading margin/touch zone on narrow (phone) viewports so it doesn't
+    // eat too much text width; keeps it at the wider desktop/tablet default above the breakpoint.
+    private void UpdateResponsiveRightMargin()
+    {
+        if (_paragraphList == null || _contentHScrollContainer == null) return;
+
+        var viewportWidth = _contentHScrollContainer.Viewport.Width;
+        if (viewportWidth <= 0) return;
+
+        var rightMargin = viewportWidth < NarrowViewportBreakpointDip ? NarrowRightMarginDip : WideRightMarginDip;
+
+        var padding = _paragraphList.Padding;
+        _paragraphList.Padding = new Thickness(padding.Left, padding.Top, rightMargin, padding.Bottom);
+
+        if (_rightMarginTouchZone != null)
+            _rightMarginTouchZone.Width = rightMargin;
     }
 
     private void UpdateJournalInkAreaGridWidth()

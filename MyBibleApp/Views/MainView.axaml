@@ -36,7 +36,9 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="IsTabStop" Value="False" />
-            <Setter Property="Padding" Value="0,0,0,80" />
+            <!--  Left=24 base reading margin; Right is overwritten responsively in code-behind
+                  (see MainView.UpdateResponsiveRightMargin) — 64 here is just the wide-viewport default.  -->
+            <Setter Property="Padding" Value="24,0,64,80" />
 
             <Style.Resources>
                 <SolidColorBrush Color="Transparent" x:Key="ListBoxItemBackgroundPressed" />
@@ -483,7 +485,7 @@
             <!--  Main content grid (row 2) with overlay  -->
             <ScrollViewer
                 Grid.Row="2"
-                HorizontalScrollBarVisibility="Hidden"
+                HorizontalScrollBarVisibility="Disabled"
                 VerticalScrollBarVisibility="Disabled"
                 x:Name="ContentHScrollContainer">
             <Grid
