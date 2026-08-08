@@ -57,6 +57,16 @@ New "Translations" section in Settings, alongside existing simple toggles:
 
 Active translation id is persisted the same way as existing settings. `ScriptureViewModel` reads the active id and passes it through `BibleContentService.LoadBookAsync(bookCode, translationId)`, replacing today's implicit BSB-only call. If the active translation is missing the requested book, the view shows "not available in this translation" instead of blanking or crashing.
 
+## Journal ↔ translation coupling
+
+Journals are per-translation: strokes anchor to paragraph positions that come from a specific translation's USX text, so opening a journal against the wrong translation silently misaligns ink. `Journal.TranslationId` (`MyBibleApp/Models/Journal.cs:11`) already exists in the model for this but every write site currently hardcodes `""` — this feature is what starts populating it.
+
+- **On journal load** (`AppShellView.OnJournalActivated`, `AppShellView.axaml.cs:967`): after `GetJournalAsync` returns, if `journal.TranslationId` is non-empty and differs from `TranslationManager`'s current active id, switch the active translation to it before rendering (same path as a manual switch in Settings). If a book is missing in that translation, existing "not available" handling from the Switching section applies.
+- **Fallback for existing journals:** `TranslationId == ""` (every journal created before this feature) is treated as `"bsb-online"` — no migration needed, no behavior change for current users.
+- **On journal creation** (`AppShellView.OnSaveAsJournalRequested`, `AppShellView.axaml.cs:1018`): replace the hardcoded `TranslationId = ""` with `TranslationManager`'s current active id at the moment of creation, so the journal remembers what it was written against.
+
+`TranslationVersionDate` (adjacent field, also hardcoded `""` today) is out of scope for this feature — no per-translation version/update tracking exists yet to populate it meaningfully.
+
 ## What does NOT change
 
 - `UsxBibleParser` parsing logic
