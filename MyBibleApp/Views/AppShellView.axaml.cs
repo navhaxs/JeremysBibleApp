@@ -985,8 +985,13 @@ public partial class AppShellView : UserControl
         if (await TranslationManager.Instance.GetActiveTranslationIdAsync() != journalTranslationId)
         {
             await TranslationManager.Instance.SetActiveTranslationIdAsync(journalTranslationId);
-            await vm.TryLoadBookFromApiAsync(journal.BookCode, journal.StartChapter, journal.StartVerse);
+            var (success, error) = await vm.TryLoadBookFromApiAsync(journal.BookCode, journal.StartChapter, journal.StartVerse);
+            if (!success)
+                vm.Status = $"Could not load {journal.BookCode} online: {error}";
         }
+
+        // Re-verify vm is still the active tab after async gap
+        if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
 
         await ReloadWindowedInkStrokesAsync();
         _primaryView?.SetActiveJournalName(journal.Name);
