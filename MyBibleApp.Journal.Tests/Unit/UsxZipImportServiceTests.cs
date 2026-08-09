@@ -155,4 +155,41 @@ public class UsxZipImportServiceTests : IDisposable
 
         Assert.False(Directory.Exists(prepared.TempDirectory));
     }
+
+    [Fact]
+    public void PrepareImport_DecompressedSizeExceedsCapCheck_ThrowsAndCleansUp()
+    {
+        // Create a ZIP with actual uncompressed content exceeding a small cap.
+        // We'll use a constructor that allows us to set a small max size for testing.
+        const long smallCap = 1024; // 1KB
+        var largeContent = new string('x', 2048); // 2KB when decompressed
+        var zipPath = CreateZip("oversized.zip", ("gen.usx", largeContent));
+
+        var service = new UsxZipImportService(parser: null, maxUncompressedBytesForTest: smallCap);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => service.PrepareImport(zipPath, ["gen"]));
+        Assert.Contains("exceeds", ex.Message);
+        Assert.Contains("uncompressed size limit", ex.Message);
+    }
+
+    [Fact]
+    public void PrepareImport_CorruptUsxEntry_DeletesExtractedFileNotLeftBehind()
+    {
+        var zipPath = CreateZip("corrupt.zip", ("gen.usx", GenUsx), ("bad.usx", "not valid xml <<<"));
+        var service = new UsxZipImportService();
+
+        var result = service.PrepareImport(zipPath, ["gen"]);
+
+        // The bad.usx file should not exist in the temp directory after parsing fails
+        var badUsxPath = Path.Combine(result.TempDirectory, "bad.usx");
+        Assert.False(File.Exists(badUsxPath), "Corrupt USX file should have been deleted after parse failure");
+
+        // Only gen should be discovered
+        Assert.Single(result.BookCodes);
+        Assert.Contains("gen", result.BookCodes);
+
+        // gen.usx should still exist since it was parsed successfully
+        var genUsxPath = Path.Combine(result.TempDirectory, "gen.usx");
+        Assert.True(File.Exists(genUsxPath));
+    }
 }

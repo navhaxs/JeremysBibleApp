@@ -12,7 +12,9 @@ namespace MyBibleApp.Services;
 
 public sealed class UsxZipImportService
 {
-    private const long MaxUncompressedBytes = 200L * 1024 * 1024;
+    internal const long MaxUncompressedBytes = 200L * 1024 * 1024;
+
+    private long _maxUncompressedBytesForTest = MaxUncompressedBytes;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -26,6 +28,12 @@ public sealed class UsxZipImportService
     public UsxZipImportService(UsxBibleParser? parser = null)
     {
         _parser = parser ?? new UsxBibleParser();
+    }
+
+    internal UsxZipImportService(UsxBibleParser? parser, long maxUncompressedBytesForTest)
+    {
+        _parser = parser ?? new UsxBibleParser();
+        _maxUncompressedBytesForTest = maxUncompressedBytesForTest;
     }
 
     public PreparedTranslationImport PrepareImport(string zipFilePath, IReadOnlyList<string> canonicalBookCodes)
@@ -73,17 +81,34 @@ public sealed class UsxZipImportService
             if (string.IsNullOrEmpty(flatName)) continue; // directory entry
             if (!flatName.EndsWith(".usx", StringComparison.OrdinalIgnoreCase)) continue;
 
-            totalUncompressed += entry.Length;
-            if (totalUncompressed > MaxUncompressedBytes)
-                throw new InvalidOperationException($"ZIP exceeds the {MaxUncompressedBytes / (1024 * 1024)}MB uncompressed size limit.");
-
             var destinationPath = Path.GetFullPath(Path.Combine(tempDir, flatName));
             if (!destinationPath.StartsWith(normalizedTempDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                 continue; // zip-slip guard
 
             try
             {
-                entry.ExtractToFile(destinationPath, overwrite: true);
+                // Manual extraction with actual byte counting to prevent decompression-bomb attacks
+                using (var entryStream = entry.Open())
+                using (var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write))
+                {
+                    var buffer = new byte[4096];
+                    int bytesRead;
+                    while ((bytesRead = entryStream.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        totalUncompressed += bytesRead;
+                        if (totalUncompressed > _maxUncompressedBytesForTest)
+                        {
+                            try { File.Delete(destinationPath); } catch { }
+                            throw new InvalidOperationException($"ZIP exceeds the {_maxUncompressedBytesForTest / (1024 * 1024)}MB uncompressed size limit.");
+                        }
+                        fileStream.Write(buffer, 0, bytesRead);
+                    }
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Size cap exceeded - propagate this error
+                throw;
             }
             catch (Exception ex)
             {
@@ -100,6 +125,8 @@ public sealed class UsxZipImportService
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[UsxZipImportService] Failed to parse '{flatName}': {ex.Message}");
+                // Delete the extracted file to avoid leaving garbage on disk
+                try { File.Delete(destinationPath); } catch { }
             }
 
             if (string.IsNullOrWhiteSpace(code))
@@ -134,7 +161,9 @@ public sealed class UsxZipImportService
         };
 
         var json = JsonSerializer.Serialize(manifest, JsonOptions);
-        await File.WriteAllTextAsync(Path.Combine(finalDir, "manifest.json"), json).ConfigureAwait(false);
+        var manifestPath = Path.Combine(finalDir, "manifest.json");
+        // Use atomic write pattern: write to temp file, then move into place
+        WriteAtomically(manifestPath, json);
 
         return manifest;
     }
@@ -143,5 +172,12 @@ public sealed class UsxZipImportService
     {
         if (Directory.Exists(prepared.TempDirectory))
             Directory.Delete(prepared.TempDirectory, recursive: true);
+    }
+
+    private static void WriteAtomically(string filePath, string content)
+    {
+        var tempPath = $"{filePath}.{Guid.NewGuid():N}.tmp";
+        File.WriteAllText(tempPath, content);
+        File.Move(tempPath, filePath, overwrite: true);
     }
 }
