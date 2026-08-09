@@ -68,7 +68,14 @@ public sealed class TranslationManager
                 }
             }
 
-            return (IReadOnlyList<InstalledTranslation>)results.OrderBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+            // Deduplicate by Id (keep first-seen): two folders can carry manifests with the
+            // same Id after a manual folder copy or a bad sync restore, and callers key
+            // dictionaries by Id — a duplicate would throw and brick translation loading.
+            return (IReadOnlyList<InstalledTranslation>)results
+                .GroupBy(t => t.Id)
+                .Select(g => g.First())
+                .OrderBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }).ConfigureAwait(false);
     }
 

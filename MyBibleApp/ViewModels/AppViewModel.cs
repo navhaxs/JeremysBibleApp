@@ -245,9 +245,36 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     public async Task LoadTranslationsFromStorageAsync()
     {
-        _activeTranslationId = await _translationManager.GetActiveTranslationIdAsync();
-        this.RaisePropertyChanged(nameof(ActiveTranslationId));
-        await RefreshTranslationsAsync();
+        // Best-effort, like every sibling Load*FromStorageAsync: this runs during startup
+        // restore (fire-and-forget), so a throw here would abort the caller before it can
+        // clear the startup overlay. Fall back to BSB-online defaults instead.
+        try
+        {
+            var storedActiveId = await _translationManager.GetActiveTranslationIdAsync();
+            await RefreshTranslationsAsync();
+
+            // Guard against a dangling active-translation id — the translation folder may
+            // have been deleted (here or on another device) while the id stayed persisted.
+            // Without this, every book load throws FileNotFoundException with no recovery,
+            // and the bad id survives restart because it is read back unvalidated.
+            var installedIds = await Dispatcher.UIThread.InvokeAsync(
+                () => _installedTranslations.Select(t => t.Id).ToList());
+            if (storedActiveId != TranslationManager.BsbOnlineId && !installedIds.Contains(storedActiveId))
+            {
+                storedActiveId = TranslationManager.BsbOnlineId;
+                await _translationManager.SetActiveTranslationIdAsync(storedActiveId);
+            }
+
+            _activeTranslationId = storedActiveId;
+            await Dispatcher.UIThread.InvokeAsync(() => this.RaisePropertyChanged(nameof(ActiveTranslationId)));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppViewModel] LoadTranslationsFromStorageAsync failed: {ex.Message}");
+            AppendSyncDebugLog($"LoadTranslationsFromStorageAsync error: {ex.Message}");
+            _activeTranslationId = TranslationManager.BsbOnlineId;
+            await Dispatcher.UIThread.InvokeAsync(() => this.RaisePropertyChanged(nameof(ActiveTranslationId)));
+        }
     }
 
     public async Task RefreshTranslationsAsync()
@@ -275,12 +302,19 @@ public class AppViewModel : ViewModelBase, IDisposable
         });
     }
 
-    public Task<Result> PrepareTranslationImportAsync(string zipFilePath, string sourceZipName, string displayName)
+    public async Task<Result> PrepareTranslationImportAsync(string zipFilePath, string sourceZipName, string displayName)
     {
+        // Discard any still-pending import before overwriting it — otherwise picking a second
+        // ZIP (or closing Settings while the missing-books warning is up) leaks the first
+        // import's staging directory under %TEMP%\MyBibleAppImport_* until reboot.
+        CancelPendingImport();
+
         try
         {
             var canonicalCodes = BibleContentService.LoadBookCodesFromAsset().ToList();
-            var prepared = _importService.PrepareImport(zipFilePath, canonicalCodes);
+            // ZIP decompression + XML parsing of every book (archives can be ~200MB) must not
+            // run inline: this is called straight from a button click on the UI thread.
+            var prepared = await Task.Run(() => _importService.PrepareImport(zipFilePath, canonicalCodes));
 
             _pendingImport = prepared;
             _pendingImportDisplayName = displayName;
@@ -289,17 +323,17 @@ public class AppViewModel : ViewModelBase, IDisposable
             this.RaisePropertyChanged(nameof(PendingImportMissingBooks));
 
             if (prepared.MissingBookCodes.Count == 0)
-                return ConfirmPendingImportInternalAsync();
+                return await ConfirmPendingImportInternalAsync();
 
-            return Task.FromResult(Result.Success());
+            return Result.Success();
         }
         catch (Exception ex)
         {
-            return Task.FromResult(Result.Failure($"Import failed: {ex.Message}"));
+            return Result.Failure($"Import failed: {ex.Message}");
         }
     }
 
-    public Task ConfirmPendingImportAsync() => ConfirmPendingImportInternalAsync();
+    public Task<Result> ConfirmPendingImportAsync() => ConfirmPendingImportInternalAsync();
 
     private async Task<Result> ConfirmPendingImportInternalAsync()
     {
@@ -966,6 +1000,10 @@ public class AppViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         StopSyncStatusTimer();
+
+        // Don't leave a staged import's temp directory behind if the app shuts down
+        // while the missing-books confirmation is still pending.
+        CancelPendingImport();
 
         if (_syncCoordinator != null)
         {

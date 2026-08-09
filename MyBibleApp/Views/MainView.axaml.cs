@@ -2615,8 +2615,8 @@ public partial class MainView : UserControl
     private async void OnConfirmImportClick(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not ScriptureViewModel vm) return;
-        await vm.AppVM.ConfirmPendingImportAsync();
-        vm.Status = "Translation imported.";
+        var result = await vm.AppVM.ConfirmPendingImportAsync();
+        vm.Status = result.IsSuccess ? "Translation imported." : $"Failed to import: {result.ErrorMessage}";
     }
 
     private void OnCancelImportClick(object? sender, RoutedEventArgs e)

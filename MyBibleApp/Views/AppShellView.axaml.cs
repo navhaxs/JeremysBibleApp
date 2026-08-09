@@ -615,15 +615,16 @@ public partial class AppShellView : UserControl
         var theme = Models.AppTheme.GetById(_appVM.SelectedThemeId);
         _primaryView?.ApplyTheme(theme);
 
-        // Load installed translations and the active selection before any book load below.
-        await _appVM.LoadTranslationsFromStorageAsync();
-
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
         _isRestoringTabs = true;
         _appVM.SuppressReadingProgressSync = true;
         try
         {
+            // Load installed translations and the active selection before any book load below.
+            // Must stay inside the try so the finally still clears the startup overlay if it fails.
+            await _appVM.LoadTranslationsFromStorageAsync();
+
             // 1. Restore tabs from local storage immediately — no auth or network needed.
             _appVM.AppendSyncDebugLog("[Tabs] Loading persisted tab references...");
             var (persistedTabs, persistedActiveIndex) = await _appVM.LoadPersistedOpenTabReferencesAsync();
@@ -984,10 +985,13 @@ public partial class AppShellView : UserControl
         // Re-verify vm is still the active tab after async gap
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
 
+        // Route through AppViewModel so it stays the single reader/writer of the active
+        // translation — writing TranslationManager directly would desync the VM's cached
+        // value from disk and leave the Settings radio buttons stuck on the old selection.
         var journalTranslationId = TranslationManager.ResolveJournalTranslationId(journal.TranslationId);
-        if (await TranslationManager.Instance.GetActiveTranslationIdAsync() != journalTranslationId)
+        if (_appVM.ActiveTranslationId != journalTranslationId)
         {
-            await TranslationManager.Instance.SetActiveTranslationIdAsync(journalTranslationId);
+            await _appVM.SetActiveTranslationIdAsync(journalTranslationId);
             var (success, error) = await vm.TryLoadBookFromApiAsync(journal.BookCode, journal.StartChapter, journal.StartVerse);
             if (!success)
                 vm.Status = $"Could not load {journal.BookCode} online: {error}";
