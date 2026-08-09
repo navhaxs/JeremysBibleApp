@@ -265,6 +265,90 @@
                                         Orientation="Horizontal"
                                         Spacing="8"
                                         x:Name="ThemeSwatchPanel" />
+                                    <Rectangle
+                                        Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
+                                        Height="1"
+                                        Opacity="0.4" />
+                                    <TextBlock
+                                        FontSize="13"
+                                        Margin="0,0,0,4"
+                                        Opacity="0.7"
+                                        Text="Translation" />
+                                    <ItemsControl ItemsSource="{Binding AppVM.InstalledTranslations}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Panel>
+                                                    <Grid ColumnDefinitions="*,Auto,Auto" IsVisible="{Binding IsNotRenaming}">
+                                                        <RadioButton
+                                                            Content="{Binding DisplayName}"
+                                                            Grid.Column="0"
+                                                            GroupName="TranslationSelector"
+                                                            Click="OnTranslationRadioClick"
+                                                            Tag="{Binding Id}" />
+                                                        <Button
+                                                            Click="OnRenameTranslationClick"
+                                                            Content="Rename"
+                                                            FontSize="11"
+                                                            Grid.Column="1"
+                                                            Padding="6,2"
+                                                            Tag="{Binding}" />
+                                                        <Button
+                                                            Click="OnDeleteTranslationClick"
+                                                            Content="Delete"
+                                                            FontSize="11"
+                                                            Grid.Column="2"
+                                                            Padding="6,2"
+                                                            Tag="{Binding Id}" />
+                                                    </Grid>
+                                                    <Grid ColumnDefinitions="*,Auto,Auto" IsVisible="{Binding IsRenaming}">
+                                                        <TextBox
+                                                            Grid.Column="0"
+                                                            Text="{Binding PendingName, Mode=TwoWay}" />
+                                                        <Button
+                                                            Click="OnSaveRenameClick"
+                                                            Content="Save"
+                                                            FontSize="11"
+                                                            Grid.Column="1"
+                                                            Padding="6,2"
+                                                            Tag="{Binding}" />
+                                                        <Button
+                                                            Click="OnCancelRenameClick"
+                                                            Content="Cancel"
+                                                            FontSize="11"
+                                                            Grid.Column="2"
+                                                            Padding="6,2"
+                                                            Tag="{Binding}" />
+                                                    </Grid>
+                                                </Panel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <RadioButton
+                                        Content="BSB (online)"
+                                        GroupName="TranslationSelector"
+                                        Click="OnTranslationRadioClick"
+                                        IsChecked="True"
+                                        Tag="bsb-online" />
+                                    <Button
+                                        Click="OnImportTranslationClick"
+                                        Content="Import Translation ZIP…"
+                                        HorizontalAlignment="Stretch" />
+                                    <Border
+                                        Background="{DynamicResource SystemControlBackgroundBaseLowBrush}"
+                                        CornerRadius="6"
+                                        IsVisible="{Binding AppVM.HasPendingImportWarning}"
+                                        Padding="8">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock
+                                                FontSize="12"
+                                                Text="Some books are missing from this ZIP. Import anyway?"
+                                                TextWrapping="Wrap" />
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Button Click="OnConfirmImportClick" Content="Import Anyway" Padding="8,4" />
+                                                <Button Click="OnCancelImportClick" Content="Cancel" Padding="8,4" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                     <ToggleSwitch
                                         IsChecked="{Binding AppVM.IsDebugMode, Mode=TwoWay}"
                                         OffContent="Debug mode"

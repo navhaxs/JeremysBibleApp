@@ -42,6 +42,13 @@ public class AppViewModel : ViewModelBase, IDisposable
     private IReadOnlyList<string> _syncDebugLogs = [];
     private IReadOnlyList<string> _debugLogOverlayLines = [];
     private readonly ObservableCollection<string> _debugLogOverlayItems = [];
+    private readonly TranslationManager _translationManager = TranslationManager.Instance;
+    private readonly UsxZipImportService _importService = new();
+    private readonly ObservableCollection<TranslationListItem> _installedTranslations = [];
+    private string _activeTranslationId = TranslationManager.BsbOnlineId;
+    private PreparedTranslationImport? _pendingImport;
+    private string _pendingImportDisplayName = string.Empty;
+    private string _pendingImportSourceZipName = string.Empty;
 
     public AppViewModel()
     {
@@ -200,6 +207,121 @@ public class AppViewModel : ViewModelBase, IDisposable
                 });
         }
         catch { /* best-effort */ }
+    }
+
+    // ── Translations ─────────────────────────────────────────────────────────
+
+    public ObservableCollection<TranslationListItem> InstalledTranslations => _installedTranslations;
+
+    public string ActiveTranslationId
+    {
+        get => _activeTranslationId;
+        set
+        {
+            if (_activeTranslationId == value) return;
+            this.RaiseAndSetIfChanged(ref _activeTranslationId, value);
+            _ = _translationManager.SetActiveTranslationIdAsync(value);
+        }
+    }
+
+    public bool HasPendingImportWarning => _pendingImport != null && _pendingImport.MissingBookCodes.Count > 0;
+
+    public IReadOnlyList<string> PendingImportMissingBooks => _pendingImport?.MissingBookCodes ?? [];
+
+    public async Task LoadTranslationsFromStorageAsync()
+    {
+        _activeTranslationId = await _translationManager.GetActiveTranslationIdAsync();
+        this.RaisePropertyChanged(nameof(ActiveTranslationId));
+        await RefreshTranslationsAsync();
+    }
+
+    public async Task RefreshTranslationsAsync()
+    {
+        var installed = await _translationManager.GetInstalledTranslationsAsync();
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            _installedTranslations.Clear();
+            foreach (var t in installed) _installedTranslations.Add(new TranslationListItem(t));
+        });
+    }
+
+    public Task<Result> PrepareTranslationImportAsync(string zipFilePath, string sourceZipName, string displayName)
+    {
+        try
+        {
+            var canonicalCodes = BibleContentService.LoadBookCodesFromAsset().ToList();
+            var prepared = _importService.PrepareImport(zipFilePath, canonicalCodes);
+
+            _pendingImport = prepared;
+            _pendingImportDisplayName = displayName;
+            _pendingImportSourceZipName = sourceZipName;
+            this.RaisePropertyChanged(nameof(HasPendingImportWarning));
+            this.RaisePropertyChanged(nameof(PendingImportMissingBooks));
+
+            if (prepared.MissingBookCodes.Count == 0)
+                return ConfirmPendingImportInternalAsync();
+
+            return Task.FromResult(Result.Success());
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult(Result.Failure($"Import failed: {ex.Message}"));
+        }
+    }
+
+    public Task ConfirmPendingImportAsync() => ConfirmPendingImportInternalAsync();
+
+    private async Task<Result> ConfirmPendingImportInternalAsync()
+    {
+        if (_pendingImport == null) return Result.Failure("No pending import.");
+
+        try
+        {
+            await _importService.CommitImportAsync(_pendingImport, _translationManager.GetTranslationsRootForCommit(), _pendingImportDisplayName, _pendingImportSourceZipName);
+            ClearPendingImport();
+            await RefreshTranslationsAsync();
+            return Result.Success();
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure($"Failed to finish import: {ex.Message}");
+        }
+    }
+
+    public void CancelPendingImport()
+    {
+        if (_pendingImport == null) return;
+        _importService.CancelImport(_pendingImport);
+        ClearPendingImport();
+    }
+
+    private void ClearPendingImport()
+    {
+        _pendingImport = null;
+        _pendingImportDisplayName = string.Empty;
+        _pendingImportSourceZipName = string.Empty;
+        this.RaisePropertyChanged(nameof(HasPendingImportWarning));
+        this.RaisePropertyChanged(nameof(PendingImportMissingBooks));
+    }
+
+    public async Task<Result> DeleteTranslationAsync(string translationId)
+    {
+        var result = await _translationManager.DeleteTranslationAsync(translationId);
+        if (result.IsSuccess)
+        {
+            if (ActiveTranslationId == translationId)
+                ActiveTranslationId = TranslationManager.BsbOnlineId;
+            await RefreshTranslationsAsync();
+        }
+        return result;
+    }
+
+    public async Task<Result> RenameTranslationAsync(string translationId, string newName)
+    {
+        var result = await _translationManager.RenameTranslationAsync(translationId, newName);
+        if (result.IsSuccess)
+            await RefreshTranslationsAsync();
+        return result;
     }
 
     // ── Sync Status ──────────────────────────────────────────────────────────

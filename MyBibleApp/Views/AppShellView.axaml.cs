@@ -615,6 +615,9 @@ public partial class AppShellView : UserControl
         var theme = Models.AppTheme.GetById(_appVM.SelectedThemeId);
         _primaryView?.ApplyTheme(theme);
 
+        // Load installed translations and the active selection before any book load below.
+        await _appVM.LoadTranslationsFromStorageAsync();
+
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
         _isRestoringTabs = true;

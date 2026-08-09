@@ -41,6 +41,8 @@ public sealed class TranslationManager
 
     public string GetTranslationFolder(string translationId) => Path.Combine(_translationsRoot, translationId);
 
+    public string GetTranslationsRootForCommit() => _translationsRoot;
+
     public async Task<IReadOnlyList<InstalledTranslation>> GetInstalledTranslationsAsync()
     {
         return await Task.Run(() =>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Avalonia.Collections;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,6 +16,7 @@ using Avalonia.Input.GestureRecognizers;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -2526,6 +2528,105 @@ public partial class MainView : UserControl
                 ? Color.Parse("#0078D7")
                 : Color.Parse(t.SwatchColor == Colors.White ? "#CCCCCC" : "#00000000"));
         }
+    }
+
+    private void OnTranslationRadioClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton { Tag: string translationId }) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        vm.AppVM.ActiveTranslationId = translationId;
+        _ = vm.TryLoadBookFromApiAsync(vm.BookCode, vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+    }
+
+    private async void OnImportTranslationClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider is not { } storageProvider) return;
+
+        var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import Translation ZIP",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("ZIP archive") { Patterns = ["*.zip"] }]
+        });
+
+        if (files.Count == 0) return;
+
+        var file = files[0];
+        var displayName = Path.GetFileNameWithoutExtension(file.Name);
+
+        await using var stream = await file.OpenReadAsync();
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"import_{Guid.NewGuid():N}.zip");
+        await using (var fileStream = File.Create(tempZipPath))
+            await stream.CopyToAsync(fileStream);
+
+        try
+        {
+            var result = await vm.AppVM.PrepareTranslationImportAsync(tempZipPath, file.Name, displayName);
+            if (!result.IsSuccess)
+                vm.Status = $"Import failed: {result.ErrorMessage}";
+            else if (!vm.AppVM.HasPendingImportWarning)
+                vm.Status = $"Imported \"{displayName}\".";
+        }
+        finally
+        {
+            try { File.Delete(tempZipPath); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    private async void OnConfirmImportClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+        await vm.AppVM.ConfirmPendingImportAsync();
+        vm.Status = "Translation imported.";
+    }
+
+    private void OnCancelImportClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+        vm.AppVM.CancelPendingImport();
+    }
+
+    private async void OnDeleteTranslationClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string translationId }) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        var result = await vm.AppVM.DeleteTranslationAsync(translationId);
+        vm.Status = result.IsSuccess ? "Translation deleted." : $"Failed to delete: {result.ErrorMessage}";
+    }
+
+    private void OnRenameTranslationClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TranslationListItem item }) return;
+        item.PendingName = item.DisplayName;
+        item.IsRenaming = true;
+    }
+
+    private async void OnSaveRenameClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TranslationListItem item }) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        var newName = item.PendingName;
+        var result = await vm.AppVM.RenameTranslationAsync(item.Id, newName);
+        vm.Status = result.IsSuccess ? "Translation renamed." : $"Failed to rename: {result.ErrorMessage}";
+        // On success, RenameTranslationAsync's RefreshTranslationsAsync rebuilds the whole
+        // InstalledTranslations collection with fresh TranslationListItem instances (IsRenaming
+        // defaults to false), so this item's editing state is discarded either way — no need to
+        // explicitly reset IsRenaming here on the success path. On failure, reset explicitly:
+        if (!result.IsSuccess)
+            item.IsRenaming = false;
+    }
+
+    private void OnCancelRenameClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TranslationListItem item }) return;
+        item.PendingName = item.DisplayName;
+        item.IsRenaming = false;
     }
 
     /// <summary>Apply the given theme: set variant + resource overrides.</summary>
