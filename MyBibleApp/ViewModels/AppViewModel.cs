@@ -224,6 +224,21 @@ public class AppViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// Updates <see cref="ActiveTranslationId"/> and awaits the underlying persistence call.
+    /// Use this (rather than the <see cref="ActiveTranslationId"/> setter) from any call site
+    /// that immediately depends on the new active translation being durably saved before it
+    /// re-reads it — e.g. triggering a book reload right after switching translations. The
+    /// property setter itself stays fire-and-forget so it remains usable from XAML/simple
+    /// assignment sites that don't need to await the save.
+    /// </summary>
+    public async Task SetActiveTranslationIdAsync(string value)
+    {
+        if (_activeTranslationId == value) return;
+        this.RaiseAndSetIfChanged(ref _activeTranslationId, value);
+        await _translationManager.SetActiveTranslationIdAsync(value);
+    }
+
     public bool HasPendingImportWarning => _pendingImport != null && _pendingImport.MissingBookCodes.Count > 0;
 
     public IReadOnlyList<string> PendingImportMissingBooks => _pendingImport?.MissingBookCodes ?? [];
@@ -240,8 +255,23 @@ public class AppViewModel : ViewModelBase, IDisposable
         var installed = await _translationManager.GetInstalledTranslationsAsync();
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
+            // Preserve any in-progress rename edit (IsRenaming/PendingName) across the rebuild —
+            // this method rebuilds the whole collection with brand-new TranslationListItem
+            // instances even when called for an unrelated translation's delete/import/rename,
+            // so without this, editing translation A's name while deleting translation B would
+            // silently discard A's edit.
+            var previousById = _installedTranslations.ToDictionary(item => item.Id);
             _installedTranslations.Clear();
-            foreach (var t in installed) _installedTranslations.Add(new TranslationListItem(t));
+            foreach (var t in installed)
+            {
+                var item = new TranslationListItem(t);
+                if (previousById.TryGetValue(t.Id, out var previous) && previous.IsRenaming)
+                {
+                    item.PendingName = previous.PendingName;
+                    item.IsRenaming = true;
+                }
+                _installedTranslations.Add(item);
+            }
         });
     }
 
