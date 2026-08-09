@@ -980,6 +980,14 @@ public partial class AppShellView : UserControl
 
         // Re-verify vm is still the active tab after async gap
         if (_activeTabIndex < 0 || _activeTabIndex >= _tabs.Count || _tabs[_activeTabIndex] != vm) return;
+
+        var journalTranslationId = TranslationManager.ResolveJournalTranslationId(journal.TranslationId);
+        if (await TranslationManager.Instance.GetActiveTranslationIdAsync() != journalTranslationId)
+        {
+            await TranslationManager.Instance.SetActiveTranslationIdAsync(journalTranslationId);
+            await vm.TryLoadBookFromApiAsync(journal.BookCode, journal.StartChapter, journal.StartVerse);
+        }
+
         await ReloadWindowedInkStrokesAsync();
         _primaryView?.SetActiveJournalName(journal.Name);
         _primaryView?.SetUnsavedBadgeVisible(false);
@@ -1012,10 +1020,11 @@ public partial class AppShellView : UserControl
         var ephemeral = _tabEphemeralStrokes[vm].ToList();
         var name = $"Journal {DateTime.Now:MMM d, h:mm tt}";
 
+        var activeTranslationId = await TranslationManager.Instance.GetActiveTranslationIdAsync();
         var request = new JournalCreateRequest
         {
             Name = name,
-            TranslationId = "",
+            TranslationId = activeTranslationId,
             TranslationVersionDate = "",
             ContentHash = "",
             BookCode = vm.BookCode,
