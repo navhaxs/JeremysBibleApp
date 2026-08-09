@@ -263,10 +263,15 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
 
         try
         {
-            var book = await _bibleContent.LoadBookAsync(bookCode).ConfigureAwait(false);
+            var translationId = await TranslationManager.Instance.GetActiveTranslationIdAsync().ConfigureAwait(false);
+            var book = await _bibleContent.LoadBookAsync(bookCode, translationId).ConfigureAwait(false);
+
+            var sourceStatus = translationId == TranslationManager.BsbOnlineId
+                ? "Loaded from fetch.bible API."
+                : "Loaded from imported translation.";
 
             await Dispatcher.UIThread.InvokeAsync(() =>
-                ApplyLoadedBook(book, "Loaded from fetch.bible API.", chapter, verse));
+                ApplyLoadedBook(book, sourceStatus, chapter, verse));
 
             return (true, null);
         }
