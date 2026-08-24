@@ -53,10 +53,15 @@ unnecessary.
 | `4a037ab` | Widened chapter trim buffer; idle chapter preloading |
 | `afbbeeb` | Header showed previous chapter/verse right after navigation (sub-pixel tie-break) |
 | `b0fbbdd` | Record-identity measurement bug; time-based inertia; minimap coordinate space; `MBA_SCROLL` logging |
+| `e7900f3` | Task 1 — defer chapter window work during momentum coasts |
+| `8010c76` | Task 3 — reject stale and outlier samples when launching inertia |
+
+Task numbers below are kept stable even once done, since they are referred to by number
+elsewhere. Check the status line on each.
 
 ## Remaining tasks
 
-### 1. Flings get cut short (highest priority)
+### 1. Flings get cut short — DONE (`e7900f3`), awaiting device verification
 
 **Symptom.** Four `inertia ABANDONED` events in a 10-second scroll log, at
 `realDeltaMs=424/564/408/720`. The 200ms bailout added in `b0fbbdd` is working as designed, but
@@ -75,9 +80,15 @@ coast distance is roughly `v0 × 0.13`. At the observed `v0` of 2000-3000px/s th
 **~260-390px**. The loaded window is 5-7 Psalms chapters, i.e. several thousand px. **A coast
 cannot outrun the buffer.** So deferring non-urgent window mutation until the coast ends is safe.
 
-Chosen approach: gate non-urgent extends/trims on inertia being idle (same pattern the idle
-preloader already uses), with an urgency escape when the viewport genuinely approaches the edge
-of loaded content, and a single deferred check when the coast stops.
+**Implemented** as `ShouldDeferWindowWorkForCoast()`, gating `CheckWindowExtend` and
+`CheckWindowBounds`, with an urgency escape at half a viewport from either edge of realized
+content, and a catch-up check posted from `StopInertia`. The edge check uses
+`Extent.Height - _bottomSpacerHeight`, sidestepping the task-2 bug.
+
+**Verify on device:** `inertia ABANDONED` should become rare or disappear (coasts reaching
+`inertia STOP decayed` instead), and chapter ops should cluster after `coast ended` lines rather
+than interleaving with `inertia tick#`. If abandonment persists, the stall is coming from
+outside the gated paths and task 2 is the real culprit.
 
 Alternatives considered and their tradeoffs:
 - *Fix the dead extend gates* (below) so bulk extend becomes reachable: fewer stalls, but each
@@ -99,15 +110,24 @@ Alternatives considered and their tradeoffs:
 Needs a chapter cap on the loop when the bulk path goes live, or one op will load many chapters
 and produce a single long stall.
 
-### 3. Velocity sampling is noisy and stale
+### 3. Velocity sampling is noisy and stale — DONE (`8010c76`), awaiting device verification
 
 `inertia START v0=10758px/s (2 samples over 27ms)` — a single large post-stall `ScrollChanged`
 delta divided by a tiny dt. Also `v0=552px/s (3 samples over 488ms)`, a window far too wide to
 describe a flick.
 
-Fix: require a minimum sample count, age out samples older than ~100ms, reject implausible
-velocities. Small and self-contained. `_touchVelocitySamples` is populated in
-`OnMarginTouchMoved` and consumed by `StartInertiaFromSamples`.
+**Implemented** in `StartInertiaFromSamples`: discard samples older than 120ms relative to the
+newest, require ≥3 samples, take the **median** of per-interval velocities rather than comparing
+endpoints, and clamp to 6000px/s. Age-filtering also fixes press-drag-hold-release, which
+previously flung from stale samples.
+
+The 6000px/s clamp is load-bearing for task 1: at a ~130ms decay constant it caps coast distance
+at ~780px, keeping it well inside the realized window that `ShouldDeferWindowWorkForCoast`
+depends on. Raising it without re-checking that assumption would undermine the deferral.
+
+**Verify on device:** the `inertia START` line now reports interval count and how many samples
+survived filtering — no launch should exceed 6000px/s, and holding still before release should
+produce no fling at all.
 
 ### 4. `StrokePoint` JSON size (user wants this in a separate worktree)
 
