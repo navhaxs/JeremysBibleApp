@@ -384,7 +384,7 @@ public partial class MainView : UserControl
         _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
         _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
         _scrollMinimap = this.FindControl<ScrollMinimapControl>("ScrollMinimap");
-        _scrollMinimap?.SetChapters(_virtualHeights, _windowStart, _windowEnd);
+        _scrollMinimap?.SetChapterHeights(_virtualHeights);
 
         // ── Annotation toolbar controls ──────────────────────────────────────
         _annotationSection  = this.FindControl<Border>("AnnotationSection");
@@ -850,7 +850,8 @@ public partial class MainView : UserControl
             var vpTop = _paragraphScrollViewer.Offset.Y;
             var (visTop, visBottom) = GetVisibleChapterRange(
                 vpTop, vpTop + _paragraphScrollViewer.Viewport.Height);
-            _scrollMinimap.SetViewportChapters(visTop, visBottom);
+            // Window range goes with the viewport so it is always current — see SetChapterHeights.
+            _scrollMinimap.SetViewport(visTop, visBottom, _windowStart, _windowEnd);
         }
 
         // Don't interfere while the user is dragging the scrollbar thumb.
@@ -1857,7 +1858,10 @@ public partial class MainView : UserControl
 
     private void UpdateSpacers()
     {
-        _scrollMinimap?.SetChapters(BuildBestKnownChapterHeights(), _windowStart, _windowEnd);
+        // Heights only — the window range is pushed with the viewport in OnParagraphScrollChanged,
+        // because UpdateSpacers runs before the _windowStart/_windowEnd updates in TrimWindowTop
+        // and ExtendWindowDown, and is skipped entirely on some Extend paths.
+        _scrollMinimap?.SetChapterHeights(BuildBestKnownChapterHeights());
 
         if (_virtualScrollPanel == null) return;
         _virtualScrollPanel.TopPadding = _topSpacerHeight;

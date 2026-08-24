@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
-using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 
 namespace MyBibleApp.Controls;
@@ -17,12 +16,8 @@ namespace MyBibleApp.Controls;
 /// <see cref="InkOverlayCanvas"/> and <see cref="ParagraphInkCanvas"/> in this codebase,
 /// rather than one child visual per chapter.
 ///
-/// The chapter strip (track + per-chapter segments + flashes) is cached to a
-/// <see cref="RenderTargetBitmap"/> and only re-rendered when chapters/window/flash state
-/// actually change. SetViewport — called on every scroll tick — only repositions a thin
-/// band drawn fresh each frame; it used to also redraw the whole chapter loop (up to ~150
-/// FillRectangle calls for a book like Psalms) on every single tick, which was measurable
-/// per-frame cost during active touch scrolling.
+/// The chapter strip and viewport band are both drawn directly on every InvalidateVisual — see
+/// the comment in Render for why a RenderTargetBitmap cache was tried and reverted.
 /// </summary>
 public class ScrollMinimapControl : Control
 {
@@ -53,33 +48,50 @@ public class ScrollMinimapControl : Control
     private readonly Dictionary<int, (bool Entered, long StartTicks)> _flashes = new();
     private DispatcherTimer? _flashTimer;
 
-    private RenderTargetBitmap? _chapterStripCache;
-    private Size _chapterStripCacheSize;
-    private double _chapterStripCacheScaling;
-    private bool _chapterStripDirty = true;
+    // Diagnostics — `adb logcat | grep MBA_MINIMAP`. Logs the band's geometry against the
+    // loaded-window range whenever it moves, so a future mismatch between the band and the
+    // blue region can be checked against numbers rather than inferred from a screenshot.
+    private const string MinimapLogTag = "MBA_MINIMAP";
+    private int _lastLoggedBandTop = -1;
+    private int _lastLoggedBandBottom = -1;
 
-    /// <summary>Redraws the proportional chapter strip. Call whenever the window or virtual heights change.</summary>
-    public void SetChapters(IReadOnlyList<double> virtualHeights, int windowStart, int windowEnd)
+    /// <summary>
+    /// Supplies per-chapter heights for the strip. Call when they change (window mutations).
+    ///
+    /// Deliberately does NOT take the window range. It used to, via UpdateSpacers, and that was
+    /// wrong twice over: UpdateSpacers runs BEFORE _windowStart++ in TrimWindowTop and before
+    /// _windowEnd++ in ExtendWindowDown (so the range arrived stale), and in both
+    /// ExtendWindowUp/Down the UpdateSpacers call sits inside an
+    /// `if (_windowStart/_windowEnd &lt; _virtualHeights.Length)` guard (so on those paths the
+    /// minimap was never told at all). Missed and stale notifications accumulated, drifting the
+    /// blue loaded-region several chapters away from reality while the viewport band — pushed
+    /// fresh on every scroll tick — stayed correct. That is why the band appeared outside the
+    /// blue. The range now arrives with the viewport instead; see SetViewport.
+    /// </summary>
+    public void SetChapterHeights(IReadOnlyList<double> virtualHeights)
     {
         _virtualHeights = virtualHeights;
-        _windowStart = windowStart;
-        _windowEnd = windowEnd;
-        _chapterStripDirty = true;
         InvalidateVisual();
     }
 
     /// <summary>
     /// Repositions the viewport-indicator band, given the inclusive 1-based range of chapters
-    /// currently visible. Call on every scroll tick — cheap: does not touch the cached chapter
-    /// strip, only the band drawn fresh on top of it each frame.
+    /// currently visible. Call on every scroll tick. Also carries the loaded-window range
+    /// (windowStart/windowEnd) rather than relying on SetChapterHeights' caller to keep it in
+    /// sync — see SetChapterHeights for why that used to drift.
     /// </summary>
-    public void SetViewportChapters(int topChapter, int bottomChapter)
+    public void SetViewport(int topChapter, int bottomChapter, int windowStart, int windowEnd)
     {
-        if (_viewportTopChapter == topChapter && _viewportBottomChapter == bottomChapter)
+        var windowChanged = _windowStart != windowStart || _windowEnd != windowEnd;
+        var viewportChanged = _viewportTopChapter != topChapter || _viewportBottomChapter != bottomChapter;
+        if (!windowChanged && !viewportChanged)
             return;
 
         _viewportTopChapter = topChapter;
         _viewportBottomChapter = bottomChapter;
+        _windowStart = windowStart;
+        _windowEnd = windowEnd;
+
         InvalidateVisual();
     }
 
@@ -87,7 +99,6 @@ public class ScrollMinimapControl : Control
     public void FlashChapter(int chapter, bool entered)
     {
         _flashes[chapter] = (entered, Environment.TickCount64);
-        _chapterStripDirty = true;
         InvalidateVisual();
 
         _flashTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / 20) };
@@ -112,18 +123,10 @@ public class ScrollMinimapControl : Control
             foreach (var chapter in expired)
                 _flashes.Remove(chapter);
 
-        _chapterStripDirty = true;
         InvalidateVisual();
 
         if (_flashes.Count == 0)
             _flashTimer!.Stop();
-    }
-
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnDetachedFromVisualTree(e);
-        _chapterStripCache?.Dispose();
-        _chapterStripCache = null;
     }
 
     public override void Render(DrawingContext context)
@@ -132,32 +135,18 @@ public class ScrollMinimapControl : Control
         if (bounds.Width <= 0 || bounds.Height <= 0)
             return;
 
-        // Only reallocate the bitmap when its pixel size actually needs to change (control
-        // resized, or the window moved to a different-DPI screen). Content-only changes
-        // (SetChapters, flash animation ticks) reuse the same bitmap via CreateDrawingContext,
-        // which just clears and redraws it — no repeated GPU/CPU surface allocation.
-        var scaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
-        if (_chapterStripCache == null || _chapterStripCacheSize != bounds.Size || _chapterStripCacheScaling != scaling)
-        {
-            _chapterStripCache?.Dispose();
-            var pixelSize = new PixelSize(
-                Math.Max(1, (int)(bounds.Width * scaling)),
-                Math.Max(1, (int)(bounds.Height * scaling)));
-            _chapterStripCache = new RenderTargetBitmap(pixelSize, new Vector(96 * scaling, 96 * scaling));
-            _chapterStripCacheSize = bounds.Size;
-            _chapterStripCacheScaling = scaling;
-            _chapterStripDirty = true;
-        }
-
-        if (_chapterStripDirty)
-        {
-            RenderChapterStripCache(bounds.Size);
-            _chapterStripDirty = false;
-        }
-
-        if (_chapterStripCache != null)
-            context.DrawImage(_chapterStripCache, new Rect(_chapterStripCache.Size), new Rect(bounds.Size));
-
+        // Drawn directly, NOT via a cached RenderTargetBitmap. The cache was a real
+        // optimisation — it stopped 150 FillRectangle calls happening on every scroll tick —
+        // but on a high-DPI device the blitted result landed at a visibly different scale from
+        // the band drawn beside it: diagnostics proved the two agreed numerically (identical
+        // total, n, window, and a band strictly inside the blue range) while the screen showed
+        // them far apart, which can only be the DrawImage/DPI path. Not worth chasing
+        // RenderTargetBitmap's DPI and source-rect semantics for a debug overlay: 150 rect fills
+        // is trivial for Skia, and the reason the per-tick cost mattered before was that window
+        // mutation was saturating the UI thread — which the coast-deferral fix has since
+        // addressed. If this ever does show up on the FPS overlay, cache it again by drawing
+        // into a fresh bitmap per redraw rather than reusing one.
+        DrawChapterStrip(context, bounds);
         DrawViewportBand(context, bounds);
     }
 
@@ -190,14 +179,29 @@ public class ScrollMinimapControl : Control
 
         var top = yStart / totalHeight * bounds.Height;
         var height = Math.Max(2, span / totalHeight * bounds.Height);
+
+        // Diagnostic: both the band and the strip index the same _virtualHeights with the same
+        // normalisation, and GetVisibleChapterRange clamps its result to the loaded window, so
+        // the band should never visually fall outside the blue region. Kept after the cache
+        // removal (which fixed a real DPI/DrawImage mismatch) as a cheap tripwire in case a
+        // future change reintroduces a coordinate-space split between the two.
+        if (_lastLoggedBandTop != topIdx || _lastLoggedBandBottom != bottomIdx)
+        {
+            _lastLoggedBandTop = topIdx;
+            _lastLoggedBandBottom = bottomIdx;
+            Console.WriteLine($"[{MinimapLogTag}] band ch={_viewportTopChapter}..{_viewportBottomChapter} " +
+                $"idx={topIdx}..{bottomIdx} win={_windowStart}..{_windowEnd} " +
+                $"y={top:F1}+{height:F1} of {bounds.Height:F1} total={totalHeight:F0} n={_virtualHeights.Count}");
+        }
+
         var rect = new Rect(0, top, bounds.Width, height);
         context.FillRectangle(ViewportBrush, rect);
         context.DrawRectangle(ViewportPen, rect);
     }
 
-    private void RenderChapterStripCache(Size size)
+    private void DrawChapterStrip(DrawingContext context, Rect bounds)
     {
-        using var context = _chapterStripCache!.CreateDrawingContext();
+        var size = bounds.Size;
         context.FillRectangle(TrackBrush, new Rect(size));
 
         var totalHeight = 0.0;
