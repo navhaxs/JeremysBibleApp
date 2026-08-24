@@ -2289,6 +2289,9 @@ public partial class MainView : UserControl
     {
         if (_isAdjustingWindow) return;
         if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
+        // Trims are never urgent, and extends here are the non-precise path — both can wait
+        // for the coast to finish. See ShouldDeferWindowWorkForCoast.
+        if (ShouldDeferWindowWorkForCoast()) return;
 
         // Don't make trimming/extending decisions when the viewport has not been
         // measured yet — vpHeight == 0 makes every condition evaluate incorrectly
@@ -2429,6 +2432,47 @@ public partial class MainView : UserControl
             _idlePreloadTimer!.Stop();
     }
 
+    private bool _deferredWindowWorkDuringCoast;
+
+    /// <summary>
+    /// True while a momentum coast is running AND the viewport is still comfortably inside the
+    /// realized content, meaning chapter loading can safely wait until the coast finishes.
+    ///
+    /// Why this is safe: inertia decays with a ~130ms time constant, so a coast travels roughly
+    /// v0 × 0.13 — only ~260-390px at the velocities actually observed on device. The realized
+    /// window is several thousand px, so a coast cannot outrun the buffer. Meanwhile each chapter
+    /// add/remove costs a full layout pass measured at 150-720ms, which blows straight past
+    /// OnInertiaTick's stale-coast bailout and visibly cuts the fling short. Deferring trades a
+    /// slightly later load for a coast that actually finishes.
+    ///
+    /// The urgency escape below deliberately uses Extent.Height - _bottomSpacerHeight rather
+    /// than raw Extent.Height: the latter includes the virtual spacer, so it describes the whole
+    /// book rather than what is actually realized.
+    /// </summary>
+    private bool ShouldDeferWindowWorkForCoast()
+    {
+        if (_inertiaTimer?.IsEnabled != true) return false;
+        if (_paragraphScrollViewer == null) return false;
+
+        var vpHeight = _paragraphScrollViewer.Viewport.Height;
+        if (vpHeight <= 0) return false;
+
+        var scrollTop    = _paragraphScrollViewer.Offset.Y;
+        var scrollBottom = scrollTop + vpHeight;
+        var loadedTop    = _topSpacerHeight;
+        var loadedBottom = _paragraphScrollViewer.Extent.Height - _bottomSpacerHeight;
+        var margin       = vpHeight * 0.5;
+
+        // Never defer when the viewport is closing on the edge of realized content — blank
+        // spacer is worse than a stutter.
+        var nearTopEdge    = _windowStart > 0 && scrollTop - loadedTop < margin;
+        var nearBottomEdge = _windowEnd < _chapterGroups.Count && loadedBottom - scrollBottom < margin;
+        if (nearTopEdge || nearBottomEdge) return false;
+
+        _deferredWindowWorkDuringCoast = true;
+        return true;
+    }
+
     /// <summary>
     /// Immediate (no debounce) extend-only check.
     /// Ensures the chapter immediately before the topmost visible chapter and the
@@ -2440,6 +2484,7 @@ public partial class MainView : UserControl
     {
         if (_isAdjustingWindow) return;
         if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
+        if (ShouldDeferWindowWorkForCoast()) return;
 
         var vpHeight = _paragraphScrollViewer.Viewport.Height;
         if (vpHeight <= 0) return;
@@ -3364,6 +3409,18 @@ public partial class MainView : UserControl
         _inertiaTimer.Tick -= OnInertiaTick;
         _inertiaTimer = null;
         _inertiaVelocity = 0;
+
+        // Run any window work that was skipped while the coast was in flight. Posted rather
+        // than called inline so it lands after the coast's final layout settles, and so this
+        // stays cheap when nothing was actually deferred.
+        if (!_deferredWindowWorkDuringCoast) return;
+        _deferredWindowWorkDuringCoast = false;
+        Console.WriteLine($"[{ScrollLogTag}] coast ended — running deferred window check");
+        Dispatcher.UIThread.Post(() =>
+        {
+            CheckWindowExtend();
+            CheckWindowBounds();
+        }, DispatcherPriority.Loaded);
     }
 
     private void OnReaderKeyDown(object? sender, KeyEventArgs e)
