@@ -3338,22 +3338,70 @@ public partial class MainView : UserControl
     // sudden jump, not a smooth deceleration. Abandon instead of applying stale velocity.
     private const long InertiaMaxRealisticTickGapMs = 200;
 
+    // Samples older than this (relative to the newest one) are discarded before computing a
+    // launch velocity. _touchVelocitySamples is capped by COUNT, never by age, so a stalled UI
+    // thread can leave five samples spanning hundreds of ms — device logs showed a launch
+    // computed over a 488ms window, which describes an old average rather than the velocity at
+    // the moment of release. Age-filtering also makes press-drag-hold-release correctly produce
+    // no fling, instead of flinging from whatever stale samples the pause left behind.
+    private const double InertiaSampleMaxAgeMs = 120;
+
+    // Need at least two intervals, so one anomalous interval cannot decide the launch alone.
+    private const int InertiaMinSamples = 3;
+
+    // Sanity ceiling. A post-stall ScrollChanged can deliver a large delta over a tiny dt; the
+    // logged worst case was a 10758px/s launch from 2 samples 27ms apart.
+    private const double InertiaMaxLaunchPxPerSec = 6000.0;
+
     private void StartInertiaFromSamples()
     {
-        if (_touchVelocitySamples.Count < 2 || _paragraphScrollViewer == null) return;
+        if (_paragraphScrollViewer == null) return;
+        if (_touchVelocitySamples.Count < InertiaMinSamples) return;
 
-        var first = _touchVelocitySamples[0];
-        var last  = _touchVelocitySamples[^1];
-        var dtSec = (last.Ticks - first.Ticks) / (double)TimeSpan.TicksPerSecond;
-        if (dtSec <= 0) return;
+        // Drop stale samples.
+        var newestTicks = _touchVelocitySamples[^1].Ticks;
+        var maxAgeTicks = (long)(InertiaSampleMaxAgeMs * TimeSpan.TicksPerMillisecond);
+        var startIdx = _touchVelocitySamples.Count;
+        for (var i = 0; i < _touchVelocitySamples.Count; i++)
+        {
+            if (newestTicks - _touchVelocitySamples[i].Ticks <= maxAgeTicks)
+            {
+                startIdx = i;
+                break;
+            }
+        }
 
-        // px/sec; positive = scrolling down
-        var pxPerSec = (first.Y - last.Y) / dtSec;
-        _inertiaVelocity = pxPerSec;
+        if (_touchVelocitySamples.Count - startIdx < InertiaMinSamples) return;
+
+        // Median of per-interval velocities, not endpoint-to-endpoint: a single outlier interval
+        // (large delta over a tiny dt, right after a stall) skews an endpoint calculation
+        // arbitrarily, whereas a median discards it.
+        var velocities = new List<double>(_touchVelocitySamples.Count - startIdx - 1);
+        for (var i = startIdx; i < _touchVelocitySamples.Count - 1; i++)
+        {
+            var older = _touchVelocitySamples[i];
+            var newer = _touchVelocitySamples[i + 1];
+            var dt = (newer.Ticks - older.Ticks) / (double)TimeSpan.TicksPerSecond;
+            if (dt <= 0) continue;
+            velocities.Add((older.Y - newer.Y) / dt);   // positive = scrolling down
+        }
+
+        if (velocities.Count == 0) return;
+
+        velocities.Sort();
+        var mid = velocities.Count / 2;
+        var median = velocities.Count % 2 == 1
+            ? velocities[mid]
+            : (velocities[mid - 1] + velocities[mid]) / 2.0;
+
+        _inertiaVelocity = Math.Clamp(median, -InertiaMaxLaunchPxPerSec, InertiaMaxLaunchPxPerSec);
 
         if (Math.Abs(_inertiaVelocity) < InertiaStartThresholdPxPerSec) return;
 
-        Console.WriteLine($"[{ScrollLogTag}] inertia START v0={_inertiaVelocity:F0}px/s ({_touchVelocitySamples.Count} samples over {dtSec * 1000:F0}ms)");
+        var spanMs = (newestTicks - _touchVelocitySamples[startIdx].Ticks) / (double)TimeSpan.TicksPerMillisecond;
+        Console.WriteLine($"[{ScrollLogTag}] inertia START v0={_inertiaVelocity:F0}px/s " +
+            $"(median of {velocities.Count} intervals, {_touchVelocitySamples.Count - startIdx} of " +
+            $"{_touchVelocitySamples.Count} samples over {spanMs:F0}ms)");
         _lastInertiaTickTicks = Environment.TickCount64;
         _inertiaTickCount = 0;
 
