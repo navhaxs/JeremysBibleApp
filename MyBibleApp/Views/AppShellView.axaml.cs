@@ -12,6 +12,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Rendering;
 using Avalonia.Threading;
 using MyBibleApp.Controls;
 using MyBibleApp.Models;
@@ -382,10 +383,31 @@ public partial class AppShellView : UserControl
                 Dispatcher.UIThread.Post(UpdateSignInOverlayVisibility);
             if (args.PropertyName == nameof(AppViewModel.IsTabBarVisible))
                 Dispatcher.UIThread.Post(() => UpdateTabBarVisibility());
+            if (args.PropertyName == nameof(AppViewModel.IsDebugMode))
+                Dispatcher.UIThread.Post(ApplyFpsOverlay);
         };
 
         _appVM.PropertyChanged += _authStateHandler;
         UpdateSignInOverlayVisibility();
+    }
+
+    /// <summary>
+    /// Toggles Avalonia's built-in FPS overlay (RendererDiagnostics.DebugOverlays) with the
+    /// existing debug-mode flag — no custom counter needed, this measures actual render-thread
+    /// frame pacing. Called both from OnAttachedToVisualTree (covers "debug mode was already on
+    /// from a previous session, but the view attached after IsDebugMode loaded from storage")
+    /// and from the IsDebugMode PropertyChanged handler above (covers live toggling and "storage
+    /// load completes after the view is already attached") — the two orderings race against
+    /// each other depending on how fast RestoreTabsAndAuthAsync's storage read finishes.
+    /// </summary>
+    private void ApplyFpsOverlay()
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel == null) return;
+
+        topLevel.RendererDiagnostics.DebugOverlays = _appVM.IsDebugMode
+            ? RendererDebugOverlays.Fps
+            : RendererDebugOverlays.None;
     }
 
     private void UpdateSignInOverlayVisibility()
@@ -912,6 +934,8 @@ public partial class AppShellView : UserControl
             window.PropertyChanged -= OnWindowPropertyChanged;  // unsubscribe first to prevent double-subscribe on reattach
             window.PropertyChanged += OnWindowPropertyChanged;
         }
+
+        ApplyFpsOverlay();
     }
 
     private void OnWindowPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
