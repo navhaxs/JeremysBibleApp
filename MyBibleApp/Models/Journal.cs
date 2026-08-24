@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace MyBibleApp.Models;
@@ -56,4 +57,53 @@ public sealed class JournalInkStroke
     public int AnchorChapter { get; init; }      // 1-based chapter; 0 = legacy global index
 }
 
+[JsonConverter(typeof(StrokePointJsonConverter))]
 public readonly record struct StrokePoint(double X, double Y);
+
+/// <summary>
+/// Encodes a StrokePoint as a compact [x, y] array (coords rounded to 2 decimal
+/// places — sub-hundredth precision is invisible on-screen) instead of a verbose
+/// {"x":...,"y":...} object at full double precision. At thousands of points per
+/// journal this is the dominant contributor to journals.json size. Still reads the
+/// legacy object form for backward compatibility with files written before this change.
+/// </summary>
+public sealed class StrokePointJsonConverter : JsonConverter<StrokePoint>
+{
+    public override StrokePoint Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.StartArray)
+        {
+            reader.Read();
+            var x = reader.GetDouble();
+            reader.Read();
+            var y = reader.GetDouble();
+            reader.Read(); // consume EndArray
+            return new StrokePoint(x, y);
+        }
+
+        if (reader.TokenType == JsonTokenType.StartObject)
+        {
+            double x = 0, y = 0;
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+            {
+                var propertyName = reader.GetString();
+                reader.Read();
+                if (string.Equals(propertyName, "x", StringComparison.OrdinalIgnoreCase))
+                    x = reader.GetDouble();
+                else if (string.Equals(propertyName, "y", StringComparison.OrdinalIgnoreCase))
+                    y = reader.GetDouble();
+            }
+            return new StrokePoint(x, y);
+        }
+
+        throw new JsonException($"Unexpected token {reader.TokenType} for StrokePoint.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, StrokePoint value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        writer.WriteNumberValue(Math.Round(value.X, 2));
+        writer.WriteNumberValue(Math.Round(value.Y, 2));
+        writer.WriteEndArray();
+    }
+}

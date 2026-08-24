@@ -28,7 +28,7 @@ public sealed class JournalStore : IJournalStore
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true,
+        WriteIndented = false,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true
     };
@@ -587,8 +587,13 @@ public sealed class JournalStore : IJournalStore
                 var entries = snapshot?.Journals ?? new List<JournalEntry>();
                 var tombstones = snapshot?.DeletedJournals ?? new List<DeletedJournalTombstone>();
 
+                // One-time migration: files written before the compact [x,y] point encoding
+                // still have legacy {"x":..,"y":..} objects on disk. StrokePointJsonConverter
+                // reads them fine, but force a resave so the file itself shrinks now instead
+                // of waiting for the next incidental save.
+                bool dirty = json.Contains("\"x\":", StringComparison.Ordinal);
+
                 // One-time migration: re-bucket v1 flat inkStrokes into inkStrokesByChapter
-                bool dirty = false;
                 foreach (var entry in entries)
                 {
                     if (entry.InkStrokes is { Count: > 0 } legacy && entry.InkStrokesByChapter.Count == 0)
