@@ -942,6 +942,51 @@
                     FontFamily="Consolas,Courier New,monospace"
                     FontSize="9"
                     Foreground="#888888"
+                    Text="── window tuning (×viewport height) ──" />
+                <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
+                    <TextBlock
+                        FontFamily="Consolas,Courier New,monospace"
+                        FontSize="10"
+                        Foreground="#DDDDDD"
+                        Text="Trim threshold"
+                        VerticalAlignment="Center" />
+                    <NumericUpDown
+                        x:Name="TrimThresholdInput"
+                        Grid.Column="1"
+                        FontSize="10"
+                        FormatString="0.0"
+                        Increment="0.5"
+                        Maximum="50"
+                        Minimum="1"
+                        ValueChanged="OnTrimThresholdChanged"
+                        Width="100" />
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
+                    <TextBlock
+                        FontFamily="Consolas,Courier New,monospace"
+                        FontSize="10"
+                        Foreground="#DDDDDD"
+                        Text="Idle preload target"
+                        VerticalAlignment="Center" />
+                    <NumericUpDown
+                        x:Name="IdlePreloadTargetInput"
+                        Grid.Column="1"
+                        FontSize="10"
+                        FormatString="0.0"
+                        Increment="0.5"
+                        Maximum="49"
+                        Minimum="0.5"
+                        ValueChanged="OnIdlePreloadTargetChanged"
+                        Width="100" />
+                </Grid>
+                <Border
+                    Background="#44FFFFFF"
+                    Height="1"
+                    Margin="0,3,0,2" />
+                <TextBlock
+                    FontFamily="Consolas,Courier New,monospace"
+                    FontSize="9"
+                    Foreground="#888888"
                     Text="── events (newest first) ──" />
                 <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
                     <ItemsControl x:Name="DbgEventList">

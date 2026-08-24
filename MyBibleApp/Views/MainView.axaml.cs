@@ -125,6 +125,14 @@ public partial class MainView : UserControl
     private bool _chapterMarkersShownByScroll;
     private int _scrollStopVersion;
     private const double ScrollVelocityThreshold = 3000; // pixels per second
+
+    // Window buffer tuning — both in viewport-height multiples, both live-editable via the
+    // Scroll Debug overlay (TrimThresholdInput/IdlePreloadTargetInput) so they can be tuned
+    // on-device without a rebuild. Idle-preload target must stay below the trim threshold —
+    // otherwise idle-preload would load chapters the very next trim check immediately evicts.
+    private double _trimThresholdMultiplier = 10.0;
+    private double _idlePreloadTargetMultiplier = 3.5;
+    private DispatcherTimer? _idlePreloadTimer;
     private const int FastScrollCountThreshold = 3;      // consecutive fast events required
 
     // ── Annotation toolbar controls ──────────────────────────────────────────
@@ -398,6 +406,14 @@ public partial class MainView : UserControl
         _scrollDebugMenuToggle = this.FindControl<ToggleSwitch>("ScrollDebugToggle");
         if (_dbgEventList != null)
             _dbgEventList.ItemsSource = _dbgEvents;
+
+        var trimThresholdInput = this.FindControl<NumericUpDown>("TrimThresholdInput");
+        if (trimThresholdInput != null)
+            trimThresholdInput.Value = (decimal)_trimThresholdMultiplier;
+
+        var idlePreloadTargetInput = this.FindControl<NumericUpDown>("IdlePreloadTargetInput");
+        if (idlePreloadTargetInput != null)
+            idlePreloadTargetInput.Value = (decimal)_idlePreloadTargetMultiplier;
 
         // Build the ColorView flyout for the custom-colour button.
         _colorPickerView = new ColorView
@@ -2061,6 +2077,18 @@ public partial class MainView : UserControl
     private void OnDebugOverlayClose(object? sender, RoutedEventArgs e)
         => ShowScrollDebugOverlay(false);
 
+    private void OnTrimThresholdChanged(object? sender, NumericUpDownValueChangedEventArgs e)
+    {
+        if (e.NewValue is { } value)
+            _trimThresholdMultiplier = (double)value;
+    }
+
+    private void OnIdlePreloadTargetChanged(object? sender, NumericUpDownValueChangedEventArgs e)
+    {
+        if (e.NewValue is { } value)
+            _idlePreloadTargetMultiplier = (double)value;
+    }
+
     private void DbgLog(string msg)
     {
         // Always record — not gated on overlay visibility. Real-device jumps get
@@ -2162,7 +2190,7 @@ public partial class MainView : UserControl
             }
 
             // Trim top: mutually exclusive with the ExtendWindowUp condition above, but guard for safety.
-            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
+            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * _trimThresholdMultiplier)
             {
                 bool safeToTrimTop = false;
                 if (_chapterStartY.Count > 0)
@@ -2175,7 +2203,7 @@ public partial class MainView : UserControl
             }
 
             // Trim bottom: could contaminate extent snapshot if ExtendWindowUp also fired this pass.
-            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
+            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * _trimThresholdMultiplier)
             {
                 bool safeToTrimBottom = false;
                 if (_chapterStartY.Count > 0)
@@ -2191,6 +2219,86 @@ public partial class MainView : UserControl
         {
             _isAdjustingWindow = false;
         }
+
+        // CheckWindowBounds only runs once ~100ms after the last scroll event settles (its
+        // caller re-debounces on every ScrollChanged), so reaching here already means the user
+        // has genuinely paused — no separate idle-detection timer needed.
+        TryStartIdlePreload();
+    }
+
+    /// <summary>
+    /// Starts (if not already running) a small self-rescheduling timer that preloads
+    /// neighbouring chapters one at a time while the user is idle — not actively touch-panning,
+    /// mouse-dragging, or coasting on inertia. Each tick re-checks those flags before doing any
+    /// work, so if the user resumes interacting, preloading stops before the next chapter loads
+    /// rather than mid-chapter; there is no cost paid while actively scrolling.
+    /// </summary>
+    private void TryStartIdlePreload()
+    {
+        if (_isTouchPanning || _isMouseDragging || _inertiaTimer?.IsEnabled == true) return;
+        if (_idlePreloadTimer?.IsEnabled == true) return;
+
+        _idlePreloadTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _idlePreloadTimer.Tick -= OnIdlePreloadTimerTick; // guard against double-subscribe
+        _idlePreloadTimer.Tick += OnIdlePreloadTimerTick;
+        _idlePreloadTimer.Start();
+    }
+
+    private void OnIdlePreloadTimerTick(object? sender, EventArgs e)
+    {
+        if (_isTouchPanning || _isMouseDragging || _inertiaTimer?.IsEnabled == true || _isAdjustingWindow)
+        {
+            _idlePreloadTimer!.Stop();
+            return;
+        }
+
+        if (_paragraphScrollViewer == null || _chapterGroups.Count == 0)
+        {
+            _idlePreloadTimer!.Stop();
+            return;
+        }
+
+        var vpHeight = _paragraphScrollViewer.Viewport.Height;
+        if (vpHeight <= 0)
+        {
+            _idlePreloadTimer!.Stop();
+            return;
+        }
+
+        var target = vpHeight * _idlePreloadTargetMultiplier;
+        var didWork = false;
+
+        _isAdjustingWindow = true;
+        try
+        {
+            var scrollTop     = _paragraphScrollViewer.Offset.Y;
+            var scrollBottom  = scrollTop + vpHeight;
+            var contentBottom = _paragraphScrollViewer.Extent.Height;
+
+            // One chapter per tick per side — ExtendWindowUp() always adds exactly one, and
+            // ExtendWindowDown(1) adds exactly one too (its loop stops once any chapter's
+            // height clears the tiny 1px target). Re-evaluated every tick so both sides
+            // gradually converge on the target without ever loading more than one chapter's
+            // worth of work in a single frame.
+            if (_windowStart > 0 && scrollTop < target)
+            {
+                ExtendWindowUp();
+                didWork = true;
+            }
+
+            if (!IsUpExtendPending && _windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < target)
+            {
+                ExtendWindowDown(1);
+                didWork = true;
+            }
+        }
+        finally
+        {
+            _isAdjustingWindow = false;
+        }
+
+        if (!didWork)
+            _idlePreloadTimer!.Stop();
     }
 
     /// <summary>
