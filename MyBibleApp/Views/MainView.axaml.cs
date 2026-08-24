@@ -224,6 +224,10 @@ public partial class MainView : UserControl
 
     private bool IsUpExtendPending => _pendingUpExtendAnchor != null;
 
+    // Minimum visible sliver (px) for a paragraph to count as "topmost visible" in
+    // GetTopVisibleParagraphsOnce — see the comment there for why >0 isn't enough.
+    private const double TopVisibleEpsilonPx = 3.0;
+
     private bool _isApplyingWindowCompensation;   // suppresses ⚡JUMP detector during controlled compensation
 
     // RebuildParagraphTopCache recomputes each realized paragraph's absolute content-Y by
@@ -1720,7 +1724,13 @@ public partial class MainView : UserControl
                 Top = x.Top!.Value,
                 x.Height
             })
-            .Where(x => x.Top + x.Height > 0)
+            // A paragraph needs at least a small visible sliver — not just >0 — to count as
+            // "topmost." Without this, a chapter jump that top-aligns the target paragraph to
+            // exactly Y=0 can be beaten by the previous chapter's trailing paragraph if it has
+            // a sub-pixel negative Top from layout rounding, showing the old chapter/verse in
+            // the header right after navigating. This also makes normal scroll resolve to the
+            // next paragraph a few pixels sooner at any boundary, not just post-navigation.
+            .Where(x => x.Top + x.Height > TopVisibleEpsilonPx)
             .OrderBy(x => x.Top)
             .ToList();
 
