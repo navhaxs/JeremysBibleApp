@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -54,6 +55,22 @@ public partial class AppShellView : UserControl
     private int _lastPersistedActiveIndex = -1;
     private int _activeTabIndex = -1;
     private bool _isRestoringTabs;
+
+    // Startup tracing: stable tag so `adb logcat | grep MBA_STARTUP` isolates this from
+    // everything else. Uses Console.WriteLine (not Debug.WriteLine — that's compiled out in
+    // Release builds, and real-device testing may well be a Release APK) so it survives the
+    // build config that's actually slow. Also mirrored into the in-app sync debug log for
+    // desktop/no-adb sessions.
+    private const string StartupLogTag = "MBA_STARTUP";
+    private readonly Stopwatch _startupStopwatch = new();
+
+    private void LogStartup(string message)
+    {
+        var elapsedMs = _startupStopwatch.ElapsedMilliseconds;
+        var line = $"[{StartupLogTag}] +{elapsedMs,6}ms  {message}";
+        Console.WriteLine(line);
+        _appVM.AppendSyncDebugLog(line);
+    }
 
     // Sign-in overlay tracking
     private PropertyChangedEventHandler? _authStateHandler;
@@ -606,14 +623,20 @@ public partial class AppShellView : UserControl
 
     private async Task RestoreTabsAndAuthAsync()
     {
+        _startupStopwatch.Restart();
+        LogStartup("RestoreTabsAndAuthAsync started (StartupOverlay showing 'Preparing local data...')");
+
         // Load persisted debug mode state early so the overlay is visible during restore.
         await _appVM.LoadDebugModeFromStorageAsync();
+        LogStartup("debug mode flag loaded");
         await _appVM.LoadTabBarVisibleFromStorageAsync();
+        LogStartup("tab bar visibility flag loaded");
 
         // Load persisted theme and apply it.
         await _appVM.LoadThemeFromStorageAsync();
         var theme = Models.AppTheme.GetById(_appVM.SelectedThemeId);
         _primaryView?.ApplyTheme(theme);
+        LogStartup("theme loaded and applied");
 
         var overlay = this.FindControl<Panel>("StartupOverlay");
 
@@ -624,6 +647,7 @@ public partial class AppShellView : UserControl
             // 1. Restore tabs from local storage immediately — no auth or network needed.
             _appVM.AppendSyncDebugLog("[Tabs] Loading persisted tab references...");
             var (persistedTabs, persistedActiveIndex) = await _appVM.LoadPersistedOpenTabReferencesAsync();
+            LogStartup($"persisted tab references loaded (count={persistedTabs.Count})");
             if (persistedTabs.Count > 0)
             {
                 _appVM.AppendSyncDebugLog($"[Tabs] Found {persistedTabs.Count} persisted tab(s), active index={persistedActiveIndex}");
@@ -661,22 +685,33 @@ public partial class AppShellView : UserControl
                 var activeIdx = Math.Clamp(persistedActiveIndex, 0, _tabs.Count - 1);
                 var orderedStates = persistedTabs.OrderBy(t => t.TabIndex).ToList();
                 _appVM.AppendSyncDebugLog($"[Tabs] Loading content for {_tabs.Count} tab(s), active={activeIdx}...");
+                LogStartup($"starting book content load for {_tabs.Count} tab(s), active idx={activeIdx}");
                 var contentTasks = _tabs
-                    .Select(vm =>
+                    .Select((vm, i) =>
                     {
                         var code    = vm.SelectedLookupBook?.Code ?? "JHN";
                         var chapter = Math.Max(1, vm.SelectedLookupChapter);
                         var verse   = Math.Max(1, vm.SelectedLookupVerse);
-                        return vm.TryLoadBookFromApiAsync(code, chapter, verse);
+                        var isActive = i == activeIdx;
+                        var sw = Stopwatch.StartNew();
+                        LogStartup($"  tab[{i}] ({code}) book load starting{(isActive ? " [ACTIVE]" : "")}");
+                        return vm.TryLoadBookFromApiAsync(code, chapter, verse)
+                            .ContinueWith(t =>
+                            {
+                                LogStartup($"  tab[{i}] ({code}) book load finished in {sw.ElapsedMilliseconds}ms{(isActive ? " [ACTIVE]" : "")} success={t.Result.Success}");
+                                return t.Result;
+                            }, TaskScheduler.Default);
                     })
                     .ToList();
                 await contentTasks[activeIdx]; // active tab ready before overlay hides
                 _appVM.AppendSyncDebugLog("[Tabs] Active tab content loaded");
+                LogStartup("active tab content load awaited (see per-tab timing above for the actual cost)");
 
                 // Wait for the first layout/render pass to complete before navigating.
                 // On Android the virtualizing ListBox needs an extra dispatcher cycle after
                 // content loads before ScrollIntoView can find realized items.
                 await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                LogStartup("post-load layout/render dispatcher cycle complete");
 
                 // Navigate to the persisted verse so the user lands where they left off.
                 // Use the original persisted state values (not the VM, which may have been
@@ -689,6 +724,7 @@ public partial class AppShellView : UserControl
                     _appVM.AppendSyncDebugLog($"[Tabs] Navigating active tab to {ch}:{vs}");
                     await _primaryView.NavigateToVerseAsync(ch, vs);
                     _appVM.AppendSyncDebugLog($"[Tabs] Navigation done, scroll Y={_primaryView.CaptureScrollOffset()?.ToString("F0") ?? "null"}");
+                    LogStartup($"navigated to {ch}:{vs}");
                 }
 
                 // Reload journal strokes after content is loaded and navigation is complete.
@@ -700,16 +736,22 @@ public partial class AppShellView : UserControl
                 _appVM.AppendSyncDebugLog($"[Tabs] Journal restore — journalId={activeJournalId ?? "null"}, bookCode={activeVm.SelectedLookupBook?.Code ?? activeVm.BookCode}, chapter={activeVm.SelectedLookupChapter}");
                 if (activeJournalId != null && _primaryView != null)
                 {
+                    var getJournalSw = Stopwatch.StartNew();
                     var activeJournal = await SharedSyncRuntime.Instance.JournalStore.GetJournalAsync(activeJournalId);
+                    LogStartup($"GetJournalAsync finished in {getJournalSw.ElapsedMilliseconds}ms");
                     _appVM.AppendSyncDebugLog($"[Tabs] Journal lookup → {(activeJournal != null ? $"\"{activeJournal.Name}\"" : "null (not found in store)")}");
                     if (activeJournal != null)
                     {
                         _primaryView.SetActiveJournalName(activeJournal.Name);
                         _primaryView.SetUnsavedBadgeVisible(false);
+                        var setLayoutSw = Stopwatch.StartNew();
                         _primaryView.SetJournalLayout(activeJournal.Layout);
+                        LogStartup($"SetJournalLayout finished in {setLayoutSw.ElapsedMilliseconds}ms");
+                        var journalSw = Stopwatch.StartNew();
                         await ReloadWindowedInkStrokesAsync();
                         _primaryView.SyncInkScrollOffset();
                         _appVM.AppendSyncDebugLog($"[Tabs] Journal strokes loaded and scroll synced");
+                        LogStartup($"journal strokes reloaded in {journalSw.ElapsedMilliseconds}ms");
                     }
                 }
 
@@ -718,34 +760,42 @@ public partial class AppShellView : UserControl
             else
             {
                 _appVM.AppendSyncDebugLog("[Tabs] No persisted tabs found, creating default (Genesis 1:1)");
+                LogStartup("no persisted tabs — loading default GEN 1:1");
                 var defaultVm = new ScriptureViewModel(_appVM);
                 AddTabInternal(defaultVm, makeActive: true);
+                var sw = Stopwatch.StartNew();
                 await defaultVm.TryLoadBookFromApiAsync("GEN", 1, 1);
+                LogStartup($"default book (GEN) load finished in {sw.ElapsedMilliseconds}ms");
             }
 
             // Tabs are visible — dismiss the overlay so the user sees the app immediately.
             _isRestoringTabs = false;
             if (overlay != null) overlay.IsVisible = false;
+            LogStartup("StartupOverlay hidden — 'Preparing local data...' phase complete");
 
             // 2. Auth + Drive pull happen silently in the background.
 
             // Smooth UX on reopen: this uses cached OAuth token when available.
             await _appVM.TryAutoAuthenticateOnStartupAsync();
+            LogStartup("silent auto-auth attempt finished (background, overlay already hidden)");
 
             // If silent auth failed but there was a previous session, offer to re-sign-in.
             if (!_appVM.IsAuthenticated && await _appVM.HasPreviousAuthenticationAsync())
             {
                 // Re-surface the overlay only for the interactive re-sign-in prompt.
                 if (overlay != null) overlay.IsVisible = true;
+                LogStartup("re-showing overlay for interactive re-sign-in prompt");
                 var shouldSignIn = await ShowStartupReSignInPromptAsync(
                     "Your previous sign-in has expired.");
                 if (shouldSignIn)
                     await _appVM.AuthenticateAsync();
+                LogStartup("re-sign-in flow finished");
             }
 
             if (_appVM.IsAuthenticated)
             {
                 var pullResult = await _appVM.PullFromDriveAsync();
+                LogStartup("Drive pull finished");
                 if (pullResult.BibleReadingProgress != null
                     && _bibleReadingView?.DataContext is BibleReadingViewModel brVm)
                 {
@@ -761,6 +811,7 @@ public partial class AppShellView : UserControl
             _appVM.SuppressReadingProgressSync = false;
             if (overlay != null)
                 overlay.IsVisible = false;
+            LogStartup("RestoreTabsAndAuthAsync finished");
         }
     }
 

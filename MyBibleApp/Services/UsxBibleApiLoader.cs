@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Threading;
@@ -12,6 +13,11 @@ namespace MyBibleApp.Services;
 
 public sealed class UsxBibleApiLoader
 {
+    // Stable tag so `adb logcat | grep MBA_STARTUP` isolates this from everything else.
+    // Console.WriteLine (not Debug.WriteLine) so it survives Release-build device testing,
+    // where Debug.WriteLine calls are compiled out.
+    private const string StartupLogTag = "MBA_STARTUP";
+
     private const string BaseUrl = "https://v1.fetch.bible/bibles/eng_bsb/usx/";
 
     private static readonly HttpClient HttpClient = new();
@@ -33,9 +39,21 @@ public sealed class UsxBibleApiLoader
         if (string.IsNullOrWhiteSpace(bookCode))
             throw new ArgumentException("Book code is required.", nameof(bookCode));
 
+        var sw = Stopwatch.StartNew();
         var xml = await GetXmlAsync(bookCode).ConfigureAwait(false);
+        var xmlReadyMs = sw.ElapsedMilliseconds;
+
         var document = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
-        return _parser.Parse(document);
+        var xdocParsedMs = sw.ElapsedMilliseconds;
+
+        var book = _parser.Parse(document);
+        var totalMs = sw.ElapsedMilliseconds;
+
+        Console.WriteLine($"[{StartupLogTag}]    UsxBibleApiLoader({bookCode}): xml-ready={xmlReadyMs}ms " +
+            $"xdoc-parse={xdocParsedMs - xmlReadyMs}ms usx-parse={totalMs - xdocParsedMs}ms total={totalMs}ms " +
+            $"({book.Paragraphs.Count} paragraphs, {xml.Length} chars)");
+
+        return book;
     }
 
     /// <summary>
@@ -68,16 +86,23 @@ public sealed class UsxBibleApiLoader
         var normalizedCode = bookCode.Trim().ToLowerInvariant();
 
         if (MemoryCache.TryGetValue(normalizedCode, out var cached))
+        {
+            Console.WriteLine($"[{StartupLogTag}]    GetXmlAsync({normalizedCode}): memory-cache hit");
             return cached;
+        }
 
         var diskPath = GetDiskCachePath(normalizedCode);
         if (File.Exists(diskPath))
         {
+            var sw = Stopwatch.StartNew();
             var diskXml = await File.ReadAllTextAsync(diskPath).ConfigureAwait(false);
+            Console.WriteLine($"[{StartupLogTag}]    GetXmlAsync({normalizedCode}): disk-cache read in {sw.ElapsedMilliseconds}ms ({diskXml.Length} chars)");
             MemoryCache[normalizedCode] = diskXml;
             return diskXml;
         }
 
+        Console.WriteLine($"[{StartupLogTag}]    GetXmlAsync({normalizedCode}): no cache — fetching from network ({BaseUrl}{normalizedCode}.usx)");
+        var netSw = Stopwatch.StartNew();
         var uri = new Uri($"{BaseUrl}{normalizedCode}.usx", UriKind.Absolute);
         using var response = await HttpClient.GetAsync(uri).ConfigureAwait(false);
 
@@ -85,6 +110,7 @@ public sealed class UsxBibleApiLoader
             throw new InvalidOperationException($"API request failed ({(int)response.StatusCode} {response.ReasonPhrase}).");
 
         var xml = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Console.WriteLine($"[{StartupLogTag}]    GetXmlAsync({normalizedCode}): network fetch finished in {netSw.ElapsedMilliseconds}ms ({xml.Length} chars)");
 
         await WriteToDiskCacheAsync(normalizedCode, xml).ConfigureAwait(false);
         MemoryCache[normalizedCode] = xml;

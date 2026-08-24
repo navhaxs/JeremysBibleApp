@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -11,9 +12,21 @@ namespace MyBibleApp.Services;
 
 public sealed class JournalStore : IJournalStore
 {
+    // Stable tag so `adb logcat | grep MBA_STARTUP` isolates this from everything else.
+    private const string StartupLogTag = "MBA_STARTUP";
+
     private readonly string _filePath;
     private readonly string _localOnlyFilePath;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
+
+    // In-memory cache of the whole journals.json contents. Every public method funnels
+    // through LoadEntriesAsync while holding _semaphore, and this class is the only writer
+    // of _filePath (via SaveEntriesAsync), so caching here is safe with no extra locking.
+    // Without this, GetInkStrokesAsync re-read and re-deserialized the entire file — every
+    // journal, every book, every chapter — just to pull one chapter's strokes; called once
+    // per windowed chapter in a sequential loop (ReloadWindowedInkStrokesAsync), that made
+    // startup ink-restore cost seconds-per-chapter on a real device instead of near-instant.
+    private (List<JournalEntry> Entries, List<DeletedJournalTombstone> Tombstones)? _cachedEntries;
 
     // Tracks journals whose ink stroke save failed and need retry on next save
     private readonly Dictionary<(string JournalId, string ChapterKey), IReadOnlyList<JournalInkStroke>> _pendingRetry = new();
@@ -572,18 +585,24 @@ public sealed class JournalStore : IJournalStore
 
     private async Task<(List<JournalEntry> Entries, List<DeletedJournalTombstone> Tombstones)> LoadEntriesAsync()
     {
-        return await Task.Run(async () =>
+        if (_cachedEntries is { } cached)
+            return cached;
+
+        var loaded = await Task.Run(async () =>
         {
             if (!File.Exists(_filePath))
                 return (new List<JournalEntry>(), new List<DeletedJournalTombstone>());
 
             try
             {
+                var sw = Stopwatch.StartNew();
                 var json = File.ReadAllText(_filePath);
+                var readMs = sw.ElapsedMilliseconds;
                 if (string.IsNullOrWhiteSpace(json))
                     return (new List<JournalEntry>(), new List<DeletedJournalTombstone>());
 
                 var snapshot = JsonSerializer.Deserialize<JournalDataSnapshot>(json, JsonOptions);
+                var deserializeMs = sw.ElapsedMilliseconds - readMs;
                 var entries = snapshot?.Journals ?? new List<JournalEntry>();
                 var tombstones = snapshot?.DeletedJournals ?? new List<DeletedJournalTombstone>();
 
@@ -604,9 +623,19 @@ public sealed class JournalStore : IJournalStore
                         dirty = true;
                     }
                 }
+                var migrationCheckMs = sw.ElapsedMilliseconds - readMs - deserializeMs;
+
+                var totalStrokes = entries.Sum(e => e.InkStrokesByChapter.Values.Sum(v => v.Count));
+                Console.WriteLine($"[{StartupLogTag}]    JournalStore.LoadEntriesAsync: read={readMs}ms " +
+                    $"deserialize={deserializeMs}ms migration-check={migrationCheckMs}ms dirty={dirty} " +
+                    $"({json.Length} chars, {entries.Count} journals, {totalStrokes} total strokes)");
 
                 if (dirty)
+                {
+                    var saveSw = Stopwatch.StartNew();
                     await SaveEntriesAsync(entries, tombstones).ConfigureAwait(false);
+                    Console.WriteLine($"[{StartupLogTag}]    JournalStore.LoadEntriesAsync: migration re-save took {saveSw.ElapsedMilliseconds}ms");
+                }
 
                 return (entries, tombstones);
             }
@@ -616,22 +645,32 @@ public sealed class JournalStore : IJournalStore
                 return (new List<JournalEntry>(), new List<DeletedJournalTombstone>());
             }
         }).ConfigureAwait(false);
+
+        _cachedEntries = loaded;
+        return loaded;
     }
 
     private async Task SaveEntriesAsync(List<JournalEntry> entries, List<DeletedJournalTombstone>? tombstones = null)
     {
+        var resolvedTombstones = tombstones ?? [];
+
         await Task.Run(() =>
         {
             var snapshot = new JournalDataSnapshot
             {
                 Journals = entries,
-                DeletedJournals = tombstones ?? [],
+                DeletedJournals = resolvedTombstones,
                 LastModifiedUtc = DateTime.UtcNow
             };
 
             var json = JsonSerializer.Serialize(snapshot, JsonOptions);
             WriteAtomically(_filePath, json);
         }).ConfigureAwait(false);
+
+        // Keep the cache authoritative for whatever was just written, in case a caller
+        // ever saves without having loaded first (none do today, but this stays correct
+        // either way instead of depending on that always being true).
+        _cachedEntries = (entries, resolvedTombstones);
     }
 
     private static void WriteAtomically(string filePath, string content)
