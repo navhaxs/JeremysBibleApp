@@ -40,9 +40,14 @@ public class ScrollMinimapControl : Control
     private int _windowStart;
     private int _windowEnd;
 
-    private double _viewportOffsetY;
-    private double _viewportHeight;
-    private double _extentHeight;
+    // Viewport indicator, expressed as an inclusive 1-based CHAPTER range rather than as raw
+    // scroll pixels. Pixels were wrong: the chapter strip is proportioned against
+    // sum(_virtualHeights), while ScrollViewer.Extent.Height is estimate-based spacers plus
+    // real measured loaded content — two different totals, so a pixel fraction of the extent
+    // did not land where the same fraction of the strip is drawn. Chapter indices are the one
+    // coordinate both sides genuinely share.
+    private int _viewportTopChapter;
+    private int _viewportBottomChapter;
 
     // chapter (1-based) -> (entered?, flash start tick)
     private readonly Dictionary<int, (bool Entered, long StartTicks)> _flashes = new();
@@ -64,14 +69,17 @@ public class ScrollMinimapControl : Control
     }
 
     /// <summary>
-    /// Repositions the viewport-indicator band. Call on every scroll tick — cheap: does not
-    /// touch the cached chapter strip, only the thin band drawn fresh on top of it each frame.
+    /// Repositions the viewport-indicator band, given the inclusive 1-based range of chapters
+    /// currently visible. Call on every scroll tick — cheap: does not touch the cached chapter
+    /// strip, only the band drawn fresh on top of it each frame.
     /// </summary>
-    public void SetViewport(double offsetY, double viewportHeight, double extentHeight)
+    public void SetViewportChapters(int topChapter, int bottomChapter)
     {
-        _viewportOffsetY = offsetY;
-        _viewportHeight = viewportHeight;
-        _extentHeight = extentHeight;
+        if (_viewportTopChapter == topChapter && _viewportBottomChapter == bottomChapter)
+            return;
+
+        _viewportTopChapter = topChapter;
+        _viewportBottomChapter = bottomChapter;
         InvalidateVisual();
     }
 
@@ -150,14 +158,41 @@ public class ScrollMinimapControl : Control
         if (_chapterStripCache != null)
             context.DrawImage(_chapterStripCache, new Rect(_chapterStripCache.Size), new Rect(bounds.Size));
 
-        if (_extentHeight > 0 && _viewportHeight > 0)
-        {
-            var top = _viewportOffsetY / _extentHeight * bounds.Height;
-            var height = Math.Max(2, _viewportHeight / _extentHeight * bounds.Height);
-            var rect = new Rect(0, top, bounds.Width, height);
-            context.FillRectangle(ViewportBrush, rect);
-            context.DrawRectangle(ViewportPen, rect);
-        }
+        DrawViewportBand(context, bounds);
+    }
+
+    /// <summary>
+    /// Draws the viewport band by accumulating the SAME per-chapter heights the strip is drawn
+    /// from, so the band and the segments it sits over are always in one coordinate space.
+    /// </summary>
+    private void DrawViewportBand(DrawingContext context, Rect bounds)
+    {
+        if (_viewportTopChapter <= 0 || _viewportBottomChapter <= 0 || _virtualHeights.Count == 0)
+            return;
+
+        var totalHeight = 0.0;
+        foreach (var h in _virtualHeights)
+            totalHeight += h;
+        if (totalHeight <= 0)
+            return;
+
+        // Chapters are 1-based; _virtualHeights is 0-based.
+        var topIdx = Math.Clamp(_viewportTopChapter - 1, 0, _virtualHeights.Count - 1);
+        var bottomIdx = Math.Clamp(_viewportBottomChapter - 1, topIdx, _virtualHeights.Count - 1);
+
+        var yStart = 0.0;
+        for (var i = 0; i < topIdx; i++)
+            yStart += _virtualHeights[i];
+
+        var span = 0.0;
+        for (var i = topIdx; i <= bottomIdx; i++)
+            span += _virtualHeights[i];
+
+        var top = yStart / totalHeight * bounds.Height;
+        var height = Math.Max(2, span / totalHeight * bounds.Height);
+        var rect = new Rect(0, top, bounds.Width, height);
+        context.FillRectangle(ViewportBrush, rect);
+        context.DrawRectangle(ViewportPen, rect);
     }
 
     private void RenderChapterStripCache(Size size)

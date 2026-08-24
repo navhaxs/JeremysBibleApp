@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using Avalonia.Collections;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -223,6 +224,7 @@ public partial class MainView : UserControl
     private const double PendingUpExtendSettleEpsilon = 0.5; // px
 
     private bool IsUpExtendPending => _pendingUpExtendAnchor != null;
+    private int _blockedUpExtendCount; // consecutive ExtendWindowUp() calls skipped while pending — diagnostic only
 
     // Minimum visible sliver (px) for a paragraph to count as "topmost visible" in
     // GetTopVisibleParagraphsOnce — see the comment there for why >0 isn't enough.
@@ -741,8 +743,25 @@ public partial class MainView : UserControl
         _paragraphList.LayoutUpdated += OnParagraphListLayoutUpdated;
     }
 
+    private long _lastLayoutUpdatedTicks;
+
     private void OnParagraphListLayoutUpdated(object? sender, EventArgs e)
     {
+        var nowMs = Environment.TickCount64;
+        if (_lastLayoutUpdatedTicks != 0)
+        {
+            var gapMs = nowMs - _lastLayoutUpdatedTicks;
+            // LayoutUpdated fires once per real layout pass. A 60Hz-ish UI thread should see
+            // this every ~16ms while anything is animating/scrolling; a much larger gap means
+            // some layout pass itself took that long (e.g. a chapter-load's measure/arrange
+            // work), which is exactly the kind of stall that could stretch inertia's fixed
+            // tick-count decay over many extra real seconds. Only log when it's notably slow —
+            // this fires far too often to log unconditionally.
+            if (gapMs > 32)
+                Console.WriteLine($"[{ScrollLogTag}] LayoutUpdated gap={gapMs}ms (slow layout pass)");
+        }
+        _lastLayoutUpdatedTicks = nowMs;
+
         EnsureScrollTrackingAttached();
         ApplyPendingTopCompensation();
 
@@ -752,7 +771,10 @@ public partial class MainView : UserControl
 
         _topCacheDirty = false;
         _lastTopCacheRebuildTicks = now;
+        var sw = Stopwatch.StartNew();
         RebuildParagraphTopCache();
+        if (sw.ElapsedMilliseconds > 5)
+            Console.WriteLine($"[{ScrollLogTag}] RebuildParagraphTopCache took {sw.ElapsedMilliseconds}ms");
     }
 
     private void ApplyPendingTopCompensation()
@@ -819,10 +841,17 @@ public partial class MainView : UserControl
 
         _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
         UpdateReaderProgress(_paragraphScrollViewer);
-        _scrollMinimap?.SetViewport(
-            _paragraphScrollViewer.Offset.Y,
-            _paragraphScrollViewer.Viewport.Height,
-            _paragraphScrollViewer.Extent.Height);
+        if (_scrollMinimap != null && _chapterGroups.Count > 0)
+        {
+            // Reuse GetVisibleChapterRange rather than handing the minimap raw scroll pixels:
+            // it already resolves the case where the viewport sits out in a virtual spacer
+            // beyond the loaded window, and it answers in chapter numbers — the coordinate the
+            // minimap's chapter strip is actually drawn in.
+            var vpTop = _paragraphScrollViewer.Offset.Y;
+            var (visTop, visBottom) = GetVisibleChapterRange(
+                vpTop, vpTop + _paragraphScrollViewer.Viewport.Height);
+            _scrollMinimap.SetViewportChapters(visTop, visBottom);
+        }
 
         // Don't interfere while the user is dragging the scrollbar thumb.
         if (_isDraggingProgressBar) return;
@@ -863,6 +892,16 @@ public partial class MainView : UserControl
                 DbgLog($"⚡JUMP  {_lastScrollOffset:F0}→{currentOffset:F0}  Δ={delta:+0;-0}px");
             DbgUpdateStats();
         }
+
+        // Every ScrollChanged, unconditionally — console-only (bypasses DbgLog's bounded
+        // in-app collections, which would overflow fast at this frequency). Deliberately
+        // redundant with the inertia-tick log during a coast: if Offset writes from
+        // OnInertiaTick don't show up here in lockstep, that itself is a finding (would mean
+        // something other than our inertia is driving the scroll, or ScrollChanged is being
+        // suppressed/delayed relative to the Offset write that caused it).
+        Console.WriteLine($"[{ScrollLogTag}] ScrollChanged offsetY={currentOffset:F0} Δ={currentOffset - _lastScrollOffset:+0;-0}px " +
+            $"elapsedMs={elapsed * 1000:F0} extent={_paragraphScrollViewer.Extent.Height:F0} viewport={_paragraphScrollViewer.Viewport.Height:F0} " +
+            $"compensating={_isApplyingWindowCompensation}");
 
         _lastScrollOffset = currentOffset;
         _lastScrollTime = now;
@@ -1818,11 +1857,69 @@ public partial class MainView : UserControl
 
     private void UpdateSpacers()
     {
-        _scrollMinimap?.SetChapters(_virtualHeights, _windowStart, _windowEnd);
+        _scrollMinimap?.SetChapters(BuildBestKnownChapterHeights(), _windowStart, _windowEnd);
 
         if (_virtualScrollPanel == null) return;
         _virtualScrollPanel.TopPadding = _topSpacerHeight;
         _virtualScrollPanel.BottomPadding = _bottomSpacerHeight;
+    }
+
+    /// <summary>
+    /// Blends _virtualHeights (paragraphCount×60px estimates — documented elsewhere as up to
+    /// 10–100× wrong for Psalms, whose paragraph density is wildly non-uniform) with actual
+    /// measured heights wherever available: _measuredChapterHeights for chapters that have
+    /// already been trimmed once, and a fresh live measurement for chapters currently in the
+    /// window. Without this, the minimap's chapter-strip (built from raw virtual heights) and
+    /// its viewport band (built from the ScrollViewer's real Offset/Extent, which reflects
+    /// actual measured heights for loaded content) disagree — most visibly for Psalms — because
+    /// they're proportioned from two different, inconsistent height sources.
+    /// </summary>
+    private double[] BuildBestKnownChapterHeights()
+    {
+        var heights = (double[])_virtualHeights.Clone();
+
+        foreach (var (chapter, height) in _measuredChapterHeights)
+        {
+            var idx = chapter - 1;
+            if (idx >= 0 && idx < heights.Length)
+                heights[idx] = height;
+        }
+
+        foreach (var (chapter, height) in MeasureWindowChapterHeights())
+        {
+            var idx = chapter - 1;
+            if (idx >= 0 && idx < heights.Length)
+                heights[idx] = height;
+        }
+
+        return heights;
+    }
+
+    /// <summary>
+    /// Single visual-tree pass measuring the total realized height of each chapter currently
+    /// in the window — grouped like RebuildParagraphTopCache, not one walk per chapter.
+    /// </summary>
+    private Dictionary<int, double> MeasureWindowChapterHeights()
+    {
+        var result = new Dictionary<int, double>();
+        if (_paragraphList == null)
+            return result;
+
+        foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
+        {
+            if (item.DataContext is not BibleParagraph para) continue;
+
+            // Read the chapter off the paragraph rather than via _paragraphChapterInfo.
+            // That dictionary uses default (structural) record equality and is keyed by the
+            // ORIGINAL paragraphs, but a ListBoxItem's DataContext is the PrepareForDisplay
+            // copy, which differs in EffectivePoetryLevel for poetry — so the lookup silently
+            // missed ~94% of rows in Psalms and every chapter measured ~10x too small.
+            // ChapterGroupBuilder assigns Chapter straight from StartChapter, so this is the
+            // same value by construction, minus the identity hazard.
+            result[para.StartChapter] = result.GetValueOrDefault(para.StartChapter) + item.Bounds.Height;
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -1907,7 +2004,7 @@ public partial class MainView : UserControl
             _windowEnd++;
             var chEst = EstimateChapterHeight(chapter);
             added += chEst;
-            DbgLog($"+ch{chapter} ↓down  est={chEst:F0}px  win={_windowStart + 1}..{_windowEnd}");
+            DbgLog($"+ch{chapter} ↓down  est={chEst:F0}px  win={_windowStart + 1}..{_windowEnd}  scrollY={_paragraphScrollViewer?.Offset.Y:F0}");
             ChapterEnteredWindow?.Invoke(this, chapter);
             _scrollMinimap?.FlashChapter(chapter, entered: true);
         }
@@ -1927,7 +2024,21 @@ public partial class MainView : UserControl
         // LayoutUpdated settles. A second call here would overwrite the pending
         // anchor and silently drop the first extend's compensation, producing a
         // visible jump once layout catches up.
-        if (IsUpExtendPending) return;
+        if (IsUpExtendPending)
+        {
+            _blockedUpExtendCount++;
+            // Diagnostic only — confirms/refutes whether short-chapter books (Psalms) build up
+            // a backlog of skipped extends during a fast fling, then catch up in a burst once
+            // the pending anchor clears. Logged every time (not just on threshold) since these
+            // are naturally rate-limited by scroll ticks.
+            DbgLog($"  ↳ up-extend BLOCKED (pending, consecutive={_blockedUpExtendCount})  win={_windowStart + 1}..{_windowEnd}");
+            return;
+        }
+        if (_blockedUpExtendCount > 0)
+        {
+            DbgLog($"  ↳ up-extend proceeding after {_blockedUpExtendCount} blocked attempt(s)");
+            _blockedUpExtendCount = 0;
+        }
 
         // Capture the anchor BEFORE any mutation (spacer shrink or insert) so its
         // content-space Y reflects the true pre-extend state. See ApplyPendingTopCompensation.
@@ -1948,7 +2059,7 @@ public partial class MainView : UserControl
 
         _windowedItems.InsertRange(0, newParagraphs.Select(PrepareForDisplay));
 
-        DbgLog($"+ch{chapter} ↑up  [deferred anchor-compensation]  win={_windowStart + 1}..{_windowEnd}");
+        DbgLog($"+ch{chapter} ↑up  [deferred anchor-compensation]  win={_windowStart + 1}..{_windowEnd}  scrollY={_paragraphScrollViewer?.Offset.Y:F0}");
 
         ChapterEnteredWindow?.Invoke(this, chapter);
         _scrollMinimap?.FlashChapter(chapter, entered: true);
@@ -2022,7 +2133,7 @@ public partial class MainView : UserControl
         _chapterStartY.Remove(chapter);
         _chapterLocalTops.Remove(chapter);
 
-        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  spacer={_topSpacerHeight:F0}px  win={_windowStart}..{_windowEnd}");
+        DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  spacer={_topSpacerHeight:F0}px  win={_windowStart}..{_windowEnd}  scrollY={_paragraphScrollViewer?.Offset.Y:F0}");
 
         ChapterExitedWindow?.Invoke(this, chapter);
         _scrollMinimap?.FlashChapter(chapter, entered: false);
@@ -2062,7 +2173,7 @@ public partial class MainView : UserControl
         _chapterStartY.Remove(chapter);
         _chapterLocalTops.Remove(chapter);
 
-        DbgLog($"-ch{chapter} ↓trim  ht={removedHeight:F0}px  spacer={_bottomSpacerHeight:F0}px  win={_windowStart + 1}..{_windowEnd}");
+        DbgLog($"-ch{chapter} ↓trim  ht={removedHeight:F0}px  spacer={_bottomSpacerHeight:F0}px  win={_windowStart + 1}..{_windowEnd}  scrollY={_paragraphScrollViewer?.Offset.Y:F0}");
         ChapterExitedWindow?.Invoke(this, chapter);
         _scrollMinimap?.FlashChapter(chapter, entered: false);
     }
@@ -2099,11 +2210,16 @@ public partial class MainView : UserControl
             _idlePreloadTargetMultiplier = (double)value;
     }
 
+    // Stable tag so `adb logcat | grep MBA_SCROLL` isolates this from everything else.
+    // Console.WriteLine (not Debug.WriteLine) so it survives Release-build device testing.
+    private const string ScrollLogTag = "MBA_SCROLL";
+
     private void DbgLog(string msg)
     {
         // Always record — not gated on overlay visibility. Real-device jumps get
         // reported after the fact, when nobody had the overlay open to see them.
         var ts = DateTime.Now.ToString("HH:mm:ss.fff");
+        Console.WriteLine($"[{ScrollLogTag}] {ts} {msg}");
         _dbgEvents.Insert(0, $"{ts} {msg}");
         while (_dbgEvents.Count > 40)
             _dbgEvents.RemoveAt(_dbgEvents.Count - 1);
@@ -2158,8 +2274,10 @@ public partial class MainView : UserControl
         foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
         {
             if (item.DataContext is not BibleParagraph para) continue;
-            if (!_paragraphChapterInfo.TryGetValue(para, out var info)) continue;
-            if (info.Chapter != chapter) continue;
+            // See MeasureWindowChapterHeights: _paragraphChapterInfo can't match the
+            // PrepareForDisplay copies that are actually in the ListBox. StartChapter is what
+            // ChapterGroupBuilder derives Chapter from anyway.
+            if (para.StartChapter != chapter) continue;
             total += item.Bounds.Height;
             found = true;
         }
@@ -2548,6 +2666,38 @@ public partial class MainView : UserControl
     // ── Ink paragraph anchoring helpers ───────────────────────────────────────
 
     /// <summary>
+    /// Maps each paragraph instance currently in <see cref="_windowedItems"/> to its
+    /// (1-based chapter, within-chapter index), keyed by REFERENCE.
+    ///
+    /// _paragraphChapterInfo cannot be used against realized ListBoxItems: it uses default
+    /// (structural) record equality and is keyed by the original paragraphs, but every
+    /// ListBoxItem's DataContext is the PrepareForDisplay copy, which differs in
+    /// EffectivePoetryLevel for poetry — so those lookups silently skipped the large majority
+    /// of rows in a poetry-heavy book like Psalms. Walking _windowedItems gives us the exact
+    /// instances the containers hold. Window mutations always add/remove whole chapters, so
+    /// position-within-chapter here matches ChapterGroupBuilder's LocalIndex by construction.
+    /// </summary>
+    private Dictionary<BibleParagraph, (int Chapter, int LocalIndex)> BuildWindowedParagraphInfo()
+    {
+        var info = new Dictionary<BibleParagraph, (int Chapter, int LocalIndex)>(
+            _windowedItems.Count, ReferenceEqualityComparer.Instance);
+
+        var chapter = -1;
+        var localIndex = 0;
+        foreach (var para in _windowedItems)
+        {
+            if (para.StartChapter != chapter)
+            {
+                chapter = para.StartChapter;
+                localIndex = 0;
+            }
+            info[para] = (chapter, localIndex++);
+        }
+
+        return info;
+    }
+
+    /// <summary>
     /// Walks the visual tree once and caches every paragraph's content-space Y.
     /// Called after layout settles; safe to call repeatedly (cheap if no change).
     /// </summary>
@@ -2556,12 +2706,13 @@ public partial class MainView : UserControl
         if (_paragraphList == null || _paragraphScrollViewer == null)
             return;
 
+        var windowedInfo = BuildWindowedParagraphInfo();
         var byChapter = new Dictionary<int, List<(int LocalIndex, double ViewportY)>>();
 
         foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
         {
             if (item.DataContext is not BibleParagraph para) continue;
-            if (!_paragraphChapterInfo.TryGetValue(para, out var info)) continue;
+            if (!windowedInfo.TryGetValue(para, out var info)) continue;
 
             var viewportY = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
             if (viewportY == null) continue;
@@ -2608,13 +2759,14 @@ public partial class MainView : UserControl
             return null;
 
         var scrollY = _paragraphScrollViewer.Offset.Y;
+        var windowedInfo = BuildWindowedParagraphInfo();   // see BuildWindowedParagraphInfo: _paragraphChapterInfo can't match display copies
         (int Chapter, int LocalIndex, double ContentTop, double Height)? best = null;
         double bestDist = double.MaxValue;
 
         foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
         {
             if (item.DataContext is not BibleParagraph para) continue;
-            if (!_paragraphChapterInfo.TryGetValue(para, out var info)) continue;
+            if (!windowedInfo.TryGetValue(para, out var info)) continue;
 
             var top = item.TranslatePoint(default, _paragraphScrollViewer)?.Y;
             if (top == null) continue;
@@ -3120,6 +3272,27 @@ public partial class MainView : UserControl
         StartInertiaFromSamples();
     }
 
+    private long _lastInertiaTickTicks;
+    private int _inertiaTickCount;
+
+    // Friction expressed as a per-nominal-frame decay rate at NominalFrameMs, but always
+    // applied scaled by the REAL elapsed time since the last tick (see OnInertiaTick) — not
+    // once per tick-event regardless of how long that tick actually took. The latter was the
+    // root cause of a real bug: when chapter-load layout work starved the DispatcherTimer for
+    // seconds at a time, velocity still only decayed by this fixed per-event factor, so the
+    // same fixed number of logical decay-steps to reach the stop threshold stretched over an
+    // unbounded amount of real time while still covering the same total distance — a coast
+    // that should settle in under a second instead visibly continued for 10+ seconds.
+    private const double InertiaFrictionPerNominalFrame = 0.88;
+    private const double InertiaNominalFrameMs = 16.0;
+    private const double InertiaStartThresholdPxPerSec = 60.0;  // was <1.0 px/tick @ nominal 60fps
+    private const double InertiaStopThresholdPxPerSec = 30.0;   // was <0.5 px/tick @ nominal 60fps
+
+    // If a tick arrives later than this, the UI thread was starved for long enough that the
+    // coast has no meaningful continuation — resuming it now would feel like an unrelated
+    // sudden jump, not a smooth deceleration. Abandon instead of applying stale velocity.
+    private const long InertiaMaxRealisticTickGapMs = 200;
+
     private void StartInertiaFromSamples()
     {
         if (_touchVelocitySamples.Count < 2 || _paragraphScrollViewer == null) return;
@@ -3129,11 +3302,15 @@ public partial class MainView : UserControl
         var dtSec = (last.Ticks - first.Ticks) / (double)TimeSpan.TicksPerSecond;
         if (dtSec <= 0) return;
 
-        // px/frame at 60fps; positive = scrolling down
+        // px/sec; positive = scrolling down
         var pxPerSec = (first.Y - last.Y) / dtSec;
-        _inertiaVelocity = pxPerSec / 60.0;
+        _inertiaVelocity = pxPerSec;
 
-        if (Math.Abs(_inertiaVelocity) < 1.0) return;
+        if (Math.Abs(_inertiaVelocity) < InertiaStartThresholdPxPerSec) return;
+
+        Console.WriteLine($"[{ScrollLogTag}] inertia START v0={_inertiaVelocity:F0}px/s ({_touchVelocitySamples.Count} samples over {dtSec * 1000:F0}ms)");
+        _lastInertiaTickTicks = Environment.TickCount64;
+        _inertiaTickCount = 0;
 
         _inertiaTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _inertiaTimer.Tick += OnInertiaTick;
@@ -3144,14 +3321,40 @@ public partial class MainView : UserControl
     {
         if (_paragraphScrollViewer == null) { StopInertia(); return; }
 
-        _inertiaVelocity *= 0.88; // friction
-        if (Math.Abs(_inertiaVelocity) < 0.5) { StopInertia(); return; }
+        var now = Environment.TickCount64;
+        var realDeltaMs = now - _lastInertiaTickTicks;
+        _lastInertiaTickTicks = now;
+        _inertiaTickCount++;
+
+        if (realDeltaMs > InertiaMaxRealisticTickGapMs)
+        {
+            Console.WriteLine($"[{ScrollLogTag}] inertia ABANDONED tick#{_inertiaTickCount} realDeltaMs={realDeltaMs} (UI thread starved, discarding stale coast)");
+            StopInertia();
+            return;
+        }
+
+        var decay = Math.Pow(InertiaFrictionPerNominalFrame, realDeltaMs / InertiaNominalFrameMs);
+        _inertiaVelocity *= decay;
+
+        if (Math.Abs(_inertiaVelocity) < InertiaStopThresholdPxPerSec)
+        {
+            Console.WriteLine($"[{ScrollLogTag}] inertia STOP decayed after {_inertiaTickCount} ticks, last realDeltaMs={realDeltaMs}");
+            StopInertia();
+            return;
+        }
 
         var maxY = Math.Max(0, _paragraphScrollViewer.Extent.Height - _paragraphScrollViewer.Viewport.Height);
-        var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + _inertiaVelocity, 0, maxY);
+        var step = _inertiaVelocity * (realDeltaMs / 1000.0);
+        var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + step, 0, maxY);
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
 
-        if (newOffset <= 0 || newOffset >= maxY) StopInertia();
+        Console.WriteLine($"[{ScrollLogTag}] inertia tick#{_inertiaTickCount} v={_inertiaVelocity:F0}px/s realDeltaMs={realDeltaMs} step={step:F1} offsetY={newOffset:F0} maxY={maxY:F0}");
+
+        if (newOffset <= 0 || newOffset >= maxY)
+        {
+            Console.WriteLine($"[{ScrollLogTag}] inertia STOP bound hit after {_inertiaTickCount} ticks");
+            StopInertia();
+        }
     }
 
     private void StopInertia()
