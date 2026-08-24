@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Avalonia.Collections;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -91,6 +92,7 @@ public partial class MainView : UserControl
     private Border? _readerProgressTrack;
     private Border? _readerProgressThumb;
     private Canvas? _chapterMarkersCanvas;
+    private ScrollMinimapControl? _scrollMinimap;
     private bool _isDraggingProgressBar;
     private double _lastDragFraction;
     private bool _isPressedOnTrack;
@@ -100,6 +102,11 @@ public partial class MainView : UserControl
     private bool _isScrollTrackingAttached;
     private bool _waitingForLayoutToAttachScrollViewer;
     private IReadOnlyList<BibleParagraph> _paragraphs = [];
+    // O(1) reference-identity lookup for FindParagraphIndex, rebuilt alongside _chapterGroups
+    // in RebuildChapterGroups. Must use ReferenceEqualityComparer, not default equality —
+    // BibleParagraph is a record (structural Equals), and FindParagraphIndex's fallback path
+    // relies on distinguishing PrepareForDisplay copies that share field values but not identity.
+    private Dictionary<BibleParagraph, int>? _paragraphIndexByRef;
     // Chapter grouping built from _paragraphs on every book load.
     // _chapterGroups[i] = all paragraphs for chapter (i+1), in order.
     private List<List<BibleParagraph>> _chapterGroups = [];
@@ -362,6 +369,8 @@ public partial class MainView : UserControl
         _readerProgressTrack = this.FindControl<Border>("ReaderProgressTrack");
         _readerProgressThumb = this.FindControl<Border>("ReaderProgressThumb");
         _chapterMarkersCanvas = this.FindControl<Canvas>("ChapterMarkersCanvas");
+        _scrollMinimap = this.FindControl<ScrollMinimapControl>("ScrollMinimap");
+        _scrollMinimap?.SetChapters(_virtualHeights, _windowStart, _windowEnd);
 
         // ── Annotation toolbar controls ──────────────────────────────────────
         _annotationSection  = this.FindControl<Border>("AnnotationSection");
@@ -790,6 +799,10 @@ public partial class MainView : UserControl
 
         _inkOverlay?.UpdateScrollOffset(_paragraphScrollViewer.Offset.Y);
         UpdateReaderProgress(_paragraphScrollViewer);
+        _scrollMinimap?.SetViewport(
+            _paragraphScrollViewer.Offset.Y,
+            _paragraphScrollViewer.Viewport.Height,
+            _paragraphScrollViewer.Extent.Height);
 
         // Don't interfere while the user is dragging the scrollbar thumb.
         if (_isDraggingProgressBar) return;
@@ -1267,6 +1280,13 @@ public partial class MainView : UserControl
             return;
 
         // Single visual-tree walk shared by both the progress thumb and verse sync.
+        // Not throttled: the thumb is a continuously-visible, per-frame-tracked element —
+        // caching this across a time window (as tried previously) freezes its position for
+        // the whole window and makes it visibly step instead of track smoothly, which reads
+        // as worse jank than the walk's own cost. FindParagraphIndex below is now O(1)
+        // (was the actual dominant per-tick cost, scaling with total paragraph count rather
+        // than the small number of realized/visible items this walk scans), so there's no
+        // longer a strong reason to throttle this at all.
         var (topParagraph, topOffset, topBodyText) = GetTopVisibleParagraphsOnce();
 
         // Position the custom thumb using paragraph-index fraction (works with
@@ -1720,11 +1740,8 @@ public partial class MainView : UserControl
 
     private int FindParagraphIndex(BibleParagraph paragraph)
     {
-        for (var i = 0; i < _paragraphs.Count; i++)
-        {
-            if (ReferenceEquals(_paragraphs[i], paragraph))
-                return i;
-        }
+        if (_paragraphIndexByRef != null && _paragraphIndexByRef.TryGetValue(paragraph, out var refIndex))
+            return refIndex;
 
         // Fallback for PrepareForDisplay copies that differ only in EffectivePoetryLevel
         // (poetry paragraphs under layout engine v2). Match by stable identity fields.
@@ -1751,6 +1768,11 @@ public partial class MainView : UserControl
         _chapterLocalTops.Clear();
         _measuredChapterHeights.Clear();
         InitializeVirtualHeights();
+
+        var index = new Dictionary<BibleParagraph, int>(_paragraphs.Count, ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < _paragraphs.Count; i++)
+            index[_paragraphs[i]] = i;
+        _paragraphIndexByRef = index;
     }
 
     /// <summary>
@@ -1770,6 +1792,8 @@ public partial class MainView : UserControl
 
     private void UpdateSpacers()
     {
+        _scrollMinimap?.SetChapters(_virtualHeights, _windowStart, _windowEnd);
+
         if (_virtualScrollPanel == null) return;
         _virtualScrollPanel.TopPadding = _topSpacerHeight;
         _virtualScrollPanel.BottomPadding = _bottomSpacerHeight;
@@ -1791,7 +1815,10 @@ public partial class MainView : UserControl
             // in _cachedStrokes while _chapterStartY is empty, causing them to render
             // with delta=0 at their old content coordinates over the new viewport.
             for (var i = _windowStart; i < _windowEnd; i++)
+            {
                 ChapterExitedWindow?.Invoke(this, i + 1);   // 1-based
+                _scrollMinimap?.FlashChapter(i + 1, entered: false);
+            }
 
             _windowedItems.Clear();
             _windowStart = 0;
@@ -1856,6 +1883,7 @@ public partial class MainView : UserControl
             added += chEst;
             DbgLog($"+ch{chapter} ↓down  est={chEst:F0}px  win={_windowStart + 1}..{_windowEnd}");
             ChapterEnteredWindow?.Invoke(this, chapter);
+            _scrollMinimap?.FlashChapter(chapter, entered: true);
         }
     }
 
@@ -1897,6 +1925,7 @@ public partial class MainView : UserControl
         DbgLog($"+ch{chapter} ↑up  [deferred anchor-compensation]  win={_windowStart + 1}..{_windowEnd}");
 
         ChapterEnteredWindow?.Invoke(this, chapter);
+        _scrollMinimap?.FlashChapter(chapter, entered: true);
     }
 
     /// <summary>
@@ -1970,6 +1999,7 @@ public partial class MainView : UserControl
         DbgLog($"-ch{chapter} ↑trim  ht={removedHeight:F0}px [{(measured.HasValue ? "meas" : "est ")}]  spacer={_topSpacerHeight:F0}px  win={_windowStart}..{_windowEnd}");
 
         ChapterExitedWindow?.Invoke(this, chapter);
+        _scrollMinimap?.FlashChapter(chapter, entered: false);
         // NOTE: no scroll offset compensation is needed here — VirtualScrollPanel.TopPadding
         // absorbs the removed height, so the extent stays put.
     }
@@ -2008,6 +2038,7 @@ public partial class MainView : UserControl
 
         DbgLog($"-ch{chapter} ↓trim  ht={removedHeight:F0}px  spacer={_bottomSpacerHeight:F0}px  win={_windowStart + 1}..{_windowEnd}");
         ChapterExitedWindow?.Invoke(this, chapter);
+        _scrollMinimap?.FlashChapter(chapter, entered: false);
     }
 
     // ── Debug overlay helpers ────────────────────────────────────────────────
@@ -2330,7 +2361,10 @@ public partial class MainView : UserControl
             // events, stale strokes stay in _cachedStrokes and render at wrong
             // positions in the new coordinate system while _chapterStartY is empty.
             for (var i = _windowStart; i < _windowEnd; i++)
+            {
                 ChapterExitedWindow?.Invoke(this, i + 1);   // 1-based
+                _scrollMinimap?.FlashChapter(i + 1, entered: false);
+            }
 
             // Rebuild window centered on target chapter.
             _windowedItems.Clear();
@@ -2349,6 +2383,7 @@ public partial class MainView : UserControl
                 _windowedItems.AddRange(_chapterGroups[_windowEnd].Select(PrepareForDisplay));
                 _windowEnd++;
                 ChapterEnteredWindow?.Invoke(this, ch);
+                _scrollMinimap?.FlashChapter(ch, entered: true);
             }
 
             // Recalculate spacer heights for the new window position.

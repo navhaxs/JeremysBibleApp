@@ -671,6 +671,22 @@
                 ZIndex="19"
                 x:Name="ChapterMarkersCanvas" />
 
+            <!--
+                Debug-only minimap: proportional whole-book strip showing loaded/unloaded
+                chapters and the current viewport position. Visual only — see
+                ScrollMinimapControl for the drawing logic and MainView.axaml.cs for wiring.
+            -->
+            <controls:ScrollMinimapControl
+                Grid.Row="2"
+                HorizontalAlignment="Right"
+                IsHitTestVisible="False"
+                IsVisible="{Binding AppVM.IsDebugMode}"
+                Margin="0,0,70,0"
+                VerticalAlignment="Stretch"
+                Width="28"
+                ZIndex="21"
+                x:Name="ScrollMinimap" />
+
         </Grid>
 
         <!--  ── Floating toolbars: chapter nav pill + annotation pill, side by side ──  -->
