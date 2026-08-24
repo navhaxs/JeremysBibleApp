@@ -169,6 +169,7 @@ public partial class MainView : UserControl
     private bool _isTouchPanning;
     private bool _isTouchPanningScrollbar;
     private Point _lastTouchPosition;
+    private Point _panStartPosition;
     private enum PanAxis { Undecided, Vertical, Horizontal }
     private PanAxis _touchPanAxis;
     private readonly List<(double Y, long Ticks)> _touchVelocitySamples = [];
@@ -190,7 +191,24 @@ public partial class MainView : UserControl
     // before layout settles used to overwrite this baseline and silently drop the
     // first extend's compensation, causing the scroll position to jump once layout
     // caught up. That race is the leading suspect for real-device jump reports.
-    private double _pendingTopExtentBeforeAdd;    // ≥ 0 → extent before up-extend; -1 = none
+    //
+    // Anchored (not extent-delta) compensation: rich-text paragraphs can take more than
+    // one layout pass to settle their wrapped height, so a single Extent.Height snapshot
+    // taken right after insert under-measures the added height and leaves a residual
+    // jump once later passes finish growing the extent. Tracking a specific realized
+    // paragraph's content-space Y (Offset.Y + its viewport-relative Y, which is invariant
+    // under Offset writes — Offset moves the viewport window, not the content) instead
+    // lets the same correction re-apply on every subsequent LayoutUpdated tick until the
+    // anchor's position stops moving, and composes safely with concurrent touch-drag
+    // Offset writes since it only ever adds the anchor's *own* measured movement.
+    private BibleParagraph? _pendingUpExtendAnchor;
+    private double _pendingUpExtendAnchorContentY;
+    private int _pendingUpExtendSettleTicks;
+    private const int PendingUpExtendMaxSettleTicks = 30; // safety cap if the anchor container is ever recycled away
+    private const double PendingUpExtendSettleEpsilon = 0.5; // px
+
+    private bool IsUpExtendPending => _pendingUpExtendAnchor != null;
+
     private bool _isApplyingWindowCompensation;   // suppresses ⚡JUMP detector during controlled compensation
 
     // RebuildParagraphTopCache recomputes each realized paragraph's absolute content-Y by
@@ -229,7 +247,7 @@ public partial class MainView : UserControl
     public MainView()
     {
         InitializeComponent();
-        _pendingTopExtentBeforeAdd = -1;
+        _pendingUpExtendAnchor = null;
 
         _footnoteTextBlock = new SelectableTextBlock { TextWrapping = TextWrapping.Wrap };
         _footnoteFlyout = new Flyout
@@ -711,23 +729,54 @@ public partial class MainView : UserControl
     private void ApplyPendingTopCompensation()
     {
         var sv = _paragraphScrollViewer;
-        if (sv == null) return;
+        if (sv == null || !IsUpExtendPending) return;
 
-        // ExtendWindowUp deferred: add the ACTUAL extent increase (beats estimate).
-        if (_pendingTopExtentBeforeAdd >= 0)
+        var anchor = _pendingUpExtendAnchor!;
+        var anchorItem = _paragraphList?.GetVisualDescendants()
+            .OfType<ListBoxItem>()
+            .FirstOrDefault(x => ReferenceEquals(x.DataContext, anchor));
+        var anchorViewportY = anchorItem?.TranslatePoint(default, sv)?.Y;
+
+        if (anchorViewportY == null)
         {
-            var extBefore = _pendingTopExtentBeforeAdd;
-            _pendingTopExtentBeforeAdd = -1;
-            var actualAdded = sv.Extent.Height - extBefore;
-            if (actualAdded > 0)
+            // Anchor container isn't realized this pass (rare — window is only a few
+            // chapters, containers should normally survive an up-extend). Give layout
+            // a few more ticks before giving up so we don't miss a late realization.
+            if (++_pendingUpExtendSettleTicks >= PendingUpExtendMaxSettleTicks)
             {
-                var newOff = sv.Offset.Y + actualAdded;
-                DbgLog($"  ↳ up-compensate    Δ=+{actualAdded:F0}px  off:{sv.Offset.Y:F0}→{newOff:F0}  (extent Δ)");
-                _isApplyingWindowCompensation = true;
-                sv.Offset = new Vector(sv.Offset.X, newOff);
-                _isApplyingWindowCompensation = false;
+                DbgLog("  ↳ up-compensate    anchor lost, giving up");
+                ClearPendingUpExtend();
             }
+            return;
         }
+
+        var newContentY = sv.Offset.Y + anchorViewportY.Value;
+        var delta = newContentY - _pendingUpExtendAnchorContentY;
+
+        if (Math.Abs(delta) > PendingUpExtendSettleEpsilon)
+        {
+            var newOff = sv.Offset.Y + delta;
+            DbgLog($"  ↳ up-compensate    Δ=+{delta:F1}px  off:{sv.Offset.Y:F0}→{newOff:F0}  (anchor Δ)");
+            _isApplyingWindowCompensation = true;
+            sv.Offset = new Vector(sv.Offset.X, newOff);
+            _isApplyingWindowCompensation = false;
+
+            _pendingUpExtendAnchorContentY = newContentY;
+            if (++_pendingUpExtendSettleTicks >= PendingUpExtendMaxSettleTicks)
+                ClearPendingUpExtend();
+        }
+        else
+        {
+            // Anchor stopped moving — layout has settled.
+            ClearPendingUpExtend();
+        }
+    }
+
+    private void ClearPendingUpExtend()
+    {
+        _pendingUpExtendAnchor = null;
+        _pendingUpExtendAnchorContentY = 0;
+        _pendingUpExtendSettleTicks = 0;
     }
 
     private void OnParagraphScrollChanged(object? sender, ScrollChangedEventArgs e)
@@ -1733,7 +1782,7 @@ public partial class MainView : UserControl
     private void ReinitializeWindow()
     {
         _isAdjustingWindow = true;
-        _pendingTopExtentBeforeAdd = -1;
+        ClearPendingUpExtend();
         _topCacheDirty = true;
         try
         {
@@ -1821,10 +1870,14 @@ public partial class MainView : UserControl
         // Refuse to re-fire while a previous up-extend's compensation is still
         // pending — CheckWindowExtend/CheckWindowBounds can both call this on
         // back-to-back scroll events (e.g. rapid touch inertia ticks) faster than
-        // LayoutUpdated settles. A second call here would overwrite
-        // _pendingTopExtentBeforeAdd's baseline and silently drop the first
-        // extend's compensation, producing a visible jump once layout catches up.
-        if (_pendingTopExtentBeforeAdd >= 0) return;
+        // LayoutUpdated settles. A second call here would overwrite the pending
+        // anchor and silently drop the first extend's compensation, producing a
+        // visible jump once layout catches up.
+        if (IsUpExtendPending) return;
+
+        // Capture the anchor BEFORE any mutation (spacer shrink or insert) so its
+        // content-space Y reflects the true pre-extend state. See ApplyPendingTopCompensation.
+        CaptureUpExtendAnchor();
 
         _topCacheDirty = true;
         _windowStart--;
@@ -1832,23 +1885,50 @@ public partial class MainView : UserControl
         var newParagraphs = _chapterGroups[_windowStart];
 
         // Chapter is leaving the top spacer — shrink it by virtual height estimate.
-        // Any difference between virtual and actual is handled by extent-delta compensation below.
+        // Any difference between virtual and actual is handled by anchor compensation below.
         if (_windowStart < _virtualHeights.Length)
         {
             _topSpacerHeight = Math.Max(0, _topSpacerHeight - _virtualHeights[_windowStart]);
             UpdateSpacers();
         }
 
-        // Snapshot extent BEFORE insert so LayoutUpdated can compute actual added height.
-        // Using actual extent delta eliminates the paragraphCount×60px estimation error
-        // (which is 10–100× wrong for short Psalms chapters or Psalms 119 at 22 500px).
-        _pendingTopExtentBeforeAdd = _paragraphScrollViewer.Extent.Height;
-
         _windowedItems.InsertRange(0, newParagraphs.Select(PrepareForDisplay));
 
-        DbgLog($"+ch{chapter} ↑up  [deferred extent-compensation]  win={_windowStart + 1}..{_windowEnd}");
+        DbgLog($"+ch{chapter} ↑up  [deferred anchor-compensation]  win={_windowStart + 1}..{_windowEnd}");
 
         ChapterEnteredWindow?.Invoke(this, chapter);
+    }
+
+    /// <summary>
+    /// Records the topmost realized paragraph and its content-space Y (Offset.Y + its
+    /// viewport-relative Y) right before an up-extend mutation, so ApplyPendingTopCompensation
+    /// can measure exactly how far that paragraph's real position moves as layout settles.
+    /// </summary>
+    private void CaptureUpExtendAnchor()
+    {
+        var sv = _paragraphScrollViewer;
+        if (sv == null || _paragraphList == null) return;
+
+        BibleParagraph? bestParagraph = null;
+        double bestViewportY = double.MaxValue;
+
+        foreach (var item in _paragraphList.GetVisualDescendants().OfType<ListBoxItem>())
+        {
+            if (item.DataContext is not BibleParagraph paragraph) continue;
+            var viewportY = item.TranslatePoint(default, sv)?.Y;
+            if (viewportY == null) continue;
+            if (viewportY.Value < bestViewportY)
+            {
+                bestViewportY = viewportY.Value;
+                bestParagraph = paragraph;
+            }
+        }
+
+        if (bestParagraph == null) return; // nothing realized yet — leave IsUpExtendPending false
+
+        _pendingUpExtendAnchor = bestParagraph;
+        _pendingUpExtendAnchorContentY = sv.Offset.Y + bestViewportY;
+        _pendingUpExtendSettleTicks = 0;
     }
 
     /// <summary>
@@ -2044,14 +2124,14 @@ public partial class MainView : UserControl
             }
 
             // Extend down: skip when top-extent compensation is pending (would inflate actualAdded).
-            if (_pendingTopExtentBeforeAdd < 0 &&
+            if (!IsUpExtendPending &&
                 _windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
             {
                 ExtendWindowDown(vpHeight * 3);
             }
 
             // Trim top: mutually exclusive with the ExtendWindowUp condition above, but guard for safety.
-            if (_pendingTopExtentBeforeAdd < 0 && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
+            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * 5)
             {
                 bool safeToTrimTop = false;
                 if (_chapterStartY.Count > 0)
@@ -2064,7 +2144,7 @@ public partial class MainView : UserControl
             }
 
             // Trim bottom: could contaminate extent snapshot if ExtendWindowUp also fired this pass.
-            if (_pendingTopExtentBeforeAdd < 0 && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
+            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * 5)
             {
                 bool safeToTrimBottom = false;
                 if (_chapterStartY.Count > 0)
@@ -2121,7 +2201,7 @@ public partial class MainView : UserControl
                 // Skip when a top-extend compensation is pending — both would run before the same
                 // LayoutUpdated, inflating the actualAdded extent delta and overcorrecting offset.
                 var needBelow = bottomVisible + 1;       // 1-based
-                if (_pendingTopExtentBeforeAdd < 0 && needBelow <= _chapterGroups.Count && (needBelow - 1) >= _windowEnd)
+                if (!IsUpExtendPending && needBelow <= _chapterGroups.Count && (needBelow - 1) >= _windowEnd)
                 {
                     ExtendWindowDown(1);                 // targetHeight=1 → adds exactly one chapter
                 }
@@ -2134,7 +2214,7 @@ public partial class MainView : UserControl
                 {
                     ExtendWindowUp();
                 }
-                if (_pendingTopExtentBeforeAdd < 0 && _windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
+                if (!IsUpExtendPending && _windowEnd < _chapterGroups.Count && contentBottom - scrollBottom < vpHeight)
                 {
                     ExtendWindowDown(vpHeight * 3);
                 }
@@ -2241,7 +2321,7 @@ public partial class MainView : UserControl
         if (groupIdx >= _windowStart && groupIdx < _windowEnd) return;
 
         _isAdjustingWindow = true;
-        _pendingTopExtentBeforeAdd = -1;
+        ClearPendingUpExtend();
         _topCacheDirty = true;
         try
         {
@@ -2744,6 +2824,7 @@ public partial class MainView : UserControl
         _isTouchPanning = true;
         _touchPanAxis = PanAxis.Undecided;
         _lastTouchPosition = GetStablePanPosition(e);
+        _panStartPosition = _lastTouchPosition;
 
         // Capture immediately only in the margin (no tapable content there).
         // Text body: defer capture to OnMarginTouchMoved once movement is confirmed,
@@ -2812,16 +2893,25 @@ public partial class MainView : UserControl
         var deltaX = _lastTouchPosition.X - currentPos.X;
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
 
-        if (_touchPanAxis == PanAxis.Undecided && (Math.Abs(deltaX) > 8 || Math.Abs(deltaY) > 8))
+        if (_touchPanAxis == PanAxis.Undecided)
         {
-            // Vertical-first: only a near-horizontal swipe (within ~20° of horizontal) triggers H-scroll.
-            // K=2.75 means deltaX must be >2.75× deltaY; lower = easier to trigger H.
-            const double HScrollBias = 2.75;
-            _touchPanAxis = (_hScrollLocked || Math.Abs(deltaX) <= Math.Abs(deltaY) * HScrollBias)
-                ? PanAxis.Vertical
-                : PanAxis.Horizontal;
-            // Capture here for text-body touches (margin captures on press; calling again is a no-op).
-            e.Pointer.Capture(_inkAreaGrid);
+            // Compare against the press-down point, not the previous move event: a slow drag
+            // arrives as many small per-event deltas that individually never clear the threshold,
+            // so gating on per-event delta effectively never decides an axis. Total displacement
+            // since press is what "has the finger moved far enough" actually means.
+            var totalDeltaX = _panStartPosition.X - currentPos.X;
+            var totalDeltaY = _panStartPosition.Y - currentPos.Y;
+            if (Math.Abs(totalDeltaX) > 8 || Math.Abs(totalDeltaY) > 8)
+            {
+                // Vertical-first: only a near-horizontal swipe (within ~20° of horizontal) triggers H-scroll.
+                // K=2.75 means deltaX must be >2.75× deltaY; lower = easier to trigger H.
+                const double HScrollBias = 2.75;
+                _touchPanAxis = (_hScrollLocked || Math.Abs(totalDeltaX) <= Math.Abs(totalDeltaY) * HScrollBias)
+                    ? PanAxis.Vertical
+                    : PanAxis.Horizontal;
+                // Capture here for text-body touches (margin captures on press; calling again is a no-op).
+                e.Pointer.Capture(_inkAreaGrid);
+            }
         }
 
         if (_touchPanAxis == PanAxis.Horizontal && _contentHScrollContainer != null)
