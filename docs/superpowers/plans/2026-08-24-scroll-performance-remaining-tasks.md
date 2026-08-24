@@ -55,6 +55,7 @@ unnecessary.
 | `b0fbbdd` | Record-identity measurement bug; time-based inertia; minimap coordinate space; `MBA_SCROLL` logging |
 | `e7900f3` | Task 1 — defer chapter window work during momentum coasts |
 | `8010c76` | Task 3 — reject stale and outlier samples when launching inertia |
+| `359bde4` | Minimap viewport band drifting outside the loaded region (two bugs — see task 8) |
 
 Task numbers below are kept stable even once done, since they are referred to by number
 elsewhere. Check the status line on each.
@@ -197,3 +198,79 @@ pixel extent), so switching only the *decision* thresholds may not be sufficient
 The live-tunable `_trimThresholdMultiplier` (default 10) and `_idlePreloadTargetMultiplier`
 (default 3.5) are exposed as `NumericUpDown` controls in the Scroll Debug overlay, so they can
 be swept on-device without a rebuild.
+
+### 8. Minimap viewport band outside the loaded region — DONE (`359bde4`), VERIFIED on device
+
+Two independent bugs, found in sequence:
+
+1. **Stale/missing window notification.** `UpdateSpacers` was the only thing telling the minimap
+   `_windowStart`/`_windowEnd`, and it runs *before* the index update in `TrimWindowTop` and
+   `ExtendWindowDown`, and is skipped entirely inside a guard in `ExtendWindowUp`/`Down`. Fixed
+   by carrying the window range on `ScrollMinimapControl.SetViewport`, called every scroll tick
+   where it's always current, instead of on the mutation-triggered `SetChapterHeights`.
+2. **`RenderTargetBitmap` DPI mismatch.** After fix 1, `MBA_MINIMAP` diagnostics showed the band
+   and strip agreeing numerically (same total height, same chapter count, same window, band
+   computed strictly inside the loaded range) while the device screen still showed the band
+   outside the blue. The mismatch was in `DrawImage`'s blit of the cached bitmap at this
+   device's DPI, not in the coordinate math. Fixed by dropping the `RenderTargetBitmap` cache
+   entirely and drawing the strip directly every frame — cheap enough now that coast-deferral
+   (task 1) keeps window mutation off the scroll path.
+
+`MBA_MINIMAP` logging is kept in as a permanent low-cost tripwire for bug 1's class of issue.
+
+## Lessons & process notes
+
+Generalizable takeaways from this session, not tied to a specific task above.
+
+- **A `record`'s structural equality can silently break dictionary lookups keyed by the
+  original object, and knowing about the hazard once does not protect every call site.** This
+  codebase already had the fix pattern documented — `_paragraphIndexByRef` explicitly uses
+  `ReferenceEqualityComparer` with a comment explaining why — but three other lookups
+  (`_paragraphChapterInfo` used in four places) used the default comparer against the same
+  `record` type and broke the same way. When a hazard like this is found, audit *every* lookup
+  against that type, not just the one that surfaced the bug.
+
+- **Numeric agreement between two computations does not guarantee visual agreement.** The
+  minimap band and strip could log identical inputs and a mathematically-correct relationship
+  while still rendering in visibly different places, because a caching/blit layer
+  (`RenderTargetBitmap` + `DrawImage`) introduced a device-specific DPI mismatch downstream of
+  the math. When two things "should" line up and don't on a real device, suspect the *last*
+  rendering/serialization step before the pixels, not just the numbers feeding it — and be
+  willing to log the actual output geometry (as `MBA_MINIMAP` did), not just the inputs.
+
+- **A fixed decay-per-callback model breaks silently when the callback itself is delayed.** The
+  original inertia applied a fixed friction factor per `DispatcherTimer` tick, assuming ticks
+  arrive on their nominal interval. When a chapter-load stall delayed a tick, the same *number*
+  of decay steps still had to elapse before stopping, but now spread over however long the
+  stalled ticks actually took — turning a sub-second coast into a 10+ second one. The fix
+  (`b0fbbdd`) scales every step by the real elapsed time since the last tick, not by tick count.
+  General shape of the bug: assuming wall-clock time per event when only event *count* is
+  guaranteed.
+
+- **On-device diagnostics prevented at least two actively-harmful fixes.** The `MBA_SCROLL`/
+  `MBA_STARTUP`/`MBA_MINIMAP` logging repeatedly turned a plausible hypothesis into a *tested*
+  one before code changed: the "estimator is 27x wrong" theory (actually a symptom of the
+  record-identity bug — the real estimator error was ~1.15-1.8x) and "raise the 200ms inertia
+  bailout" (would have restored the runaway-scroll bug it was added to prevent) were both live
+  candidates that logged evidence ruled out. When a fix is tempting but its assumptions haven't
+  been measured, add the log line before writing the fix.
+
+- **Fixes can be load-bearing on each other's assumptions.** Task 1's coast-deferral relies on
+  "a coast cannot travel further than ~780px," which is only true because of task 3's 6000px/s
+  velocity clamp and the ~130ms decay constant. Raising that clamp later without re-checking the
+  deferral's edge margin would silently reintroduce the bug task 1 fixed. When two fixes share a
+  derived constant, say so explicitly in both places (done here in the doc and in code comments)
+  so a future change doesn't touch one without the other.
+
+- **Re-rank remaining work after each fix lands, don't fix the priority order upfront.** Task 2
+  (dead extend gates) was originally the second-highest priority because chapter-load stalls
+  were cutting flings short; once task 1 removed that coupling, task 2's urgency dropped and
+  task 4 (`StrokePoint` JSON, unrelated to scrolling) became the largest measured cost. The
+  ranking is a function of what's already fixed, not a fixed list.
+
+- **Small magic-number constants should come from logged real-world data, not intuition.** The
+  200ms inertia bailout, 120ms sample-age window, 6000px/s velocity clamp, and 32ms slow-layout
+  threshold were all set by looking at what the device actually produced (tick timings, launch
+  velocities, layout pass durations) rather than picked as round numbers. Constants derived this
+  way carry their justification in the same commit as the number, which is what makes them safe
+  to revisit later — the numbers above and in tasks 1/3 show the pattern.
