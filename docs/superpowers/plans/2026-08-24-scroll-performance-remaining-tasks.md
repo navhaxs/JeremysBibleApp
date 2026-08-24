@@ -61,7 +61,12 @@ elsewhere. Check the status line on each.
 
 ## Remaining tasks
 
-### 1. Flings get cut short — DONE (`e7900f3`), awaiting device verification
+### 1. Flings get cut short — DONE (`e7900f3`), VERIFIED on device
+
+Post-fix log: **zero** `inertia ABANDONED` across the whole session (was 4 in a 10s window).
+Every coast reaches `inertia STOP decayed` after 19-32 ticks, mostly at `realDeltaMs=16`
+(clean 60fps). Chapter ops land after `coast ended` lines as intended — e.g. `+ch7` at
+19:08:19.101 following a coast that ended at 19:08:18.958.
 
 **Symptom.** Four `inertia ABANDONED` events in a 10-second scroll log, at
 `realDeltaMs=424/564/408/720`. The 200ms bailout added in `b0fbbdd` is working as designed, but
@@ -96,7 +101,15 @@ Alternatives considered and their tradeoffs:
 - *Template slimming* to make each op cheaper: real but medium-effort, and the per-op cost would
   still likely exceed 200ms.
 
-### 2. Dead extend gates
+### 2. Dead extend gates — priority DOWNGRADED after task 1 shipped
+
+Originally expected to matter because chapter-load stalls were cutting flings short. Task 1
+removed that coupling: loads now happen between coasts, so a stall no longer damages a glide.
+What remains is a ~300-460ms stutter when a chapter does load (`+ch7` → `gap=464ms`).
+
+Batching would trade several short stalls for fewer longer ones, which is a much less clear win
+than it looked before task 1. Worth doing for tidiness and for the correctness of the
+`contentBottom` value itself, but no longer urgent.
 
 `contentBottom` is `Extent.Height` at `MainView.axaml.cs:2289` (also `:2434`, `:2389`), which
 **includes the bottom spacer**. So `contentBottom - scrollBottom < vpHeight` compares against
@@ -110,7 +123,10 @@ Alternatives considered and their tradeoffs:
 Needs a chapter cap on the loop when the bulk path goes live, or one op will load many chapters
 and produce a single long stall.
 
-### 3. Velocity sampling is noisy and stale — DONE (`8010c76`), awaiting device verification
+### 3. Velocity sampling is noisy and stale — DONE (`8010c76`), VERIFIED on device
+
+Post-fix log: every launch is 1360-2738px/s over a 44-65ms span, all using 5 of 5 samples and
+4 intervals. No outlier spikes, no stale windows, nothing approaching the 6000px/s clamp.
 
 `inertia START v0=10758px/s (2 samples over 27ms)` — a single large post-stall `ScrollChanged`
 delta divided by a tiny dt. Also `v0=552px/s (3 samples over 488ms)`, a window far too wide to
@@ -129,7 +145,12 @@ depends on. Raising it without re-checking that assumption would undermine the d
 survived filtering — no launch should exceed 6000px/s, and holding still before release should
 produce no fling at all.
 
-### 4. `StrokePoint` JSON size (user wants this in a separate worktree)
+### 4. `StrokePoint` JSON size — now the largest remaining cost (separate worktree)
+
+Latest startup log: total 7.4s to hide the overlay, of which
+`JournalStore.LoadEntriesAsync: read=223ms deserialize=4034ms` is by far the biggest single
+item. Every other startup phase is now sub-second (book parse 958ms for Psalms' 6307 paragraphs,
+journal strokes 2ms thanks to the `5beb421` cache). This is the next real win.
 
 `journals.json` is **17.9MB** for 5 journals / 4659 ink strokes — ~3.8KB per stroke. Logged
 breakdown: 252ms disk read, **4065ms deserialize**, migration not involved (`dirty=False`).
