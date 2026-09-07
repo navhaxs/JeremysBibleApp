@@ -42,6 +42,13 @@ public class AppViewModel : ViewModelBase, IDisposable
     private IReadOnlyList<string> _syncDebugLogs = [];
     private IReadOnlyList<string> _debugLogOverlayLines = [];
     private readonly ObservableCollection<string> _debugLogOverlayItems = [];
+    private readonly TranslationManager _translationManager = TranslationManager.Instance;
+    private readonly UsxZipImportService _importService = new();
+    private readonly ObservableCollection<TranslationListItem> _installedTranslations = [];
+    private string _activeTranslationId = TranslationManager.BsbOnlineId;
+    private PreparedTranslationImport? _pendingImport;
+    private string _pendingImportDisplayName = string.Empty;
+    private string _pendingImportSourceZipName = string.Empty;
 
     public AppViewModel()
     {
@@ -200,6 +207,185 @@ public class AppViewModel : ViewModelBase, IDisposable
                 });
         }
         catch { /* best-effort */ }
+    }
+
+    // ── Translations ─────────────────────────────────────────────────────────
+
+    public ObservableCollection<TranslationListItem> InstalledTranslations => _installedTranslations;
+
+    public string ActiveTranslationId
+    {
+        get => _activeTranslationId;
+        set
+        {
+            if (_activeTranslationId == value) return;
+            this.RaiseAndSetIfChanged(ref _activeTranslationId, value);
+            _ = _translationManager.SetActiveTranslationIdAsync(value);
+        }
+    }
+
+    /// <summary>
+    /// Updates <see cref="ActiveTranslationId"/> and awaits the underlying persistence call.
+    /// Use this (rather than the <see cref="ActiveTranslationId"/> setter) from any call site
+    /// that immediately depends on the new active translation being durably saved before it
+    /// re-reads it — e.g. triggering a book reload right after switching translations. The
+    /// property setter itself stays fire-and-forget so it remains usable from XAML/simple
+    /// assignment sites that don't need to await the save.
+    /// </summary>
+    public async Task SetActiveTranslationIdAsync(string value)
+    {
+        if (_activeTranslationId == value) return;
+        this.RaiseAndSetIfChanged(ref _activeTranslationId, value);
+        await _translationManager.SetActiveTranslationIdAsync(value);
+    }
+
+    public bool HasPendingImportWarning => _pendingImport != null && _pendingImport.MissingBookCodes.Count > 0;
+
+    public IReadOnlyList<string> PendingImportMissingBooks => _pendingImport?.MissingBookCodes ?? [];
+
+    public async Task LoadTranslationsFromStorageAsync()
+    {
+        // Best-effort, like every sibling Load*FromStorageAsync: this runs during startup
+        // restore (fire-and-forget), so a throw here would abort the caller before it can
+        // clear the startup overlay. Fall back to BSB-online defaults instead.
+        try
+        {
+            var storedActiveId = await _translationManager.GetActiveTranslationIdAsync();
+            await RefreshTranslationsAsync();
+
+            // Guard against a dangling active-translation id — the translation folder may
+            // have been deleted (here or on another device) while the id stayed persisted.
+            // Without this, every book load throws FileNotFoundException with no recovery,
+            // and the bad id survives restart because it is read back unvalidated.
+            var installedIds = await Dispatcher.UIThread.InvokeAsync(
+                () => _installedTranslations.Select(t => t.Id).ToList());
+            if (storedActiveId != TranslationManager.BsbOnlineId && !installedIds.Contains(storedActiveId))
+            {
+                storedActiveId = TranslationManager.BsbOnlineId;
+                await _translationManager.SetActiveTranslationIdAsync(storedActiveId);
+            }
+
+            _activeTranslationId = storedActiveId;
+            await Dispatcher.UIThread.InvokeAsync(() => this.RaisePropertyChanged(nameof(ActiveTranslationId)));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppViewModel] LoadTranslationsFromStorageAsync failed: {ex.Message}");
+            AppendSyncDebugLog($"LoadTranslationsFromStorageAsync error: {ex.Message}");
+            _activeTranslationId = TranslationManager.BsbOnlineId;
+            await Dispatcher.UIThread.InvokeAsync(() => this.RaisePropertyChanged(nameof(ActiveTranslationId)));
+        }
+    }
+
+    public async Task RefreshTranslationsAsync()
+    {
+        var installed = await _translationManager.GetInstalledTranslationsAsync();
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            // Preserve any in-progress rename edit (IsRenaming/PendingName) across the rebuild —
+            // this method rebuilds the whole collection with brand-new TranslationListItem
+            // instances even when called for an unrelated translation's delete/import/rename,
+            // so without this, editing translation A's name while deleting translation B would
+            // silently discard A's edit.
+            var previousById = _installedTranslations.ToDictionary(item => item.Id);
+            _installedTranslations.Clear();
+            foreach (var t in installed)
+            {
+                var item = new TranslationListItem(t);
+                if (previousById.TryGetValue(t.Id, out var previous) && previous.IsRenaming)
+                {
+                    item.PendingName = previous.PendingName;
+                    item.IsRenaming = true;
+                }
+                _installedTranslations.Add(item);
+            }
+        });
+    }
+
+    public async Task<Result> PrepareTranslationImportAsync(string zipFilePath, string sourceZipName, string displayName)
+    {
+        // Discard any still-pending import before overwriting it — otherwise picking a second
+        // ZIP (or closing Settings while the missing-books warning is up) leaks the first
+        // import's staging directory under %TEMP%\MyBibleAppImport_* until reboot.
+        CancelPendingImport();
+
+        try
+        {
+            var canonicalCodes = BibleContentService.LoadBookCodesFromAsset().ToList();
+            // ZIP decompression + XML parsing of every book (archives can be ~200MB) must not
+            // run inline: this is called straight from a button click on the UI thread.
+            var prepared = await Task.Run(() => _importService.PrepareImport(zipFilePath, canonicalCodes));
+
+            _pendingImport = prepared;
+            _pendingImportDisplayName = displayName;
+            _pendingImportSourceZipName = sourceZipName;
+            this.RaisePropertyChanged(nameof(HasPendingImportWarning));
+            this.RaisePropertyChanged(nameof(PendingImportMissingBooks));
+
+            if (prepared.MissingBookCodes.Count == 0)
+                return await ConfirmPendingImportInternalAsync();
+
+            return Result.Success();
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure($"Import failed: {ex.Message}");
+        }
+    }
+
+    public Task<Result> ConfirmPendingImportAsync() => ConfirmPendingImportInternalAsync();
+
+    private async Task<Result> ConfirmPendingImportInternalAsync()
+    {
+        if (_pendingImport == null) return Result.Failure("No pending import.");
+
+        try
+        {
+            await _importService.CommitImportAsync(_pendingImport, _translationManager.GetTranslationsRootForCommit(), _pendingImportDisplayName, _pendingImportSourceZipName);
+            ClearPendingImport();
+            await RefreshTranslationsAsync();
+            return Result.Success();
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure($"Failed to finish import: {ex.Message}");
+        }
+    }
+
+    public void CancelPendingImport()
+    {
+        if (_pendingImport == null) return;
+        _importService.CancelImport(_pendingImport);
+        ClearPendingImport();
+    }
+
+    private void ClearPendingImport()
+    {
+        _pendingImport = null;
+        _pendingImportDisplayName = string.Empty;
+        _pendingImportSourceZipName = string.Empty;
+        this.RaisePropertyChanged(nameof(HasPendingImportWarning));
+        this.RaisePropertyChanged(nameof(PendingImportMissingBooks));
+    }
+
+    public async Task<Result> DeleteTranslationAsync(string translationId)
+    {
+        var result = await _translationManager.DeleteTranslationAsync(translationId);
+        if (result.IsSuccess)
+        {
+            if (ActiveTranslationId == translationId)
+                ActiveTranslationId = TranslationManager.BsbOnlineId;
+            await RefreshTranslationsAsync();
+        }
+        return result;
+    }
+
+    public async Task<Result> RenameTranslationAsync(string translationId, string newName)
+    {
+        var result = await _translationManager.RenameTranslationAsync(translationId, newName);
+        if (result.IsSuccess)
+            await RefreshTranslationsAsync();
+        return result;
     }
 
     // ── Sync Status ──────────────────────────────────────────────────────────
@@ -814,6 +1000,10 @@ public class AppViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         StopSyncStatusTimer();
+
+        // Don't leave a staged import's temp directory behind if the app shuts down
+        // while the missing-books confirmation is still pending.
+        CancelPendingImport();
 
         if (_syncCoordinator != null)
         {

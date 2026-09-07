@@ -49,10 +49,13 @@ public sealed class JournalFlyoutViewModel : ViewModelBase
 
     public async Task CreateJournalAsync(string name, string bookCode, int chapter)
     {
+        // Stamp the journal with the translation it was written against so reopening it
+        // restores that translation (mirrors AppShellView.OnSaveAsJournalRequested).
+        var activeTranslationId = await TranslationManager.Instance.GetActiveTranslationIdAsync();
         var request = new JournalCreateRequest
         {
             Name = name,
-            TranslationId = "",
+            TranslationId = activeTranslationId,
             TranslationVersionDate = "",
             ContentHash = "",
             BookCode = bookCode,

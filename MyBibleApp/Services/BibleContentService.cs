@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,8 +10,8 @@ using MyBibleApp.Models;
 namespace MyBibleApp.Services;
 
 /// <summary>
-/// Singleton service that owns the Bible content loader and manages background
-/// prefetching of all books on app startup.
+/// Singleton service that owns the Bible content loaders (BSB online + any imported
+/// translations) and manages background prefetching of BSB books on app startup.
 /// </summary>
 internal sealed class BibleContentService
 {
@@ -20,6 +21,7 @@ internal sealed class BibleContentService
         new(Create, LazyThreadSafetyMode.ExecutionAndPublication);
 
     private readonly UsxBibleApiLoader _apiLoader;
+    private readonly ConcurrentDictionary<string, UsxBibleZipLoader> _zipLoaders = new();
     private readonly CancellationTokenSource _prefetchCts = new();
 
     private BibleContentService(UsxBibleApiLoader apiLoader)
@@ -29,11 +31,18 @@ internal sealed class BibleContentService
 
     public static BibleContentService Instance => SharedInstance.Value;
 
-    public Task<BibleBook> LoadBookAsync(string bookCode) =>
-        _apiLoader.LoadFromApiAsync(bookCode);
+    public Task<BibleBook> LoadBookAsync(string bookCode, string translationId)
+    {
+        if (translationId == TranslationManager.BsbOnlineId)
+            return _apiLoader.LoadFromApiAsync(bookCode);
+
+        var loader = _zipLoaders.GetOrAdd(translationId, id =>
+            new UsxBibleZipLoader(TranslationManager.Instance.GetTranslationFolder(id), new UsxBibleParser()));
+        return loader.LoadBookAsync(bookCode);
+    }
 
     /// <summary>
-    /// Starts background prefetch of all books. Safe to call multiple times —
+    /// Starts background prefetch of all BSB books. Safe to call multiple times —
     /// only the first call has any effect.
     /// </summary>
     public void StartPrefetch(IEnumerable<string> bookCodes) =>
@@ -47,7 +56,7 @@ internal sealed class BibleContentService
         return service;
     }
 
-    private static IEnumerable<string> LoadBookCodesFromAsset()
+    internal static IEnumerable<string> LoadBookCodesFromAsset()
     {
         try
         {

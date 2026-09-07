@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using Avalonia.Collections;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -17,6 +19,7 @@ using Avalonia.Input.GestureRecognizers;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -336,6 +339,12 @@ public partial class MainView : UserControl
         _themeSwatchPanel  = this.FindControl<StackPanel>("ThemeSwatchPanel");
         _splitViewToggle  = this.FindControl<ToggleButton>("SplitViewToggle");
         _headerLookupButton = this.FindControl<Button>("HeaderLookupButton");
+
+        // Re-sync the checked translation RadioButton every time the Settings flyout opens —
+        // by then its content (including the ItemsControl-generated per-translation radios)
+        // is guaranteed to be realized in the visual tree. See UpdateTranslationRadioSelection.
+        if (_appMenuButton?.Flyout is Flyout appMenuFlyout)
+            appMenuFlyout.Opened += (_, _) => UpdateTranslationRadioSelection();
 
         if (_isSecondaryPane)
         {
@@ -2962,6 +2971,133 @@ public partial class MainView : UserControl
         }
     }
 
+    /// <summary>
+    /// Ensures the checked translation RadioButton in the Settings flyout matches
+    /// AppVM.ActiveTranslationId. Avalonia has no built-in "checked-by-value" radio binding, so
+    /// this mirrors the same code-behind "recompute the selected UI state" approach already used
+    /// for theme selection (see BuildThemeSwatches/OnThemeSwatchClick) rather than introducing a
+    /// new converter. Safe to call whether or not the flyout/ItemsControl content has been
+    /// realized yet — it simply finds nothing and is a no-op in that case.
+    /// </summary>
+    private void UpdateTranslationRadioSelection()
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+        if (_appMenuButton?.Flyout is not Flyout { Content: Control flyoutContent }) return;
+
+        var activeId = vm.AppVM.ActiveTranslationId;
+        var match = flyoutContent.GetVisualDescendants()
+            .OfType<RadioButton>()
+            .FirstOrDefault(r => r.GroupName == "TranslationSelector" && (r.Tag as string) == activeId);
+        if (match != null)
+            match.IsChecked = true;
+    }
+
+    private async void OnTranslationRadioClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton { Tag: string translationId }) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        // Await the persist before reloading — TryLoadBookFromApiAsync re-reads the active
+        // translation from disk (TranslationManager.GetActiveTranslationIdAsync), so if the save
+        // hasn't landed yet, the reload can race and pick up the previous translation's content.
+        await vm.AppVM.SetActiveTranslationIdAsync(translationId);
+        _ = vm.TryLoadBookFromApiAsync(vm.BookCode, vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+    }
+
+    private async void OnImportTranslationClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider is not { } storageProvider) return;
+
+        var files = await storageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import Translation ZIP",
+            AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("ZIP archive") { Patterns = ["*.zip"] }]
+        });
+
+        if (files.Count == 0) return;
+
+        var file = files[0];
+        var displayName = Path.GetFileNameWithoutExtension(file.Name);
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"import_{Guid.NewGuid():N}.zip");
+
+        try
+        {
+            await using (var stream = await file.OpenReadAsync())
+            await using (var fileStream = File.Create(tempZipPath))
+                await stream.CopyToAsync(fileStream);
+
+            var result = await vm.AppVM.PrepareTranslationImportAsync(tempZipPath, file.Name, displayName);
+            if (!result.IsSuccess)
+                vm.Status = $"Import failed: {result.ErrorMessage}";
+            else if (!vm.AppVM.HasPendingImportWarning)
+                vm.Status = $"Imported \"{displayName}\".";
+        }
+        catch (Exception ex)
+        {
+            vm.Status = $"Import failed: {ex.Message}";
+        }
+        finally
+        {
+            try { File.Delete(tempZipPath); } catch { /* best-effort cleanup */ }
+        }
+    }
+
+    private async void OnConfirmImportClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+        var result = await vm.AppVM.ConfirmPendingImportAsync();
+        vm.Status = result.IsSuccess ? "Translation imported." : $"Failed to import: {result.ErrorMessage}";
+    }
+
+    private void OnCancelImportClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ScriptureViewModel vm) return;
+        vm.AppVM.CancelPendingImport();
+    }
+
+    private async void OnDeleteTranslationClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string translationId }) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        var result = await vm.AppVM.DeleteTranslationAsync(translationId);
+        vm.Status = result.IsSuccess ? "Translation deleted." : $"Failed to delete: {result.ErrorMessage}";
+    }
+
+    private void OnRenameTranslationClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TranslationListItem item }) return;
+        item.PendingName = item.DisplayName;
+        item.IsRenaming = true;
+    }
+
+    private async void OnSaveRenameClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TranslationListItem item }) return;
+        if (DataContext is not ScriptureViewModel vm) return;
+
+        var newName = item.PendingName;
+        var result = await vm.AppVM.RenameTranslationAsync(item.Id, newName);
+        vm.Status = result.IsSuccess ? "Translation renamed." : $"Failed to rename: {result.ErrorMessage}";
+        // On success, RenameTranslationAsync's RefreshTranslationsAsync rebuilds the whole
+        // InstalledTranslations collection with fresh TranslationListItem instances (IsRenaming
+        // defaults to false), so this item's editing state is discarded either way — no need to
+        // explicitly reset IsRenaming here on the success path. On failure, reset explicitly:
+        if (!result.IsSuccess)
+            item.IsRenaming = false;
+    }
+
+    private void OnCancelRenameClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: TranslationListItem item }) return;
+        item.PendingName = item.DisplayName;
+        item.IsRenaming = false;
+    }
+
     /// <summary>Apply the given theme: set variant + resource overrides.</summary>
     public void ApplyTheme(Models.AppTheme theme)
     {
@@ -2989,17 +3125,30 @@ public partial class MainView : UserControl
         if (_watchedAppVM != null)
         {
             _watchedAppVM.PropertyChanged -= OnAppVMPropertyChanged;
+            _watchedAppVM.InstalledTranslations.CollectionChanged -= OnInstalledTranslationsCollectionChanged;
             _watchedAppVM = null;
         }
         if (DataContext is ScriptureViewModel vm)
         {
             _watchedAppVM = vm.AppVM;
             vm.AppVM.PropertyChanged += OnAppVMPropertyChanged;
+            vm.AppVM.InstalledTranslations.CollectionChanged += OnInstalledTranslationsCollectionChanged;
         }
     }
 
     private void OnAppVMPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(AppViewModel.ActiveTranslationId))
+            Dispatcher.UIThread.Post(UpdateTranslationRadioSelection, DispatcherPriority.Loaded);
+    }
+
+    // RefreshTranslationsAsync rebuilds InstalledTranslations with brand-new TranslationListItem
+    // instances (see AppViewModel.RefreshTranslationsAsync), which replaces the ItemsControl's
+    // generated RadioButtons — re-sync the checked state afterward so the active translation
+    // stays visually selected across imports/deletes/renames of other rows while Settings is open.
+    private void OnInstalledTranslationsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(UpdateTranslationRadioSelection, DispatcherPriority.Loaded);
     }
 
     private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)
