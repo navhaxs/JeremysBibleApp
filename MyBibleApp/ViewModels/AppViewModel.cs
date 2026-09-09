@@ -17,6 +17,7 @@ public class AppViewModel : ViewModelBase, IDisposable
     private const string DebugModeKey = "IsDebugMode";
     private const string TabBarVisibleKey = "IsTabBarVisible";
     private const string ThemeKey = "SelectedThemeId";
+    private const string InfiniteScrollEnabledKey = "IsInfiniteScrollEnabled";
     private const int DebugOverlayMaxLines = 12;
 
     private readonly ISyncCoordinator? _syncCoordinator;
@@ -27,6 +28,7 @@ public class AppViewModel : ViewModelBase, IDisposable
 
     private bool _isDebugMode;
     private bool _isTabBarVisible = true;
+    private bool _isInfiniteScrollEnabled = true;
     private bool _isSyncing;
     private bool _isAuthenticated;
     private bool _isAuthenticating;
@@ -163,6 +165,50 @@ public class AppViewModel : ViewModelBase, IDisposable
                 if (string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase))
                     _isTabBarVisible = false;
                 this.RaisePropertyChanged(nameof(IsTabBarVisible));
+            });
+        }
+        catch { /* best-effort */ }
+    }
+
+    // ── Infinite Scroll (cross-chapter continuous scrolling) ────────────────────
+
+    public bool IsInfiniteScrollEnabled
+    {
+        get => _isInfiniteScrollEnabled;
+        set
+        {
+            var old = _isInfiniteScrollEnabled;
+            this.RaiseAndSetIfChanged(ref _isInfiniteScrollEnabled, value);
+            if (old != _isInfiniteScrollEnabled)
+                _ = PersistInfiniteScrollEnabledAsync(_isInfiniteScrollEnabled);
+        }
+    }
+
+    private async Task PersistInfiniteScrollEnabledAsync(bool value)
+    {
+        if (_localStorageProvider == null) return;
+        try
+        {
+            await _localStorageProvider.SaveAsync(InfiniteScrollEnabledKey, value ? "true" : "false").ConfigureAwait(false);
+        }
+        catch { /* best-effort */ }
+    }
+
+    public async Task LoadInfiniteScrollEnabledFromStorageAsync()
+    {
+        if (_localStorageProvider == null)
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => this.RaisePropertyChanged(nameof(IsInfiniteScrollEnabled)));
+            return;
+        }
+        try
+        {
+            var stored = await _localStorageProvider.GetAsync(InfiniteScrollEnabledKey).ConfigureAwait(false);
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (string.Equals(stored, "false", StringComparison.OrdinalIgnoreCase))
+                    _isInfiniteScrollEnabled = false;
+                this.RaisePropertyChanged(nameof(IsInfiniteScrollEnabled));
             });
         }
         catch { /* best-effort */ }

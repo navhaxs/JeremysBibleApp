@@ -362,6 +362,10 @@
                                         IsChecked="{Binding AppVM.IsTabBarVisible, Mode=TwoWay}"
                                         OffContent="Show tab sidebar"
                                         OnContent="Show tab sidebar" />
+                                    <ToggleSwitch
+                                        IsChecked="{Binding AppVM.IsInfiniteScrollEnabled, Mode=TwoWay}"
+                                        OffContent="Infinite scroll"
+                                        OnContent="Infinite scroll" />
                                     <Rectangle
                                         Fill="{DynamicResource SystemControlForegroundBaseMediumLowBrush}"
                                         Height="1"

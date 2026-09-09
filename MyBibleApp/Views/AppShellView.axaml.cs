@@ -653,6 +653,7 @@ public partial class AppShellView : UserControl
         LogStartup("debug mode flag loaded");
         await _appVM.LoadTabBarVisibleFromStorageAsync();
         LogStartup("tab bar visibility flag loaded");
+        await _appVM.LoadInfiniteScrollEnabledFromStorageAsync();
 
         // Load persisted theme and apply it.
         await _appVM.LoadThemeFromStorageAsync();

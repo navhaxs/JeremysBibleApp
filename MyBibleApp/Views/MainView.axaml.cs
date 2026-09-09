@@ -72,6 +72,15 @@ public partial class MainView : UserControl
     public int WindowStart => _windowStart;   // 0-based index into _chapterGroups
     public int WindowEnd   => _windowEnd;     // exclusive
 
+    /// <summary>
+    /// True when the user has disabled cross-chapter continuous scrolling (Settings toggle).
+    /// While disabled, the window is pinned to exactly one chapter with zero virtual
+    /// spacers, so the ScrollViewer's own extent stops at that chapter's content and
+    /// native/inertial scrolling cannot cross into an adjacent chapter.
+    /// </summary>
+    private bool IsInfiniteScrollDisabled =>
+        DataContext is ScriptureViewModel vm && !vm.AppVM.IsInfiniteScrollEnabled;
+
     /// <summary>Book code of the currently loaded book, for ink store queries.</summary>
     public string CurrentBookCode =>
         (DataContext as ScriptureViewModel)?.BookCode ?? string.Empty;
@@ -1980,6 +1989,12 @@ public partial class MainView : UserControl
             _bottomSpacerHeight = _virtualHeights.Length > 0 ? _virtualHeights.Sum() : 0;
             UpdateSpacers();
 
+            if (IsInfiniteScrollDisabled)
+            {
+                SetSingleChapterWindow(1);
+                return;
+            }
+
             // Wait for viewport to be known; if not yet, use a fallback.
             var vpHeight = _paragraphScrollViewer?.Viewport.Height;
             var targetHeight = (vpHeight > 0 ? vpHeight.Value : 800) * 3;
@@ -1999,6 +2014,29 @@ public partial class MainView : UserControl
         if (para.IsPoetry && _activeLayoutEngineVersion >= 2)
             return para with { EffectivePoetryLevel = para.PoetryIndentLevel };
         return para.EffectivePoetryLevel == 0 ? para : para with { EffectivePoetryLevel = 0 };
+    }
+
+    /// <summary>
+    /// Replaces the window with exactly the given chapter and zero virtual spacers, so the
+    /// ScrollViewer's scrollable extent equals that chapter's content height alone — native
+    /// scrolling has nothing to scroll into beyond it. Used when infinite scroll is disabled.
+    /// Assumes any previously loaded window has already been torn down (exit events fired,
+    /// _windowedItems/_windowStart/_windowEnd cleared to empty) by the caller.
+    /// </summary>
+    private void SetSingleChapterWindow(int chapter)
+    {
+        var groupIdx = Math.Clamp(chapter - 1, 0, Math.Max(0, _chapterGroups.Count - 1));
+
+        _windowStart = groupIdx;
+        _windowEnd = groupIdx;
+        _windowedItems.AddRange(_chapterGroups[groupIdx].Select(PrepareForDisplay));
+        _windowEnd = groupIdx + 1;
+
+        _topSpacerHeight = 0;
+        _bottomSpacerHeight = 0;
+        UpdateSpacers();
+
+        ChapterEnteredWindow?.Invoke(this, groupIdx + 1);
     }
 
     /// <summary>
@@ -2317,6 +2355,10 @@ public partial class MainView : UserControl
     {
         if (_isAdjustingWindow) return;
         if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
+        // Single-chapter mode: the window is pinned to exactly one chapter (see
+        // EnsureChapterInWindow/ReinitializeWindow) and must never extend/trim across
+        // chapter boundaries — that's the whole point of disabling infinite scroll.
+        if (IsInfiniteScrollDisabled) return;
         // Trims are never urgent, and extends here are the non-precise path — both can wait
         // for the coast to finish. See ShouldDeferWindowWorkForCoast.
         if (ShouldDeferWindowWorkForCoast()) return;
@@ -2521,6 +2563,8 @@ public partial class MainView : UserControl
     {
         if (_isAdjustingWindow) return;
         if (_paragraphScrollViewer == null || _chapterGroups.Count == 0) return;
+        // Single-chapter mode: never load an adjacent chapter into the window.
+        if (IsInfiniteScrollDisabled) return;
         if (ShouldDeferWindowWorkForCoast()) return;
 
         var vpHeight = _paragraphScrollViewer.Viewport.Height;
@@ -2665,6 +2709,42 @@ public partial class MainView : UserControl
     {
         var groupIdx = chapter - 1;
         if (groupIdx < 0 || groupIdx >= _chapterGroups.Count) return;
+
+        if (IsInfiniteScrollDisabled)
+        {
+            // "Already showing" here requires an exact single-chapter window with zero
+            // spacers — the looser [start,end) containment check below isn't enough,
+            // since a stale multi-chapter window (e.g. left over from before the toggle
+            // was flipped) can contain groupIdx without actually being this chapter alone.
+            if (_windowStart == groupIdx && _windowEnd == groupIdx + 1 &&
+                _topSpacerHeight == 0 && _bottomSpacerHeight == 0)
+                return;
+
+            _isAdjustingWindow = true;
+            ClearPendingUpExtend();
+            _topCacheDirty = true;
+            try
+            {
+                for (var i = _windowStart; i < _windowEnd; i++)
+                    ChapterExitedWindow?.Invoke(this, i + 1);   // 1-based
+
+                _windowedItems.Clear();
+                _chapterStartY.Clear();
+                _chapterLocalTops.Clear();
+                _windowStart = 0;
+                _windowEnd = 0;
+
+                SetSingleChapterWindow(chapter);
+
+                if (_paragraphScrollViewer != null)
+                    _paragraphScrollViewer.Offset = new Vector(0, 0);
+            }
+            finally
+            {
+                _isAdjustingWindow = false;
+            }
+            return;
+        }
 
         // Check if already in window.
         if (groupIdx >= _windowStart && groupIdx < _windowEnd) return;
@@ -3177,6 +3257,8 @@ public partial class MainView : UserControl
     {
         if (e.PropertyName == nameof(AppViewModel.ActiveTranslationId))
             Dispatcher.UIThread.Post(UpdateTranslationRadioSelection, DispatcherPriority.Loaded);
+        if (e.PropertyName == nameof(AppViewModel.IsInfiniteScrollEnabled))
+            ApplyInfiniteScrollModeChanged();
     }
 
     // RefreshTranslationsAsync rebuilds InstalledTranslations with brand-new TranslationListItem
@@ -3186,6 +3268,23 @@ public partial class MainView : UserControl
     private void OnInstalledTranslationsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         Dispatcher.UIThread.Post(UpdateTranslationRadioSelection, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// Re-windows the currently displayed content when the infinite-scroll toggle
+    /// flips, so the switch takes effect immediately without needing to change chapter.
+    /// ReinitializeWindow() branches internally on the (now-updated) flag to rebuild
+    /// either a single-chapter window or a normal buffered window starting at chapter 1;
+    /// EnsureChapterInWindow() then moves that window to the chapter the user was on.
+    /// </summary>
+    private void ApplyInfiniteScrollModeChanged()
+    {
+        if (_paragraphList == null || _chapterGroups.Count == 0) return;
+        var currentChapter = DataContext is ScriptureViewModel vm
+            ? Math.Max(1, vm.SelectedLookupChapter)
+            : _windowStart + 1;
+        ReinitializeWindow();
+        EnsureChapterInWindow(currentChapter);
     }
 
     private async void OnSyncAuthButtonClick(object? sender, RoutedEventArgs e)
