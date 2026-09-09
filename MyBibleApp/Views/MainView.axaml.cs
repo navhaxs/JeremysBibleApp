@@ -766,7 +766,7 @@ public partial class MainView : UserControl
             // work), which is exactly the kind of stall that could stretch inertia's fixed
             // tick-count decay over many extra real seconds. Only log when it's notably slow —
             // this fires far too often to log unconditionally.
-            if (gapMs > 32)
+            if (gapMs > 32 && EnableScrollDebugLogging)
                 Console.WriteLine($"[{ScrollLogTag}] LayoutUpdated gap={gapMs}ms (slow layout pass)");
         }
         _lastLayoutUpdatedTicks = nowMs;
@@ -782,7 +782,7 @@ public partial class MainView : UserControl
         _lastTopCacheRebuildTicks = now;
         var sw = Stopwatch.StartNew();
         RebuildParagraphTopCache();
-        if (sw.ElapsedMilliseconds > 5)
+        if (sw.ElapsedMilliseconds > 5 && EnableScrollDebugLogging)
             Console.WriteLine($"[{ScrollLogTag}] RebuildParagraphTopCache took {sw.ElapsedMilliseconds}ms");
     }
 
@@ -909,9 +909,10 @@ public partial class MainView : UserControl
         // OnInertiaTick don't show up here in lockstep, that itself is a finding (would mean
         // something other than our inertia is driving the scroll, or ScrollChanged is being
         // suppressed/delayed relative to the Offset write that caused it).
-        Console.WriteLine($"[{ScrollLogTag}] ScrollChanged offsetY={currentOffset:F0} Δ={currentOffset - _lastScrollOffset:+0;-0}px " +
-            $"elapsedMs={elapsed * 1000:F0} extent={_paragraphScrollViewer.Extent.Height:F0} viewport={_paragraphScrollViewer.Viewport.Height:F0} " +
-            $"compensating={_isApplyingWindowCompensation}");
+        if (EnableScrollDebugLogging)
+            Console.WriteLine($"[{ScrollLogTag}] ScrollChanged offsetY={currentOffset:F0} Δ={currentOffset - _lastScrollOffset:+0;-0}px " +
+                $"elapsedMs={elapsed * 1000:F0} extent={_paragraphScrollViewer.Extent.Height:F0} viewport={_paragraphScrollViewer.Viewport.Height:F0} " +
+                $"compensating={_isApplyingWindowCompensation}");
 
         _lastScrollOffset = currentOffset;
         _lastScrollTime = now;
@@ -950,18 +951,27 @@ public partial class MainView : UserControl
         // Debounced (100 ms after scroll stops): trim chapters that are no longer
         // near the viewport. Collapsing rapid events prevents thrashing.
         if (!_isAdjustingWindow)
+            ScheduleWindowBoundsCheck();
+    }
+
+    /// <summary>
+    /// Debounced (100ms) call to CheckWindowBounds. Called on every scroll event, and also
+    /// explicitly on mouse-drag/touch-pan release, since a release with no further movement
+    /// produces no ScrollChanged event to re-arm the debounce — without this, ending a drag
+    /// that way would leave a deferred trim pending forever instead of catching up once idle.
+    /// </summary>
+    private void ScheduleWindowBoundsCheck()
+    {
+        var windowCheckVersion = ++_windowCheckVersion;
+        _ = Task.Delay(100).ContinueWith(t =>
         {
-            var windowCheckVersion = ++_windowCheckVersion;
-            _ = Task.Delay(100).ContinueWith(t =>
+            if (_windowCheckVersion != windowCheckVersion) return;
+            Dispatcher.UIThread.Post(() =>
             {
-                if (_windowCheckVersion != windowCheckVersion) return;
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (_windowCheckVersion == windowCheckVersion)
-                        CheckWindowBounds();
-                }, DispatcherPriority.Loaded);
-            }, TaskScheduler.Default);
-        }
+                if (_windowCheckVersion == windowCheckVersion)
+                    CheckWindowBounds();
+            }, DispatcherPriority.Loaded);
+        }, TaskScheduler.Default);
     }
 
     private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -2227,10 +2237,15 @@ public partial class MainView : UserControl
     // Console.WriteLine (not Debug.WriteLine) so it survives Release-build device testing.
     private const string ScrollLogTag = "MBA_SCROLL";
 
+    // Master off switch for all scroll/margin/H-scroll debug logging (DbgLog, MarginLog,
+    // HScrollDiagLog, and the raw Console.WriteLine calls scattered near them). Off by
+    // default because this fires at scroll-event/animation-tick frequency and floods the
+    // console; flip to true and rebuild when chasing a scroll/inertia/margin-pan bug.
+    private static readonly bool EnableScrollDebugLogging = false;
+
     private void DbgLog(string msg)
     {
-        // Always record — not gated on overlay visibility. Real-device jumps get
-        // reported after the fact, when nobody had the overlay open to see them.
+        if (!EnableScrollDebugLogging) return;
         var ts = DateTime.Now.ToString("HH:mm:ss.fff");
         Console.WriteLine($"[{ScrollLogTag}] {ts} {msg}");
         _dbgEvents.Insert(0, $"{ts} {msg}");
@@ -2333,8 +2348,17 @@ public partial class MainView : UserControl
                 ExtendWindowDown(vpHeight * 3);
             }
 
+            // Trims themselves only run once the scroll is genuinely idle — not just settled
+            // for 100ms, but not still being actively dragged/panned (a brief pause mid-gesture
+            // shouldn't trigger a trim's layout pass and stutter the gesture). Coasting is
+            // already excluded above by ShouldDeferWindowWorkForCoast; this catches the
+            // finger/mouse-still-down case that check doesn't cover. See OnListBoxMouseReleased
+            // / OnMarginTouchReleased, which re-arm this check on release so a deferred trim
+            // isn't stranded when release produces no further ScrollChanged event.
+            var isActivelyDraggingOrPanning = _isMouseDragging || _isTouchPanning;
+
             // Trim top: mutually exclusive with the ExtendWindowUp condition above, but guard for safety.
-            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * _trimThresholdMultiplier)
+            if (!isActivelyDraggingOrPanning && !IsUpExtendPending && _windowEnd - _windowStart > 1 && scrollTop > vpHeight * _trimThresholdMultiplier)
             {
                 bool safeToTrimTop = false;
                 if (_chapterStartY.Count > 0)
@@ -2347,7 +2371,7 @@ public partial class MainView : UserControl
             }
 
             // Trim bottom: could contaminate extent snapshot if ExtendWindowUp also fired this pass.
-            if (!IsUpExtendPending && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * _trimThresholdMultiplier)
+            if (!isActivelyDraggingOrPanning && !IsUpExtendPending && _windowEnd - _windowStart > 1 && contentBottom - scrollBottom > vpHeight * _trimThresholdMultiplier)
             {
                 bool safeToTrimBottom = false;
                 if (_chapterStartY.Count > 0)
@@ -3248,12 +3272,17 @@ public partial class MainView : UserControl
         _isMouseDragging = false;
         e.Pointer.Capture(null);
         e.Handled = true;
+
+        // Catch up any trim that was deferred while dragging — a release with no further
+        // movement produces no ScrollChanged event to re-arm the debounce on its own.
+        ScheduleWindowBoundsCheck();
     }
 
     // ── Margin touch panning ─────────────────────────────────────────────────
 
     private void MarginLog(string msg)
     {
+        if (!EnableScrollDebugLogging) return;
         if (DataContext is ScriptureViewModel vm)
             Dispatcher.UIThread.Post(() => vm.AppVM.AppendSyncDebugLog($"[Margin] {msg}"));
     }
@@ -3262,6 +3291,7 @@ public partial class MainView : UserControl
     // portrait initial-centering bug is root-caused.
     private void HScrollDiagLog(string msg)
     {
+        if (!EnableScrollDebugLogging) return;
         System.Diagnostics.Debug.WriteLine($"[HScrollDiag] {msg}");
         if (DataContext is ScriptureViewModel vm)
             Dispatcher.UIThread.Post(() => vm.AppVM.AppendSyncDebugLog($"[HScrollDiag] {msg}"));
@@ -3481,6 +3511,10 @@ public partial class MainView : UserControl
             e.Handled = true;
 
         StartInertiaFromSamples();
+
+        // Catch up any trim that was deferred while panning — harmless no-op if inertia just
+        // started instead (ShouldDeferWindowWorkForCoast defers it again until the coast ends).
+        ScheduleWindowBoundsCheck();
     }
 
     private long _lastInertiaTickTicks;
@@ -3565,9 +3599,10 @@ public partial class MainView : UserControl
         if (Math.Abs(_inertiaVelocity) < InertiaStartThresholdPxPerSec) return;
 
         var spanMs = (newestTicks - _touchVelocitySamples[startIdx].Ticks) / (double)TimeSpan.TicksPerMillisecond;
-        Console.WriteLine($"[{ScrollLogTag}] inertia START v0={_inertiaVelocity:F0}px/s " +
-            $"(median of {velocities.Count} intervals, {_touchVelocitySamples.Count - startIdx} of " +
-            $"{_touchVelocitySamples.Count} samples over {spanMs:F0}ms)");
+        if (EnableScrollDebugLogging)
+            Console.WriteLine($"[{ScrollLogTag}] inertia START v0={_inertiaVelocity:F0}px/s " +
+                $"(median of {velocities.Count} intervals, {_touchVelocitySamples.Count - startIdx} of " +
+                $"{_touchVelocitySamples.Count} samples over {spanMs:F0}ms)");
         _lastInertiaTickTicks = Environment.TickCount64;
         _inertiaTickCount = 0;
 
@@ -3587,7 +3622,8 @@ public partial class MainView : UserControl
 
         if (realDeltaMs > InertiaMaxRealisticTickGapMs)
         {
-            Console.WriteLine($"[{ScrollLogTag}] inertia ABANDONED tick#{_inertiaTickCount} realDeltaMs={realDeltaMs} (UI thread starved, discarding stale coast)");
+            if (EnableScrollDebugLogging)
+                Console.WriteLine($"[{ScrollLogTag}] inertia ABANDONED tick#{_inertiaTickCount} realDeltaMs={realDeltaMs} (UI thread starved, discarding stale coast)");
             StopInertia();
             return;
         }
@@ -3597,7 +3633,8 @@ public partial class MainView : UserControl
 
         if (Math.Abs(_inertiaVelocity) < InertiaStopThresholdPxPerSec)
         {
-            Console.WriteLine($"[{ScrollLogTag}] inertia STOP decayed after {_inertiaTickCount} ticks, last realDeltaMs={realDeltaMs}");
+            if (EnableScrollDebugLogging)
+                Console.WriteLine($"[{ScrollLogTag}] inertia STOP decayed after {_inertiaTickCount} ticks, last realDeltaMs={realDeltaMs}");
             StopInertia();
             return;
         }
@@ -3607,11 +3644,13 @@ public partial class MainView : UserControl
         var newOffset = Math.Clamp(_paragraphScrollViewer.Offset.Y + step, 0, maxY);
         _paragraphScrollViewer.Offset = new Vector(_paragraphScrollViewer.Offset.X, newOffset);
 
-        Console.WriteLine($"[{ScrollLogTag}] inertia tick#{_inertiaTickCount} v={_inertiaVelocity:F0}px/s realDeltaMs={realDeltaMs} step={step:F1} offsetY={newOffset:F0} maxY={maxY:F0}");
+        if (EnableScrollDebugLogging)
+            Console.WriteLine($"[{ScrollLogTag}] inertia tick#{_inertiaTickCount} v={_inertiaVelocity:F0}px/s realDeltaMs={realDeltaMs} step={step:F1} offsetY={newOffset:F0} maxY={maxY:F0}");
 
         if (newOffset <= 0 || newOffset >= maxY)
         {
-            Console.WriteLine($"[{ScrollLogTag}] inertia STOP bound hit after {_inertiaTickCount} ticks");
+            if (EnableScrollDebugLogging)
+                Console.WriteLine($"[{ScrollLogTag}] inertia STOP bound hit after {_inertiaTickCount} ticks");
             StopInertia();
         }
     }
@@ -3629,7 +3668,8 @@ public partial class MainView : UserControl
         // stays cheap when nothing was actually deferred.
         if (!_deferredWindowWorkDuringCoast) return;
         _deferredWindowWorkDuringCoast = false;
-        Console.WriteLine($"[{ScrollLogTag}] coast ended — running deferred window check");
+        if (EnableScrollDebugLogging)
+            Console.WriteLine($"[{ScrollLogTag}] coast ended — running deferred window check");
         Dispatcher.UIThread.Post(() =>
         {
             CheckWindowExtend();
