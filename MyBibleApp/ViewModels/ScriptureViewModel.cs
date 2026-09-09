@@ -264,19 +264,30 @@ public class ScriptureViewModel : ViewModelBase, IDisposable
         try
         {
             var translationId = await TranslationManager.Instance.GetActiveTranslationIdAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+                AppVM.AppendSyncDebugLog($"[ScriptureVM] Loading '{bookCode}' ch{chapter}:{verse} from translation '{translationId}'."));
+
             var book = await _bibleContent.LoadBookAsync(bookCode, translationId).ConfigureAwait(false);
+
+            Dispatcher.UIThread.Post(() =>
+                AppVM.AppendSyncDebugLog($"[ScriptureVM] Loaded '{book.Code}' \"{book.Title}\": {book.Paragraphs.Count} paragraphs, {book.VerseCount} verses."));
 
             var sourceStatus = translationId == TranslationManager.BsbOnlineId
                 ? "Loaded from fetch.bible API."
                 : "Loaded from imported translation.";
 
             await Dispatcher.UIThread.InvokeAsync(() =>
-                ApplyLoadedBook(book, sourceStatus, chapter, verse));
+            {
+                ApplyLoadedBook(book, sourceStatus, chapter, verse);
+                AppVM.AppendSyncDebugLog($"[ScriptureVM] Applied '{book.Code}': ViewModel now holds {Paragraphs.Count} paragraphs, header \"{Header}\".");
+            });
 
             return (true, null);
         }
         catch (Exception ex)
         {
+            Dispatcher.UIThread.Post(() =>
+                AppVM.AppendSyncDebugLog($"[ScriptureVM] Load FAILED for '{bookCode}': {ex.GetType().Name}: {ex.Message}"));
             return (false, ex.Message);
         }
     }

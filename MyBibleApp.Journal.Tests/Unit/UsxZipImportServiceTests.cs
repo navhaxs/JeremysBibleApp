@@ -79,6 +79,29 @@ public class UsxZipImportServiceTests : IDisposable
     }
 
     [Fact]
+    public void PrepareImport_UppercaseFilenameMatchingCodeIsRenamedToLowercase()
+    {
+        // Regression: on a case-insensitive filesystem (Windows), "GEN.usx" and "gen.usx" look
+        // identical, which previously made the extractor skip renaming the file — it stayed
+        // "GEN.usx" on disk while the manifest correctly listed "gen" as present. On a
+        // case-sensitive filesystem (Android's ext4), the lowercase lookup at load time then
+        // found nothing. The on-disk filename must always end up lowercase regardless of the
+        // zip entry's original casing.
+        var zipPath = CreateZip("uppercase.zip", ("GEN.usx", GenUsx));
+        var service = new UsxZipImportService();
+
+        var result = service.PrepareImport(zipPath, ["gen"]);
+
+        Assert.Contains("gen", result.BookCodes);
+        // File.Exists can't tell "GEN.usx" from "gen.usx" apart on a case-insensitive
+        // filesystem (Windows) — it matches either name regardless of what's really on disk.
+        // Directory.GetFiles returns the actual stored directory-entry name, so it's the only
+        // way to verify the rename truly happened rather than being silently skipped.
+        var actualFileName = Path.GetFileName(Assert.Single(Directory.GetFiles(result.TempDirectory)));
+        Assert.Equal("gen.usx", actualFileName);
+    }
+
+    [Fact]
     public void PrepareImport_NonUsxEntriesIgnored()
     {
         var zipPath = CreateZip("withjunk.zip", ("gen.usx", GenUsx), ("readme.txt", "hello"));

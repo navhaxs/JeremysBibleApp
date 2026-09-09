@@ -134,7 +134,12 @@ public sealed class UsxZipImportService
 
             var normalizedCode = code.Trim().ToLowerInvariant();
             var finalPath = Path.Combine(tempDir, $"{normalizedCode}.usx");
-            if (!string.Equals(destinationPath, finalPath, StringComparison.OrdinalIgnoreCase))
+            // Ordinal, not OrdinalIgnoreCase: a case-only difference (e.g. zip entry "GEN.usx"
+            // vs target "gen.usx") must still trigger the rename. On case-insensitive
+            // filesystems (Windows) skipping it was invisible — File.Exists("gen.usx") matches
+            // "GEN.usx" anyway — but on case-sensitive ones (Android's ext4) the un-renamed
+            // uppercase file made every zip-imported book "not found" at load time.
+            if (!string.Equals(destinationPath, finalPath, StringComparison.Ordinal))
                 File.Move(destinationPath, finalPath, overwrite: true);
 
             discovered.Add(normalizedCode);

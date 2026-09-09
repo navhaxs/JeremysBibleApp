@@ -2997,11 +2997,24 @@ public partial class MainView : UserControl
         if (sender is not RadioButton { Tag: string translationId }) return;
         if (DataContext is not ScriptureViewModel vm) return;
 
+        vm.AppVM.AppendSyncDebugLog($"[TranslationSwitch] Radio clicked: '{translationId}' (was '{vm.AppVM.ActiveTranslationId}'), current book '{vm.BookCode}' ch{vm.SelectedLookupChapter}:{vm.SelectedLookupVerse}.");
+
         // Await the persist before reloading — TryLoadBookFromApiAsync re-reads the active
         // translation from disk (TranslationManager.GetActiveTranslationIdAsync), so if the save
         // hasn't landed yet, the reload can race and pick up the previous translation's content.
         await vm.AppVM.SetActiveTranslationIdAsync(translationId);
-        _ = vm.TryLoadBookFromApiAsync(vm.BookCode, vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+        vm.AppVM.AppendSyncDebugLog($"[TranslationSwitch] Persisted active translation '{translationId}'. Reloading book…");
+
+        var result = await vm.TryLoadBookFromApiAsync(vm.BookCode, vm.SelectedLookupChapter, vm.SelectedLookupVerse);
+        if (!result.Success)
+        {
+            vm.Status = $"Could not load {vm.BookCode} from this translation: {result.Error}";
+            vm.AppVM.AppendSyncDebugLog($"[TranslationSwitch] Reload FAILED: {result.Error}");
+        }
+        else
+        {
+            vm.AppVM.AppendSyncDebugLog($"[TranslationSwitch] Reload succeeded, {vm.Paragraphs.Count} paragraphs now in viewer.");
+        }
     }
 
     private async void OnImportTranslationClick(object? sender, RoutedEventArgs e)
