@@ -99,6 +99,23 @@ public class InkOverlayCanvas : Control
     /// <summary>Session-only flag: allow mouse pointer type to draw ink (for tablets where stylus reports as mouse).</summary>
     public bool AllowMouseInput { get; set; }
 
+    /// <summary>
+    /// Last raw viewport point passed to StartStroke/ContinueStroke, in this canvas's own
+    /// coordinate space. Used by MainView for palm-rejection proximity checks against
+    /// concurrent touch contacts — not cleared on EndStroke so a just-lifted pen still
+    /// anchors rejection for a brief grace window (see <see cref="LastPenActivityUtc"/>).
+    /// </summary>
+    public Point? LastPenViewportPoint { get; private set; }
+
+    /// <summary>UTC timestamp of the last StartStroke/ContinueStroke/EndStroke call (pen or eraser).</summary>
+    public DateTime? LastPenActivityUtc { get; private set; }
+
+    private void TrackPenActivity(Point viewportPoint)
+    {
+        LastPenViewportPoint = viewportPoint;
+        LastPenActivityUtc = DateTime.UtcNow;
+    }
+
     private List<InkOverlayCanvas>? _renderSlaves;
 
     /// <summary>Register a slave canvas that should be invalidated whenever this canvas redraws.</summary>
@@ -210,6 +227,7 @@ public class InkOverlayCanvas : Control
     /// <summary>Begin a new ink stroke (or erase) at the given viewport position.</summary>
     public void StartStroke(Point viewportPoint)
     {
+        TrackPenActivity(viewportPoint);
         if (IsEraserMode)
         {
             EraseAt(ToContent(viewportPoint));
@@ -234,6 +252,7 @@ public class InkOverlayCanvas : Control
     /// <summary>Add a point to the active stroke (or continue erasing).</summary>
     public void ContinueStroke(Point viewportPoint)
     {
+        TrackPenActivity(viewportPoint);
         if (IsEraserMode)
         {
             EraseAt(ToContent(viewportPoint));
@@ -254,6 +273,9 @@ public class InkOverlayCanvas : Control
     /// <summary>Finish the current stroke. No-op in eraser mode.</summary>
     public void EndStroke()
     {
+        // Refresh the activity timestamp (keeping the last known position) so the brief
+        // post-lift grace window in MainView's palm rejection starts counting from here.
+        LastPenActivityUtc = DateTime.UtcNow;
         if (IsEraserMode) return;
         if (_activeStroke != null && _activeStroke.Count > 0)
         {

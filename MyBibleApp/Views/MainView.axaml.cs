@@ -177,6 +177,13 @@ public partial class MainView : UserControl
     // zone shrinks below NarrowViewportBreakpointDip so it doesn't eat too much text width on phones.
     private const double BaseLeftMarginDip = 24;
     private const double WideRightMarginDip = 64;
+
+    // Palm rejection: a touch contact that lands within this radius of the pen's last known
+    // position, within this grace window of its last activity, is the heel of the drawing hand
+    // resting on the glass rather than a deliberate scroll — reject it without disturbing any
+    // other concurrent touch (e.g. a genuine single-finger scroll from the other hand).
+    private const double PalmRejectionRadiusDip = 220;
+    private static readonly TimeSpan PalmRejectionGraceWindow = TimeSpan.FromMilliseconds(300);
     private const double NarrowRightMarginDip = 32;
     private const double NarrowViewportBreakpointDip = 500;
 
@@ -197,6 +204,10 @@ public partial class MainView : UserControl
     private bool _isTouchPanning;
     private bool _isTouchPanningScrollbar;
     private Point _lastTouchPosition;
+    // Pointer.Id of a touch contact rejected as a palm at press time; its subsequent Moved /
+    // Released events are ignored so it can never hijack _lastTouchPosition from a genuine
+    // concurrent scrolling finger. Cleared when that same contact releases.
+    private int? _rejectedPalmPointerId;
     private Point _panStartPosition;
     private enum PanAxis { Undecided, Vertical, Horizontal }
     private PanAxis _touchPanAxis;
@@ -3396,6 +3407,27 @@ public partial class MainView : UserControl
             Dispatcher.UIThread.Post(() => vm.AppVM.AppendSyncDebugLog($"[HScrollDiag] {msg}"));
     }
 
+    // Only relevant while actively inking: a touch that lands close to where the pen was just
+    // drawing/erasing is almost certainly the heel of the same hand, not a deliberate scroll.
+    // A touch anywhere else — including a genuine single-finger scroll from the other hand — is
+    // untouched by this check.
+    private bool IsLikelyPalmContact(PointerPressedEventArgs e)
+    {
+        if (_annotationToggle?.IsChecked != true) return false;
+        if (_inkOverlay == null || _inkAreaGrid == null) return false;
+
+        var penPoint = _inkOverlay.LastPenViewportPoint;
+        var penActivityUtc = _inkOverlay.LastPenActivityUtc;
+        if (penPoint == null || penActivityUtc == null) return false;
+        if (DateTime.UtcNow - penActivityUtc.Value > PalmRejectionGraceWindow) return false;
+
+        var penPosInGrid = _inkOverlay.TranslatePoint(penPoint.Value, _inkAreaGrid) ?? penPoint.Value;
+        var touchPos = e.GetPosition(_inkAreaGrid);
+        var dx = touchPos.X - penPosInGrid.X;
+        var dy = touchPos.Y - penPosInGrid.Y;
+        return dx * dx + dy * dy <= PalmRejectionRadiusDip * PalmRejectionRadiusDip;
+    }
+
     private void OnMarginTouchPressed(object? sender, PointerPressedEventArgs e)
     {
         MarginLog($"Pressed type={e.Pointer.Type} inkGrid={_inkAreaGrid != null} sv={_paragraphScrollViewer != null}");
@@ -3405,6 +3437,13 @@ public partial class MainView : UserControl
 
         if (e.Pointer.Type != PointerType.Touch) return;
         if (_inkAreaGrid == null) return;
+
+        if (IsLikelyPalmContact(e))
+        {
+            _rejectedPalmPointerId = e.Pointer.Id;
+            MarginLog($"REJECT palm: pointerId={e.Pointer.Id}");
+            return;
+        }
 
         // Don't intercept taps on the H-scroll lock FAB — it sits outside InkAreaGrid
         // but the tunnel handler fires for it too because it's in the right margin column.
@@ -3498,6 +3537,10 @@ public partial class MainView : UserControl
 
     private void OnMarginTouchMoved(object? sender, PointerEventArgs e)
     {
+        // Ignore a contact rejected as a palm at press time — never let it feed
+        // _lastTouchPosition, even if a genuine scroll finger is panning concurrently.
+        if (_rejectedPalmPointerId == e.Pointer.Id) return;
+
         if (_isTouchPanningScrollbar)
         {
             if (e.Pointer.Type != PointerType.Touch || _readerProgressTrack == null) return;
@@ -3585,6 +3628,13 @@ public partial class MainView : UserControl
 
     private void OnMarginTouchReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (_rejectedPalmPointerId == e.Pointer.Id)
+        {
+            _rejectedPalmPointerId = null;
+            MarginLog($"Released rejected palm pointerId={e.Pointer.Id}");
+            return;
+        }
+
         MarginLog($"Released _isTouchPanning={_isTouchPanning} scrollbar={_isTouchPanningScrollbar} type={e.Pointer.Type}");
 
         if (_isTouchPanningScrollbar)
