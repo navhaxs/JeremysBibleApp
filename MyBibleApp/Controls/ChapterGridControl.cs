@@ -197,6 +197,29 @@ public class ChapterGridControl : Control
         return new Size(cols * CellWidth, rows * CellHeight);
     }
 
+    // MeasureOverride is asked for a natural size and, inside an Auto grid column, gets an
+    // infinite width — it falls back to FallbackColumnsPerRow (10) in that case. But an Auto
+    // column's actual allotted width can end up smaller than that guess once the row's other
+    // content (the book-name label, spacing) is accounted for, so the width this control is
+    // finally given here can be less than what Measure assumed. Recomputing columns from
+    // finalSize keeps Render/HitTestCell in sync with the real bounds — otherwise cells beyond
+    // the true width still get drawn at their 10-column position and ClipToBounds silently
+    // drops them, which showed up on narrow phone screens as chapters vanishing mid-row.
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        var count = _chapters?.Count ?? 0;
+        if (count > 0 && finalSize.Width > 0 && !double.IsInfinity(finalSize.Width))
+        {
+            var columnsForFinalWidth = Math.Max(1, (int)(finalSize.Width / CellWidth));
+            if (columnsForFinalWidth != _columnsPerRow)
+            {
+                _columnsPerRow = columnsForFinalWidth;
+                InvalidateVisual();
+            }
+        }
+        return base.ArrangeOverride(finalSize);
+    }
+
     public override void Render(DrawingContext context)
     {
         base.Render(context);

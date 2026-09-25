@@ -25,6 +25,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\MyBibleApp.Sync\MyBibleApp.Sync.csproj" />
+        <ProjectReference Include="..\MyBibleApp.PanZoom\MyBibleApp.PanZoom.csproj" />
     </ItemGroup>
 
     <ItemGroup>

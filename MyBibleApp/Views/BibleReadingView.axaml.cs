@@ -1,14 +1,12 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
-using Avalonia.Layout;
-using Avalonia.Media;
 using Avalonia.VisualTree;
 using MyBibleApp.Controls;
+using MyBibleApp.PanZoom;
 using MyBibleApp.ViewModels;
 
 namespace MyBibleApp.Views;
@@ -35,7 +33,7 @@ public partial class BibleReadingView : UserControl
 
     private TextBlock? _progressSummary;
     private Grid? _booksGrid;
-    private ScrollViewer? _panScrollViewer;
+    private PanZoomView? _panZoom;
 
     public BibleReadingView()
     {
@@ -47,9 +45,9 @@ public partial class BibleReadingView : UserControl
     {
         _progressSummary = this.FindControl<TextBlock>("ProgressSummary");
         _booksGrid = this.FindControl<Grid>("BooksGrid");
-        _panScrollViewer = this.FindControl<ScrollViewer>("PanScrollViewer");
+        _panZoom = this.FindControl<PanZoomView>("PanZoom");
 
-        _panScrollViewer!.LayoutUpdated += (_, _) => UpdateBooksGridWidth();
+        _panZoom!.LayoutUpdated += (_, _) => UpdateBooksGridWidth();
 
         UpdateProgressSummary();
 
@@ -162,18 +160,29 @@ public partial class BibleReadingView : UserControl
 
     private void UpdateBooksGridWidth()
     {
-        if (_booksGrid == null || _panScrollViewer == null) return;
-        var viewportWidth = _panScrollViewer.Viewport.Width;
-        if (viewportWidth <= 0) return;
+        if (_booksGrid == null || _panZoom == null) return;
+
+        // Bounds (PanZoomView's own outer size, from its parent) rather than the inner
+        // ScrollViewer's Viewport: Viewport shrinks/grows depending on whether the vertical
+        // scrollbar is currently shown, and scrollbar visibility itself depends on zoom — using
+        // Viewport here made "natural" (unscaled) width a moving target that could change out
+        // from under PanZoomView's last-computed extent right as a zoom-out crossed the
+        // threshold where the scrollbar disappears, permanently desyncing the two and leaving
+        // the ScrollViewer believing there was nothing left to scroll.
+        var availableWidth = _panZoom.Bounds.Width;
+        if (availableWidth <= 0) return;
         var hMargin = _booksGrid.Margin.Left + _booksGrid.Margin.Right;
-        _booksGrid.Width = Math.Max(MinBooksGridWidth, viewportWidth - hMargin);
+        var newWidth = Math.Max(MinBooksGridWidth, availableWidth - hMargin);
+        if (Math.Abs(newWidth - _booksGrid.Width) < 0.5) return;
+        _booksGrid.Width = newWidth;
     }
 
     // ── Scroll to current passage ─────────────────────────────────────────────
 
     private void OnScrollToCurrentClick(object? sender, RoutedEventArgs e)
     {
-        if (_panScrollViewer == null) return;
+        var scrollViewer = _panZoom?.InnerScrollViewer;
+        if (scrollViewer == null) return;
 
         foreach (var grid in this.GetVisualDescendants().OfType<ChapterGridControl>())
         {
@@ -186,15 +195,15 @@ public partial class BibleReadingView : UserControl
 
             // Translate cell center to ScrollViewer viewport coordinates, then add
             // current scroll offset to get content-space coordinates.
-            var pt = grid.TranslatePoint(cellCenter, _panScrollViewer);
+            var pt = grid.TranslatePoint(cellCenter, scrollViewer);
             if (pt == null) return;
 
-            var contentX = pt.Value.X + _panScrollViewer.Offset.X;
-            var contentY = pt.Value.Y + _panScrollViewer.Offset.Y;
+            var contentX = pt.Value.X + scrollViewer.Offset.X;
+            var contentY = pt.Value.Y + scrollViewer.Offset.Y;
 
-            _panScrollViewer.Offset = new Vector(
-                Math.Max(0, contentX - _panScrollViewer.Viewport.Width / 2),
-                Math.Max(0, contentY - _panScrollViewer.Viewport.Height / 2));
+            scrollViewer.Offset = new Vector(
+                Math.Max(0, contentX - scrollViewer.Viewport.Width / 2),
+                Math.Max(0, contentY - scrollViewer.Viewport.Height / 2));
             return;
         }
     }

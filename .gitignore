@@ -458,3 +458,13 @@ credentials.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+##
+## Project-local scratch (not part of the build)
+##
+.claude/
+Snipaste_*
+git-filter-repo
+tIeCLkB8geYtW.webp
+/tools/
+/media-tool-kit-xml-bibles for freeshow/

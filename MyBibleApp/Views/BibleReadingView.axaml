@@ -9,13 +9,14 @@
     xmlns:controls="using:MyBibleApp.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:panzoom="using:MyBibleApp.PanZoom"
     xmlns:vm="using:MyBibleApp.ViewModels"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <UserControl.Resources>
         <DataTemplate x:DataType="vm:BibleReadingBookEntry" x:Key="BookEntryTemplate">
             <Border Classes="book-card">
-                <Grid ColumnDefinitions="110,Auto" ColumnSpacing="8">
+                <Grid ColumnDefinitions="110,*" ColumnSpacing="8">
                     <Border
                         Background="{Binding LabelBackground}"
                         CornerRadius="2"
@@ -157,18 +158,19 @@
             </StackPanel>
         </Border>
 
-        <!--  ── Two-column (OT | NT) vertically scrolling book cards ──────────  -->
-        <ScrollViewer
-            AllowAutoHide="True"
+        <!--  ── Two-column (OT | NT) vertically scrolling, pinch/wheel-zoomable book cards ──  -->
+        <panzoom:PanZoomView
             Grid.Row="2"
-            HorizontalScrollBarVisibility="Auto"
-            VerticalScrollBarVisibility="Auto"
-            x:Name="PanScrollViewer">
+            MaxZoom="3.5"
+            MinZoom="0.2"
+            x:Name="PanZoom">
 
             <Grid
                 ColumnDefinitions="*,*"
                 ColumnSpacing="24"
+                HorizontalAlignment="Left"
                 Margin="16,12"
+                VerticalAlignment="Top"
                 x:Name="BooksGrid">
 
                 <!--  ── Old Testament ────────────────────────────────────────────  -->
@@ -221,7 +223,7 @@
 
             </Grid>
 
-        </ScrollViewer>
+        </panzoom:PanZoomView>
 
     </Grid>
 </UserControl>

@@ -26,6 +26,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyBibleApp.Sync.Demo", "MyB
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyBibleApp.Journal.Tests", "MyBibleApp.Journal.Tests\MyBibleApp.Journal.Tests.csproj", "{509D3171-CA40-4A88-928F-376966C4C061}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyBibleApp.PanZoom", "MyBibleApp.PanZoom\MyBibleApp.PanZoom.csproj", "{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -144,6 +146,18 @@ Global
 		{509D3171-CA40-4A88-928F-376966C4C061}.Release|x64.Build.0 = Release|Any CPU
 		{509D3171-CA40-4A88-928F-376966C4C061}.Release|x86.ActiveCfg = Release|Any CPU
 		{509D3171-CA40-4A88-928F-376966C4C061}.Release|x86.Build.0 = Release|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Debug|x64.Build.0 = Debug|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Debug|x86.Build.0 = Debug|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Release|x64.ActiveCfg = Release|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Release|x64.Build.0 = Release|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Release|x86.ActiveCfg = Release|Any CPU
+		{FC08FF62-A8AF-4611-9DE3-B89A9767C14D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
