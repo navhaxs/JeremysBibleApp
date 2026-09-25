@@ -97,9 +97,10 @@ public static class JournalJsonSerializer
                 errors.Add($"Journals[{i}]: metadata.id is missing or empty.");
 
             // Validate each stroke in the entry
-            for (var j = 0; j < entry.InkStrokes.Count; j++)
+            var inkStrokes = entry.InkStrokes;
+            for (var j = 0; inkStrokes is not null && j < inkStrokes.Count; j++)
             {
-                var strokeResult = ValidateStroke(entry.InkStrokes[j]);
+                var strokeResult = ValidateStroke(inkStrokes[j]);
                 if (!strokeResult.IsSuccess)
                     errors.Add($"Journals[{i}].inkStrokes[{j}]: {strokeResult.ErrorMessage}");
             }
