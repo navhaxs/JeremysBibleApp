@@ -184,6 +184,16 @@ public partial class MainView : UserControl
     // other concurrent touch (e.g. a genuine single-finger scroll from the other hand).
     private const double PalmRejectionRadiusDip = 220;
     private static readonly TimeSpan PalmRejectionGraceWindow = TimeSpan.FromMilliseconds(300);
+
+    // Palm rejection, part 2: a palm that lands *before* the pen has ever touched down has no
+    // pen position to compare against, so IsLikelyPalmContact can't catch it. Its contact point
+    // typically drifts for the first tens of milliseconds while the digitizer settles on a
+    // centroid for the (much larger than a fingertip) contact blob — easily enough to clear the
+    // axis-lock threshold below and fire off an unwanted scroll before the user has done
+    // anything deliberate. While annotating, absorb that settling period without scrolling and
+    // re-baseline the pan-start point once it ends, so a real finger swipe still scrolls (just
+    // ~100ms later) while a settling palm that then goes still triggers no scroll at all.
+    private static readonly TimeSpan AnnotationTouchSettleWindow = TimeSpan.FromMilliseconds(100);
     private const double NarrowRightMarginDip = 32;
     private const double NarrowViewportBreakpointDip = 500;
 
@@ -208,6 +218,7 @@ public partial class MainView : UserControl
     // Released events are ignored so it can never hijack _lastTouchPosition from a genuine
     // concurrent scrolling finger. Cleared when that same contact releases.
     private int? _rejectedPalmPointerId;
+    private DateTime? _touchSettleUntilUtc;
     private Point _panStartPosition;
     private enum PanAxis { Undecided, Vertical, Horizontal }
     private PanAxis _touchPanAxis;
@@ -3509,6 +3520,9 @@ public partial class MainView : UserControl
         _touchPanAxis = PanAxis.Undecided;
         _lastTouchPosition = GetStablePanPosition(e);
         _panStartPosition = _lastTouchPosition;
+        _touchSettleUntilUtc = _annotationToggle?.IsChecked == true
+            ? DateTime.UtcNow + AnnotationTouchSettleWindow
+            : null;
 
         // Capture immediately only in the margin (no tapable content there).
         // Text body: defer capture to OnMarginTouchMoved once movement is confirmed,
@@ -3578,6 +3592,23 @@ public partial class MainView : UserControl
         if (_paragraphScrollViewer == null) { MarginLog("Moved: sv null"); return; }
 
         var currentPos = GetStablePanPosition(e);
+
+        if (_touchSettleUntilUtc.HasValue)
+        {
+            if (DateTime.UtcNow < _touchSettleUntilUtc.Value)
+            {
+                // Still settling — absorb the movement without scrolling and re-baseline both
+                // the delta reference and the axis-lock's displacement origin to this position,
+                // so a palm that drifts while landing and then goes still never accumulates
+                // enough displacement to trigger a scroll once the window ends.
+                _lastTouchPosition = currentPos;
+                _panStartPosition = currentPos;
+                e.Handled = true;
+                return;
+            }
+            _touchSettleUntilUtc = null;
+        }
+
         var deltaX = _lastTouchPosition.X - currentPos.X;
         var deltaY = _lastTouchPosition.Y - currentPos.Y;
 
@@ -3654,6 +3685,7 @@ public partial class MainView : UserControl
         if (!_isTouchPanning || e.Pointer.Type != PointerType.Touch) return;
 
         _isTouchPanning = false;
+        _touchSettleUntilUtc = null;
         e.Pointer.Capture(null);
         // Only consume if we actually scrolled; a tap with no movement must reach the list item.
         if (_touchPanAxis != PanAxis.Undecided)
