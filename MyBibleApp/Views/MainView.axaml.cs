@@ -173,6 +173,12 @@ public partial class MainView : UserControl
     private double _journalHomePanX;            // HScroll home: LeftBufferDip - layout.LeftMarginDip when journal active, 0 otherwise
     private bool _journalHScrollNeedsReset;     // true after journal activated; cleared once offset is applied with valid Extent
 
+    // Desktop journal mode: the reading column stays centered (no touch-drag panning like
+    // mobile), so instead of a fixed left buffer, InkAreaGrid grows symmetrically only as far as
+    // the loaded strokes' actual extent requires, with a visible native scrollbar covering the
+    // difference. This keeps the column centered and scrollbar hidden when nothing overflows.
+    private const double DesktopExtentPaddingDip = 40;
+
     // Reading-margin left inset (constant) and responsive right inset — the right margin/touch
     // zone shrinks below NarrowViewportBreakpointDip so it doesn't eat too much text width on phones.
     private const double BaseLeftMarginDip = 24;
@@ -404,6 +410,8 @@ public partial class MainView : UserControl
             _inkOverlay.GetParagraphContentTop = GetParagraphContentTopFast;
             _inkOverlay.StrokeCompleted += (_, e) => StrokeCompleted?.Invoke(this, e);
             _inkOverlay.StrokeRemoved += (_, e) => StrokeRemoved?.Invoke(this, e);
+            _inkOverlay.StrokeCompleted += (_, _) => UpdateDesktopJournalInkAreaWidth();
+            _inkOverlay.StrokeRemoved += (_, _) => UpdateDesktopJournalInkAreaWidth();
             // Highlights stay on the overlay (above text, Multiply blend).
             _inkOverlay.DrawMode = InkDrawMode.HighlightOnly;
         }
@@ -568,6 +576,7 @@ public partial class MainView : UserControl
                     $"viewport={_contentHScrollContainer.Viewport} extent={_contentHScrollContainer.Extent} " +
                     $"inkAreaGrid.Width={_inkAreaGrid?.Width} inkAreaGrid.MinWidth={_inkAreaGrid?.MinWidth}");
                 UpdateJournalInkAreaGridWidth();
+                UpdateDesktopJournalInkAreaWidth();
                 UpdateResponsiveRightMargin();
             };
             UpdateResponsiveRightMargin();
@@ -2831,6 +2840,7 @@ public partial class MainView : UserControl
     {
         var migrated = InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs);
         _inkOverlay?.AppendChapterStrokes(migrated);
+        UpdateDesktopJournalInkAreaWidth();
     }
 
     /// <summary>Removes strokes for a chapter leaving the window.</summary>
@@ -2842,6 +2852,7 @@ public partial class MainView : UserControl
     {
         var migrated = InkAnchorMigrator.Migrate(strokes, _paragraphChapterInfo, _paragraphs, _activeLayoutEngineVersion);
         _inkOverlay?.ReplaceChapterStrokes(chapter, migrated);
+        UpdateDesktopJournalInkAreaWidth();
     }
 
     private IReadOnlyList<JournalInkStroke> MigrateStrokeAnchors(IReadOnlyList<JournalInkStroke> strokes) =>
@@ -3938,6 +3949,7 @@ public partial class MainView : UserControl
     {
         var migrated = MigrateStrokeAnchors(strokes);
         _inkOverlay?.LoadJournalStrokes(migrated);
+        UpdateDesktopJournalInkAreaWidth();
     }
 
     public void SetJournalLayout(JournalLayout? layout)
@@ -3980,7 +3992,12 @@ public partial class MainView : UserControl
         else
         {
             if (_contentHScrollContainer != null)
-                _contentHScrollContainer.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
+                // Desktop has no touch-drag panning, so it needs a real, visible, mouse-draggable
+                // scrollbar (Auto) to reach ink drawn outside the centered column's normal extent.
+                // Mobile keeps the invisible "Hidden" buffer it pans by touch drag instead.
+                _contentHScrollContainer.HorizontalScrollBarVisibility = PlatformHelper.IsDesktop
+                    ? ScrollBarVisibility.Auto
+                    : ScrollBarVisibility.Hidden;
 
             if (layout.TextColumnWidthDip > 0)
             {
@@ -4020,7 +4037,12 @@ public partial class MainView : UserControl
         }
 
         // Update ink canvas text-column offset and expand InkAreaGrid for H-scroll after layout settles.
-        Dispatcher.UIThread.Post(() => { UpdateJournalInkAreaGridWidth(); UpdateInkTextColumnOffset(); }, DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(() =>
+        {
+            UpdateJournalInkAreaGridWidth();
+            UpdateDesktopJournalInkAreaWidth();
+            UpdateInkTextColumnOffset();
+        }, DispatcherPriority.Loaded);
     }
 
     // Shrinks the right reading margin/touch zone on narrow (phone) viewports so it doesn't
@@ -4058,6 +4080,46 @@ public partial class MainView : UserControl
         _inkAreaGrid.Width = viewportWidth + LeftBufferDip;
         HScrollDiagLog($"UpdateJournalInkAreaGridWidth applied: viewportWidth={viewportWidth:F1} " +
             $"newInkAreaGridWidth={_inkAreaGrid.Width:F1}");
+    }
+
+    // Desktop journal mode: grows InkAreaGrid symmetrically around the centered text column so
+    // any loaded stroke's full extent is reachable via the (Auto-visible) horizontal scrollbar,
+    // then re-centers the viewport on the column so the default view is unchanged when nothing
+    // overflows. Strokes are stored column-relative (X=0 at the column's left edge, see
+    // InkOverlayCanvas.ToContent), so the naturally-visible content range without any extra width
+    // is [(columnWidth-viewportWidth)/2, (columnWidth+viewportWidth)/2] regardless of grid width;
+    // anything beyond that on either side needs the grid widened by that much (doubled, since
+    // growth is symmetric) to stay scrollable to.
+    private void UpdateDesktopJournalInkAreaWidth()
+    {
+        if (!PlatformHelper.IsDesktop || _inkAreaGrid == null || _contentHScrollContainer == null
+            || _paragraphList == null || double.IsPositiveInfinity(_paragraphList.MaxWidth) || _paragraphList.MaxWidth <= 0)
+            return;
+
+        var viewportWidth = _contentHScrollContainer.Viewport.Width;
+        if (viewportWidth <= 0) return;
+
+        var columnWidth = _paragraphList.MaxWidth;
+        var requiredWidth = viewportWidth;
+
+        var extent = _inkOverlay?.GetStrokeContentXExtent();
+        if (extent is { } e)
+        {
+            var visibleLeft  = (columnWidth - viewportWidth) / 2.0;
+            var visibleRight = (columnWidth + viewportWidth) / 2.0;
+            var overflowLeft  = Math.Max(0, visibleLeft - e.MinX);
+            var overflowRight = Math.Max(0, e.MaxX - visibleRight);
+            var overflow = Math.Max(overflowLeft, overflowRight);
+            if (overflow > 0)
+                requiredWidth = viewportWidth + 2 * (overflow + DesktopExtentPaddingDip);
+        }
+
+        var previousWidth = _inkAreaGrid.Width;
+        if (!double.IsNaN(previousWidth) && Math.Abs(previousWidth - requiredWidth) < 0.5)
+            return;
+
+        _inkAreaGrid.Width = requiredWidth;
+        _contentHScrollContainer.Offset = new Vector((requiredWidth - viewportWidth) / 2.0, 0);
     }
 
     private void UpdateInkTextColumnOffset()

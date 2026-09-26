@@ -353,6 +353,25 @@ public class InkOverlayCanvas : Control
     /// <summary>Captures current completed strokes so they can be restored later.</summary>
     public InkState CaptureState() => new InkState(_cachedStrokes);
 
+    /// <summary>
+    /// Content-space horizontal extent (min Left, max Right) across all cached strokes, or null
+    /// if none are loaded. X is column-relative (0 = text column left edge, matching
+    /// <see cref="ToContent"/>) — used to size the horizontal scroll area so annotations drawn on
+    /// a wider or differently-margined viewport (e.g. a tablet) stay reachable by scrolling.
+    /// </summary>
+    public (double MinX, double MaxX)? GetStrokeContentXExtent()
+    {
+        if (_cachedStrokes.Count == 0) return null;
+        var minX = double.MaxValue;
+        var maxX = double.MinValue;
+        foreach (var s in _cachedStrokes)
+        {
+            if (s.ContentBounds.Left < minX) minX = s.ContentBounds.Left;
+            if (s.ContentBounds.Right > maxX) maxX = s.ContentBounds.Right;
+        }
+        return (minX, maxX);
+    }
+
     /// <summary>Replaces the stroke list with a previously captured snapshot.</summary>
     public void RestoreState(InkState? state)
     {
